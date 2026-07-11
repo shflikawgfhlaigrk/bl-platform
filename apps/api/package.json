@@ -5,8 +5,25 @@
   "type": "module",
   "main": "src/index.ts",
   "types": "src/index.ts",
+  "scripts": {
+    "start": "tsx src/server.ts",
+    "dev": "tsx watch src/server.ts"
+  },
   "dependencies": {
+    "@blacklabel/billing": "*",
     "@blacklabel/core": "*",
-    "@blacklabel/db": "*"
+    "@blacklabel/crm": "*",
+    "@blacklabel/dashboard": "*",
+    "@blacklabel/db": "*",
+    "@blacklabel/files": "*",
+    "@blacklabel/industries": "*",
+    "@blacklabel/messaging": "*",
+    "@blacklabel/portal-customer": "*",
+    "@blacklabel/portal-employee": "*",
+    "@blacklabel/quoting": "*",
+    "@blacklabel/reviews": "*",
+    "@blacklabel/scheduling": "*",
+    "@blacklabel/workflows": "*",
+    "@hono/node-server": "^1.13.0"
   }
 }
