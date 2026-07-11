@@ -28,7 +28,7 @@ describe('api composition root (createApp)', () => {
     const { platform } = await boot();
     const res = await platform.app.request('/api/health');
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = (await res.json()) as any;
     expect(body.data.status).toBe('ok');
     expect(body.data.modules).toEqual([...MODULE_KEYS]);
   });
@@ -38,13 +38,13 @@ describe('api composition root (createApp)', () => {
 
     const missing = await platform.app.request('/api/scheduling/calendars');
     expect(missing.status).toBe(400);
-    expect((await missing.json()).error.code).toBe('tenant_header_missing');
+    expect(((await missing.json()) as any).error.code).toBe('tenant_header_missing');
 
     const unknown = await platform.app.request('/api/scheduling/calendars', {
       headers: { 'x-tenant-id': 'no-such-tenant' },
     });
     expect(unknown.status).toBe(404);
-    expect((await unknown.json()).error.code).toBe('tenant_unknown');
+    expect(((await unknown.json()) as any).error.code).toBe('tenant_unknown');
 
     const ok = await platform.app.request('/api/scheduling/calendars', {
       headers: { 'x-tenant-id': tenantId },

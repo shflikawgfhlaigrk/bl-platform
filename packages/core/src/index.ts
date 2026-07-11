@@ -57,6 +57,8 @@ export type {
   CreateTaskInput,
   CreateAppointmentContract,
   CreateAppointmentInput,
+  CreateAppointmentTypeContract,
+  CreateAppointmentTypeInput,
   CreateInvoiceContract,
   CreateInvoiceInput,
   InvoiceLineInput,

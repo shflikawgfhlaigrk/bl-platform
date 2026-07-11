@@ -21,8 +21,8 @@ export { schedulingMigrations } from './migrations';
 export { schedulingRouter } from './router';
 export type { SchedulingRouterOptions } from './router';
 
-// Contract implementation (CreateAppointmentContract)
-export { createSchedulingContract } from './service';
+// Contract implementations (CreateAppointmentContract, CreateAppointmentTypeContract)
+export { createSchedulingContract, createSchedulingAppointmentTypeContract } from './service';
 
 // Next-available slot finder (Front Desk V2)
 export { findNextAvailable } from './service';

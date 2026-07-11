@@ -16,6 +16,8 @@ import {
   nowIso,
   type CreateAppointmentContract,
   type CreateAppointmentInput,
+  type CreateAppointmentTypeContract,
+  type CreateAppointmentTypeInput,
   type EventBus,
 } from '@blacklabel/core';
 import type {
@@ -2029,6 +2031,42 @@ export function createSchedulingContract(deps: {
         staffIds,
       });
       return { id: appointments[0].id };
+    },
+  };
+}
+
+/**
+ * CreateAppointmentTypeContract implementation. Idempotent per (tenant, name):
+ * if an appointment type with the same name already exists for the tenant it is
+ * reused (created=false), so re-provisioning (e.g. re-applying an industry) is
+ * safe and never duplicates bookable types.
+ */
+export function createSchedulingAppointmentTypeContract(deps: {
+  db: Kysely<SchedulingDatabase>;
+  events: EventBus;
+}): CreateAppointmentTypeContract {
+  const ctx = createSchedulingContext(deps);
+  return {
+    async createAppointmentType(
+      input: CreateAppointmentTypeInput,
+    ): Promise<{ id: string; created: boolean }> {
+      const name = input.name.trim();
+      const existing = await ctx.db
+        .selectFrom('scheduling_appointment_types')
+        .select('id')
+        .where('tenant_id', '=', input.tenantId)
+        .where('name', '=', name)
+        .orderBy('created_at')
+        .orderBy('id')
+        .executeTakeFirst();
+      if (existing) return { id: existing.id, created: false };
+      const row = await createAppointmentType(ctx, input.tenantId, {
+        name,
+        durationMinutes: input.durationMinutes,
+        bufferBeforeMinutes: input.bufferBeforeMinutes,
+        bufferAfterMinutes: input.bufferAfterMinutes,
+      });
+      return { id: row.id, created: true };
     },
   };
 }
