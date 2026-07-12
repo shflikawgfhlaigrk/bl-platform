@@ -1,13 +1,79 @@
 /**
- * @blacklabel/messaging — scaffold placeholder.
+ * @blacklabel/messaging — unified messaging inbox (one inbox across
+ * channels: email, sms, website, social, internal).
  *
- * Read /CONVENTIONS.md BEFORE writing any code here. Required file layout:
- *   src/schema.ts      row types; extend CoreDatabase
- *   src/migrations.ts  export const messagingMigrations: Migration[]
- *   src/service.ts     tenant-scoped business logic (audit every mutation)
- *   src/router.ts      export function messagingRouter(deps: ModuleDeps<...>): Hono<TenantEnv>
- *   src/seed.ts        demo/seed data (optional)
- *   src/index.ts       re-export migrations + router + public types ONLY
- *   test/              vitest tests incl. tenant-isolation denial tests
+ * Events emitted (all after the DB write succeeds):
+ * - `messaging.message.received`      { messageId, channel, from }        (catalog event)
+ * - `messaging.message.sent`          { messageId, channel, to }          (module event)
+ * - `messaging.conversation.closed`   { conversationId }                  (module event)
+ * - `messaging.conversation.assigned` { conversationId, userId }          (module event)
+ *
+ * Cross-module contracts:
+ * - IMPLEMENTS core's SendMessageContract via `createMessagingSendContract`
+ *   (apps/api wires it into other modules' `deps.contracts.sendMessage`).
+ * - CONSUMES the documented `TimelineWriter` contract (optional): when a
+ *   conversation is linked to a CRM customer/contact by id, message-received
+ *   and conversation-closed timeline entries are written through it.
  */
 export const MODULE_KEY = 'messaging' as const;
+
+// Schema / row types
+export type {
+  MessagingDatabase,
+  MessagingChannelRow,
+  MessagingConversationRow,
+  MessagingMessageRow,
+  MessagingTemplateRow,
+  MessagingParticipantRow,
+  MessagingAssignmentRow,
+  ChannelType,
+  ConversationStatus,
+  MessageDirection,
+  MessageStatus,
+  ParticipantKind,
+} from './schema';
+export {
+  CHANNEL_TYPES,
+  CONVERSATION_STATUSES,
+  MESSAGE_DIRECTIONS,
+  MESSAGE_STATUSES,
+  PARTICIPANT_KINDS,
+} from './schema';
+
+// Migrations
+export { messagingMigrations } from './migrations';
+
+// Router factory
+export { messagingRouter } from './router';
+export type { MessagingRouterOptions } from './router';
+
+// Service + channel-provider interface + stubs + contracts
+export {
+  MessagingService,
+  renderTemplate,
+  defaultProviders,
+  LogOnlyEmailProvider,
+  LogOnlySmsProvider,
+  createMessagingSendContract,
+} from './service';
+export type {
+  MessagingServiceOptions,
+  ChannelProvider,
+  ChannelProviders,
+  ChannelSendResult,
+  OutboundPayload,
+  LoggedSend,
+  TimelineWriter,
+  TimelineEventInput,
+  ChannelDto,
+  ConversationDetail,
+  CreateConversationInput,
+  InboundMessageInput,
+  SendOutboundInput,
+  ConversationFilters,
+  SearchResult,
+} from './service';
+
+// Seed helper
+export { seedMessaging } from './seed';
+export type { MessagingSeedResult } from './seed';

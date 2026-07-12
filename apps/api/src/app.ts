@@ -81,6 +81,7 @@ import {
   industriesRouter,
   type IndustriesDatabase,
 } from '@blacklabel/industries';
+import { retailMigrations, retailRouter, type RetailDatabase } from '@blacklabel/retail';
 
 /** Every module's tables in the one shared database. */
 export type PlatformDatabase = CoreDatabase &
@@ -95,7 +96,8 @@ export type PlatformDatabase = CoreDatabase &
   WorkflowsDatabase &
   BillingDatabase &
   FilesDatabase &
-  IndustriesDatabase;
+  IndustriesDatabase &
+  RetailDatabase;
 
 /** Module keys in mount order (also the /api/<key> mount points). */
 export const MODULE_KEYS = [
@@ -111,6 +113,7 @@ export const MODULE_KEYS = [
   'billing',
   'files',
   'industries',
+  'retail',
 ] as const;
 
 /**
@@ -133,6 +136,7 @@ export const allMigrations: readonly Migration[] = [
   ...portalEmployeeMigrations,
   ...dashboardMigrations,
   ...industriesMigrations,
+  ...retailMigrations,
 ];
 
 export interface CreateAppOptions {
@@ -219,6 +223,7 @@ export async function createApp(options: CreateAppOptions): Promise<PlatformApp>
   app.route('/api/billing', billingRouter(deps<BillingDatabase>()));
   app.route('/api/files', filesRouter({ ...deps<FilesDatabase>(), storage }));
   app.route('/api/industries', industriesRouter(deps<IndustriesDatabase>()));
+  app.route('/api/retail', retailRouter(deps<RetailDatabase>()));
 
   return { app, db, events, contracts, engine, detachEngine, modules: MODULE_KEYS };
 }

@@ -15,6 +15,7 @@
 import { mkdirSync } from 'node:fs';
 import * as path from 'node:path';
 import { serve } from '@hono/node-server';
+import { asCoreDb } from '@blacklabel/core';
 import { createDb } from '@blacklabel/db';
 import { LocalDiskStorageProvider } from '@blacklabel/files';
 import { createApp, type PlatformDatabase } from './app';
@@ -22,6 +23,14 @@ import { createApp, type PlatformDatabase } from './app';
 const PORT = Number(process.env.PORT ?? 8460);
 const STORAGE_DIR = path.resolve(process.env.PLATFORM_STORAGE_DIR ?? '.storage');
 const DB_PATH = process.env.PLATFORM_DB_PATH ?? path.join(STORAGE_DIR, 'platform.db');
+/**
+ * Local single-tenant mode: when set, browser requests that arrive WITHOUT an
+ * x-tenant-id header get the named tenant's id injected server-side (the
+ * tenant contract itself is untouched — modules still only trust the header),
+ * and GET / redirects to the owner dashboard. This is for owner-facing local
+ * deployments (one business, one machine, loopback only).
+ */
+const DEFAULT_TENANT_NAME = process.env.PLATFORM_DEFAULT_TENANT_NAME;
 
 // Storage roots are created up front so the first request never races a mkdir.
 mkdirSync(STORAGE_DIR, { recursive: true });
@@ -33,11 +42,48 @@ const { app, modules } = await createApp({
   storage: new LocalDiskStorageProvider(path.join(STORAGE_DIR, 'files')),
 });
 
-const server = serve({ fetch: app.fetch, port: PORT }, (info) => {
+let cachedTenantId: string | undefined;
+async function defaultTenantId(): Promise<string | undefined> {
+  if (!DEFAULT_TENANT_NAME) return undefined;
+  if (cachedTenantId) return cachedTenantId;
+  const row = await asCoreDb(db)
+    .selectFrom('tenants')
+    .select('id')
+    .where('name', '=', DEFAULT_TENANT_NAME)
+    .orderBy('created_at')
+    .orderBy('id')
+    .executeTakeFirst();
+  cachedTenantId = row?.id;
+  return cachedTenantId;
+}
+
+async function fetchHandler(req: Request): Promise<Response> {
+  let request = req;
+  if (DEFAULT_TENANT_NAME) {
+    const url = new URL(request.url);
+    if (request.method === 'GET' && (url.pathname === '/' || url.pathname === '/owner')) {
+      return Response.redirect(new URL('/api/dashboard/owner', url).toString(), 302);
+    }
+    if (!request.headers.get('x-tenant-id')) {
+      const tenantId = await defaultTenantId();
+      if (tenantId) {
+        const headers = new Headers(request.headers);
+        headers.set('x-tenant-id', tenantId);
+        request = new Request(request, { headers });
+      }
+    }
+  }
+  return app.fetch(request);
+}
+
+// Loopback only: this process serves one owner's business data on their own
+// machine; it must never listen on an outward-facing interface.
+const server = serve({ fetch: fetchHandler, port: PORT, hostname: '127.0.0.1' }, (info) => {
   // eslint-disable-next-line no-console
   console.log(
     `[frontdesk/platform] listening on http://127.0.0.1:${info.port} — ` +
-      `${modules.length} modules mounted under /api/*`,
+      `${modules.length} modules mounted under /api/*` +
+      (DEFAULT_TENANT_NAME ? ` — single-tenant mode for "${DEFAULT_TENANT_NAME}"` : ''),
   );
 });
 

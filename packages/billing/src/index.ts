@@ -1,13 +1,79 @@
 /**
- * @blacklabel/billing — scaffold placeholder.
+ * @blacklabel/billing — invoices, payments, subscriptions, memberships.
  *
- * Read /CONVENTIONS.md BEFORE writing any code here. Required file layout:
- *   src/schema.ts      row types; extend CoreDatabase
- *   src/migrations.ts  export const billingMigrations: Migration[]
- *   src/service.ts     tenant-scoped business logic (audit every mutation)
- *   src/router.ts      export function billingRouter(deps: ModuleDeps<...>): Hono<TenantEnv>
- *   src/seed.ts        demo/seed data (optional)
- *   src/index.ts       re-export migrations + router + public types ONLY
- *   test/              vitest tests incl. tenant-isolation denial tests
+ * Events emitted (module.entity.verb):
+ *   billing.invoice.paid        (catalog) { invoiceId, customerId, totalCents }
+ *   billing.invoice.created     { invoiceId, customerId, totalCents }
+ *   billing.invoice.sent        { invoiceId, customerId, totalCents }
+ *   billing.invoice.voided      { invoiceId, customerId }
+ *   billing.invoice.generated   { invoiceId, subscriptionId, customerId, totalCents }
+ *   billing.invoice.converted   { invoiceId, quoteId }
+ *   billing.payment.recorded    { paymentId, invoiceId, amountCents }
+ *   billing.subscription.created{ subscriptionId, customerId }
+ *   billing.membership.created  { membershipId, customerId, planKey }
+ *
+ * Contract implementation: billingCreateInvoiceContract (CreateInvoiceContract)
+ * — apps/api wires it into other modules' deps.contracts.createInvoice.
  */
+
 export const MODULE_KEY = 'billing' as const;
+
+// Migrations
+export { billingMigrations } from './migrations';
+
+// Router factory
+export { billingRouter } from './router';
+export type { BillingRouterOptions } from './router';
+
+// Schema / row types
+export type {
+  BillingDatabase,
+  BillingAccountRow,
+  BillingInvoiceRow,
+  BillingInvoiceLineRow,
+  BillingPaymentRow,
+  BillingSubscriptionRow,
+  BillingMembershipRow,
+  BillingInvoiceCounterRow,
+  BillingWebhookEventRow,
+  InvoiceStatus,
+  SubscriptionStatus,
+  SubscriptionInterval,
+  MembershipStatus,
+} from './schema';
+
+// Payment provider interface + adapters (Stripe-shaped, not Stripe-hardcoded)
+export {
+  manualPaymentProvider,
+  stubPaymentProvider,
+  defaultPaymentProviders,
+} from './providers';
+export type {
+  PaymentProvider,
+  PaymentIntent,
+  PaymentIntentStatus,
+  CreatePaymentIntentInput,
+  ProviderWebhookEvent,
+  WebhookOutcome,
+} from './providers';
+
+// Status math + contract implementation + tick (public API surface)
+export {
+  computeInvoiceStatus,
+  advanceInterval,
+  generateDueInvoices,
+  billingCreateInvoiceContract,
+} from './service';
+export type {
+  BillingCtx,
+  InvoiceDto,
+  InvoiceWithLines,
+  InvoiceLineInputSvc,
+  CreateInvoiceInputSvc,
+  QuoteToInvoiceInput,
+  GeneratedInvoiceRef,
+} from './service';
+
+// Seed helper
+export { seedBilling } from './seed';
+export type { BillingSeedResult } from './seed';
