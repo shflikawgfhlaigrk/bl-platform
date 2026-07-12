@@ -583,6 +583,17 @@ async function insertConsent(
   input: ConsentInput,
 ): Promise<CustomersConsentRow> {
   const now = nowIso();
+  // Monotonic sequence per (profile, channel): strictly orders consent history
+  // even when two changes land in the same millisecond.
+  const prev = await db
+    .selectFrom('customers_consents')
+    .select('seq')
+    .where('tenant_id', '=', tenantId)
+    .where('profile_id', '=', profileId)
+    .where('channel', '=', input.channel)
+    .orderBy('seq', 'desc')
+    .orderBy('id', 'desc')
+    .executeTakeFirst();
   const row: CustomersConsentRow = {
     id: id(),
     tenant_id: tenantId,
@@ -595,6 +606,7 @@ async function insertConsent(
     user_agent: input.userAgent ?? null,
     occurred_at: now,
     evidence: input.evidence === undefined ? null : JSON.stringify(input.evidence),
+    seq: (prev?.seq ?? 0) + 1,
     created_at: now,
   };
   await db.insertInto('customers_consents').values(row).execute();
@@ -640,7 +652,7 @@ export async function consentHistory(
     .where('tenant_id', '=', tenantId)
     .where('profile_id', '=', profileId);
   if (channel) q = q.where('channel', '=', channel);
-  return q.orderBy('occurred_at', 'desc').orderBy('id', 'desc').execute();
+  return q.orderBy('seq', 'desc').orderBy('occurred_at', 'desc').orderBy('id', 'desc').execute();
 }
 
 /** Current consent state for a channel = latest row by occurred_at then id. */
@@ -656,6 +668,7 @@ export async function currentConsent(
     .where('tenant_id', '=', tenantId)
     .where('profile_id', '=', profileId)
     .where('channel', '=', channel)
+    .orderBy('seq', 'desc')
     .orderBy('occurred_at', 'desc')
     .orderBy('id', 'desc')
     .executeTakeFirst();

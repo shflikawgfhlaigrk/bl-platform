@@ -110,6 +110,8 @@ export interface CustomersConsentRow {
   occurred_at: string;
   /** JSON evidence blob or null. */
   evidence: string | null;
+  /** Monotonic per-(profile, channel) sequence; null only on pre-0004 rows. */
+  seq: number | null;
   created_at: string;
 }
 

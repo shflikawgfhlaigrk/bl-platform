@@ -278,4 +278,22 @@ export const customersMigrations: Migration[] = [
         .execute();
     },
   },
+  {
+    name: 'customers.0004_consent_seq',
+    up: async (db) => {
+      // Monotonic per-(tenant, profile, channel) sequence so "current consent"
+      // is strictly ordered even when two rows share a millisecond timestamp.
+      // Nullable: rows written before this migration have seq NULL (sorted last
+      // on DESC in SQLite) and remain valid history.
+      await db.schema
+        .alterTable('customers_consents')
+        .addColumn('seq', 'integer')
+        .execute();
+      await db.schema
+        .createIndex('customers_consents_tenant_profile_channel_seq_idx')
+        .on('customers_consents')
+        .columns(['tenant_id', 'profile_id', 'channel', 'seq'])
+        .execute();
+    },
+  },
 ];
