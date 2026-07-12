@@ -90,6 +90,8 @@ export interface MessagingMessageRow {
   transcript: string | null;
   /** 'call' channel: call length in whole seconds (null otherwise). */
   duration_seconds: number | null;
+  /** Monotonic per-conversation sequence; null only on pre-0008 rows. */
+  seq: number | null;
   created_at: string;
 }
 

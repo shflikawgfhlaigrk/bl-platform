@@ -587,6 +587,18 @@ export class MessagingService {
 
   /* ------------------------------ messages ------------------------------ */
 
+  private async nextMessageSeq(tenantId: string, conversationId: string): Promise<number> {
+    const prev = await this.db
+      .selectFrom('messaging_messages')
+      .select('seq')
+      .where('tenant_id', '=', tenantId)
+      .where('conversation_id', '=', conversationId)
+      .orderBy('seq', 'desc')
+      .orderBy('id', 'desc')
+      .executeTakeFirst();
+    return (prev?.seq ?? 0) + 1;
+  }
+
   async listMessages(
     tenantId: string,
     conversationId: string,
@@ -597,6 +609,7 @@ export class MessagingService {
       .selectAll()
       .where('tenant_id', '=', tenantId)
       .where('conversation_id', '=', conversationId)
+      .orderBy('seq')
       .orderBy('created_at')
       .orderBy('id')
       .limit(page.limit)
@@ -664,6 +677,7 @@ export class MessagingService {
       recording_url: input.recordingUrl ?? null,
       transcript: input.transcript ?? null,
       duration_seconds: input.durationSeconds ?? null,
+      seq: await this.nextMessageSeq(tenantId, conversation.id),
       created_at: now,
     };
     await this.db.insertInto('messaging_messages').values(message).execute();
@@ -794,6 +808,7 @@ export class MessagingService {
       recording_url: null,
       transcript: null,
       duration_seconds: null,
+      seq: await this.nextMessageSeq(tenantId, conversation.id),
       created_at: now,
     };
     await this.db.insertInto('messaging_messages').values(message).execute();
@@ -958,6 +973,7 @@ export class MessagingService {
           sql<boolean>`lower(coalesce(to_address, '')) like ${pattern} escape '\\'`,
         ]),
       )
+      .orderBy('seq', 'desc')
       .orderBy('created_at', 'desc')
       .orderBy('id')
       .limit(page.limit)

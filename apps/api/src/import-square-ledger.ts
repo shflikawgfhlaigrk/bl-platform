@@ -70,7 +70,9 @@ function gate(name: string, ok: boolean, detail: string): void {
 
 const ledger = new Database(LEDGER_PATH, { readonly: true, fileMustExist: true });
 const db = createDb<PlatformDatabase>(DB_PATH);
-const platform = await createApp({ db });
+// Batch tool: it drives thousands of writes through app.request in a tight loop,
+// so the per-route-group rate limiter must not throttle it.
+const platform = await createApp({ db, disableRateLimit: true });
 
 // Tenant: find by exact name or create.
 const existingTenant = await asCoreDb(db)

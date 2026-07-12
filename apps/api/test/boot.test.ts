@@ -13,8 +13,8 @@
  */
 import { describe, it, expect } from 'vitest';
 import { asCoreDb, createTenant } from '@blacklabel/core';
-import { createTestDb } from '@blacklabel/db';
-import { createApp, MODULE_KEYS, type PlatformDatabase } from '../src/app';
+import { createTestDb, runMigrations } from '@blacklabel/db';
+import { allMigrations, createApp, MODULE_KEYS, type PlatformDatabase } from '../src/app';
 
 async function boot() {
   const db = createTestDb<PlatformDatabase>();
@@ -52,7 +52,32 @@ describe('api composition root (createApp)', () => {
     expect(ok.status).toBe(200);
   });
 
-  it('mounts and serves every V1 module route (200 with a valid tenant)', async () => {
+  it('lists all 27 modules including every new Mags module', async () => {
+    const { platform } = await boot();
+    const body = (await (await platform.app.request('/api/health')).json()) as any;
+    const mods: string[] = body.data.modules;
+    for (const m of [
+      'automation',
+      'actions',
+      'catalog',
+      'inventory',
+      'shows',
+      'vendors',
+      'purchasing',
+      'orders',
+      'customers',
+      'loyalty',
+      'outreach',
+      'finance',
+      'workforce',
+      'admin',
+    ]) {
+      expect(mods, `health should list ${m}`).toContain(m);
+    }
+    expect(mods).toHaveLength(27);
+  });
+
+  it('mounts and serves representative V1 + new module routes (200 with a valid tenant)', async () => {
     const { platform, tenantId } = await boot();
     const routes = [
       '/api/crm/companies',
@@ -60,6 +85,10 @@ describe('api composition root (createApp)', () => {
       '/api/messaging/channels',
       '/api/reviews/platforms',
       '/api/industries',
+      '/api/inventory/locations',
+      '/api/actions',
+      '/api/vendors/vendors',
+      '/api/catalog/products',
     ];
     for (const path of routes) {
       const res = await platform.app.request(path, {
@@ -67,5 +96,13 @@ describe('api composition root (createApp)', () => {
       });
       expect(res.status, `${path} should serve 200`).toBe(200);
     }
+  });
+
+  it('all migrations apply idempotently on a fresh db (re-run is a no-op)', async () => {
+    const db = createTestDb<PlatformDatabase>();
+    const first = await runMigrations(db, allMigrations);
+    const second = await runMigrations(db, allMigrations);
+    expect(first.applied.length).toBeGreaterThan(0);
+    expect(second.applied).toHaveLength(0); // nothing new to apply the second time
   });
 });

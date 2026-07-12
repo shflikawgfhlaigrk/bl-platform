@@ -179,4 +179,21 @@ export const messagingMigrations: Migration[] = [
         .execute();
     },
   },
+  {
+    name: 'messaging.0008_message_seq',
+    up: async (db) => {
+      // Monotonic per-conversation sequence: strictly orders a thread even when
+      // two messages share a created_at millisecond (id is a random nanoid and
+      // must not decide chronology). Nullable; pre-0008 rows sort by created_at.
+      await db.schema
+        .alterTable('messaging_messages')
+        .addColumn('seq', 'integer')
+        .execute();
+      await db.schema
+        .createIndex('messaging_messages_tenant_conversation_seq_idx')
+        .on('messaging_messages')
+        .columns(['tenant_id', 'conversation_id', 'seq'])
+        .execute();
+    },
+  },
 ];

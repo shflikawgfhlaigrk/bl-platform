@@ -145,6 +145,7 @@ export async function seedMessaging(
       recording_url: null,
       transcript: null,
       duration_seconds: null,
+      seq: 1,
       created_at: now,
     },
     {
@@ -163,6 +164,7 @@ export async function seedMessaging(
       recording_url: null,
       transcript: null,
       duration_seconds: null,
+      seq: 2,
       created_at: now,
     },
     {
@@ -181,6 +183,7 @@ export async function seedMessaging(
       recording_url: null,
       transcript: null,
       duration_seconds: null,
+      seq: 1,
       created_at: now,
     },
   ];
