@@ -394,6 +394,10 @@ export function extractBrand(productName: string | null | undefined): BrandDecis
 export const EXCLUSION_RULES = {
   categoryNames: ['jpc consignment'],
   namePrefixes: ['dnu'],
+  // 'dnu' as a whole word catches the real 'z_DNU …' naming pattern (129 items
+  // in the live ledger) that the bare prefix rule misses; probed 2026-07-12:
+  // prefix 2,065 + z_dnu 129 = all 2,194 DNU names, zero other patterns.
+  dnuTokens: ['dnu'],
   nameSubstrings: ['consignment'],
   nameTokens: ['jpc'],
 } as const;
@@ -403,9 +407,9 @@ export interface ExclusionDecision {
   reason: ExclusionReason | null;
 }
 
-/** Split a name into whole words on whitespace or hyphen boundaries. */
+/** Split a name into whole words on whitespace, hyphen, or underscore boundaries. */
 function words(name: string): string[] {
-  return name.toLowerCase().split(/[\s-]+/).filter(Boolean);
+  return name.toLowerCase().split(/[\s\-_]+/).filter(Boolean);
 }
 
 /**
@@ -425,10 +429,14 @@ export function evaluateExclusion(
   if (EXCLUSION_RULES.namePrefixes.some((p) => lowerName.startsWith(p))) {
     return { excluded: true, reason: 'dnu' };
   }
+  const earlyWords = words(name);
+  if (EXCLUSION_RULES.dnuTokens.some((t) => earlyWords.includes(t))) {
+    return { excluded: true, reason: 'dnu' };
+  }
   if ((EXCLUSION_RULES.categoryNames as readonly string[]).includes(category)) {
     return { excluded: true, reason: 'jpc_consignment' };
   }
-  const nameWords = words(name);
+  const nameWords = earlyWords;
   if (EXCLUSION_RULES.nameTokens.some((t) => nameWords.includes(t))) {
     return { excluded: true, reason: 'jpc_consignment' };
   }

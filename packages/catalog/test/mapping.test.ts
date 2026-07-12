@@ -38,6 +38,16 @@ describe('exact-safe brand extraction', () => {
 });
 
 describe('owner exclusion law (word-boundary JPC)', () => {
+  it('excludes the real z_DNU naming pattern as dnu (underscore is a boundary)', () => {
+    expect(evaluateExclusion('z_DNU Old Halter', 'Halters')).toEqual({ excluded: true, reason: 'dnu' });
+    expect(evaluateExclusion('Z_dnu-legacy strap', 'Straps')).toEqual({ excluded: true, reason: 'dnu' });
+  });
+
+  it('does NOT exclude names merely containing dnu inside a word', () => {
+    expect(evaluateExclusion('Dnubuck Halter', 'Halters')).toEqual({ excluded: true, reason: 'dnu' }); // prefix rule still applies
+    expect(evaluateExclusion('Grand Nubuck dnux strap', 'Straps')).toEqual({ excluded: false, reason: null });
+  });
+
   it('does NOT exclude a SKU fragment like "mujpc1"', () => {
     expect(evaluateExclusion('mujpc1 belt', 'Belts')).toEqual({ excluded: false, reason: null });
   });
