@@ -32,7 +32,7 @@ import { Hono } from 'hono';
 import { asCoreDb } from '@blacklabel/core';
 import { createDb } from '@blacklabel/db';
 import { LocalDiskStorageProvider } from '@blacklabel/files';
-import { createApp, type PlatformDatabase } from './app';
+import { createApp, mountPublicStorefront, type PlatformDatabase } from './app';
 import { SqliteBackupProvider, makeCountProbe } from './admin-wiring';
 import { securityHeaders } from './security';
 
@@ -82,7 +82,9 @@ const platform = await createApp({
 });
 const { app, modules } = platform;
 
-// Single-tenant local mode: seed the named tenant (owner + roles) at boot.
+// Single-tenant local mode: seed the named tenant (owner + roles) at boot and
+// mount the PUBLIC storefront at /store for that tenant (projection-only reads;
+// checkout creates real reserved orders through the orders module).
 if (DEFAULT_TENANT_NAME) {
   const row = await asCoreDb(db)
     .selectFrom('tenants')
@@ -91,7 +93,17 @@ if (DEFAULT_TENANT_NAME) {
     .orderBy('created_at')
     .orderBy('id')
     .executeTakeFirst();
-  if (row) await platform.seedTenant(row.id);
+  if (row) {
+    await platform.seedTenant(row.id);
+    const imageSourceDir = process.env.STORE_IMAGES_DIR;
+    mountPublicStorefront({
+      app: platform.app,
+      db,
+      events: platform.events,
+      tenantId: row.id,
+      imageSourceDir: imageSourceDir && existsSync(imageSourceDir) ? imageSourceDir : undefined,
+    });
+  }
 }
 
 // Optional static UI at / (serveStatic falls through to the API app on a miss,

@@ -356,6 +356,105 @@ function dbFor<T>(db: Kysely<PlatformDatabase>): Kysely<T> {
   return db as unknown as Kysely<T>;
 }
 
+/**
+ * Mount the PUBLIC storefront at /store on an existing app (single tenant,
+ * fixed at mount time — public requests carry no tenant header). The storefront
+ * reads ONLY its projection tables; placeOrder/consent/restock forward into the
+ * orders + customers modules. server.ts calls this after resolving the tenant.
+ */
+export function mountPublicStorefront(args: {
+  app: Hono;
+  db: Kysely<PlatformDatabase>;
+  events: EventBus;
+  tenantId: string;
+  imageSourceDir?: string;
+}): void {
+  const { app, db, events, tenantId, imageSourceDir } = args;
+  const ordersCtx = { db: dbFor<OrdersDatabase>(db), events };
+  const customersDb = dbFor<CustomersDatabase>(db);
+  app.route(
+    '/store',
+    storefrontPublicRouter({
+      db: dbFor<StorefrontDatabase>(db),
+      tenantId,
+      imageSourceDir,
+      placeOrder: async (input: PlaceOrderInput) => {
+        // Price truth = the published projection (exactly what the shopper saw).
+        const lines: Array<{
+          variationId: string;
+          description: string;
+          qty: number;
+          unitPriceCents: number;
+        }> = [];
+        for (const l of input.lines) {
+          const pub = await db
+            .selectFrom('storefront_published_variations')
+            .selectAll()
+            .where('tenant_id', '=', tenantId)
+            .where('source_variation_id', '=', l.variationId)
+            .orderBy('id')
+            .executeTakeFirst();
+          if (!pub) throw ApiError.badRequest(`unknown variation: ${l.variationId}`);
+          if (pub.price_cents === null) {
+            throw ApiError.badRequest(`price not listed for variation: ${l.variationId}`);
+          }
+          lines.push({
+            variationId: l.variationId,
+            description: pub.name,
+            qty: l.qty,
+            unitPriceCents: pub.price_cents,
+          });
+        }
+        const created = await ordersCreateOrder(ordersCtx, tenantId, 'storefront', {
+          channel: 'storefront',
+          lines,
+        });
+        const reserved = await ordersReserveOrder(ordersCtx, tenantId, 'storefront', created.order.id);
+        return { orderId: created.order.id, status: reserved.status, totalCents: reserved.total_cents };
+      },
+      submitConsent: async ({ email }: { email: string }) => {
+        const existing = await customersSearchProfiles(customersDb, tenantId, {
+          email,
+          page: { limit: 1, offset: 0 },
+        });
+        const profile =
+          existing[0] ??
+          (await customersCreateProfile(customersDb, tenantId, 'storefront', {
+            email,
+            source: 'storefront',
+          }));
+        const result = await customersStartDoubleOptIn(
+          customersDb,
+          tenantId,
+          'storefront',
+          events,
+          profile.id,
+          { channel: 'email', source: 'storefront' },
+        );
+        // Local mode returns the confirm token so the (founder-gated) mail lane
+        // or the acceptance harness can complete the double-opt-in.
+        return { profileId: profile.id, expiresAt: result.expiresAt, token: result.token };
+      },
+      submitRestock: async ({ variationId, email }: { variationId: string; email?: string }) => {
+        let profileId: string | null = null;
+        if (email) {
+          const found = await customersSearchProfiles(customersDb, tenantId, {
+            email,
+            page: { limit: 1, offset: 0 },
+          });
+          profileId = found[0]?.id ?? null;
+        }
+        const row = await customersCreateRestockRequest(customersDb, tenantId, 'storefront', events, {
+          variationId,
+          profileId,
+          source: 'storefront',
+        });
+        return { requestId: row.id };
+      },
+    }),
+  );
+}
+
 export async function createApp(options: CreateAppOptions): Promise<PlatformApp> {
   const { db } = options;
 
@@ -525,100 +624,8 @@ export async function createApp(options: CreateAppOptions): Promise<PlatformApp>
   );
 
   // PUBLIC storefront (local live mode, single tenant fixed at construction).
-  // The storefront reads ONLY its projection tables; commerce actions forward
-  // into the orders/customers modules through the injections below.
   if (options.storefront) {
-    const sf = options.storefront;
-    const ordersCtx = { db: dbFor<OrdersDatabase>(db), events };
-    const customersDb = dbFor<CustomersDatabase>(db);
-    app.route(
-      '/store',
-      storefrontPublicRouter({
-        db: dbFor<StorefrontDatabase>(db),
-        tenantId: sf.tenantId,
-        imageSourceDir: sf.imageSourceDir,
-        placeOrder: async (input: PlaceOrderInput) => {
-          // Price truth = the published projection (exactly what the shopper saw).
-          const lines: Array<{
-            variationId: string;
-            description: string;
-            qty: number;
-            unitPriceCents: number;
-          }> = [];
-          for (const l of input.lines) {
-            const pub = await db
-              .selectFrom('storefront_published_variations')
-              .selectAll()
-              .where('tenant_id', '=', sf.tenantId)
-              .where('source_variation_id', '=', l.variationId)
-              .orderBy('id')
-              .executeTakeFirst();
-            if (!pub) throw ApiError.badRequest(`unknown variation: ${l.variationId}`);
-            if (pub.price_cents === null) {
-              throw ApiError.badRequest(`price not listed for variation: ${l.variationId}`);
-            }
-            lines.push({
-              variationId: l.variationId,
-              description: pub.name,
-              qty: l.qty,
-              unitPriceCents: pub.price_cents,
-            });
-          }
-          const created = await ordersCreateOrder(ordersCtx, sf.tenantId, 'storefront', {
-            channel: 'storefront',
-            lines,
-          });
-          const reserved = await ordersReserveOrder(
-            ordersCtx,
-            sf.tenantId,
-            'storefront',
-            created.order.id,
-          );
-          return { orderId: created.order.id, status: reserved.status, totalCents: reserved.total_cents };
-        },
-        submitConsent: async ({ email }: { email: string }) => {
-          const existing = await customersSearchProfiles(customersDb, sf.tenantId, {
-            email,
-            page: { limit: 1, offset: 0 },
-          });
-          const profile =
-            existing[0] ??
-            (await customersCreateProfile(customersDb, sf.tenantId, 'storefront', {
-              email,
-              source: 'storefront',
-            }));
-          const result = await customersStartDoubleOptIn(
-            customersDb,
-            sf.tenantId,
-            'storefront',
-            events,
-            profile.id,
-            { channel: 'email', source: 'storefront' },
-          );
-          // Public response NEVER includes the raw confirm token beyond what the
-          // double-opt-in email lane needs; local mode returns it for the wiring.
-          return { profileId: profile.id, expiresAt: result.expiresAt, token: result.token };
-        },
-        submitRestock: async ({ variationId, email }: { variationId: string; email?: string }) => {
-          let profileId: string | null = null;
-          if (email) {
-            const found = await customersSearchProfiles(customersDb, sf.tenantId, {
-              email,
-              page: { limit: 1, offset: 0 },
-            });
-            profileId = found[0]?.id ?? null;
-          }
-          const row = await customersCreateRestockRequest(
-            customersDb,
-            sf.tenantId,
-            'storefront',
-            events,
-            { variationId, profileId, source: 'storefront' },
-          );
-          return { requestId: row.id };
-        },
-      }),
-    );
+    mountPublicStorefront({ app, db, events, ...options.storefront });
   }
 
   // Non-API root: honest api-only fallback (server.ts serves the UI at / when
