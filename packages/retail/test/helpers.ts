@@ -7,18 +7,53 @@ import {
 } from '@blacklabel/core';
 import { createTestDb, runMigrations } from '@blacklabel/db';
 import { retailMigrations } from '../src/migrations';
-import { retailRouter } from '../src/router';
+import { retailRouter, type RetailImportWiring } from '../src/router';
 import type { RetailDatabase } from '../src/schema';
 import type { ImportSalesInput } from '../src/service';
 
-export async function setup() {
+export async function setup(wiring: RetailImportWiring = {}) {
   const db = createTestDb<RetailDatabase>();
   await runMigrations(db, [...coreMigrations, ...retailMigrations]);
   const tenantA = await createTenant(asCoreDb(db), { name: 'Alpha Tack' });
   const tenantB = await createTenant(asCoreDb(db), { name: 'Beta Tack' });
   const events = new EventBus();
-  const app = retailRouter({ db, events, contracts: {} });
+  const app = retailRouter({ db, events, contracts: {} }, wiring);
   return { db, tenantA, tenantB, events, app };
+}
+
+/* ------------------------------------------------------------------ *
+ * Real-Square-shaped fixtures for the incremental import pipeline.
+ * ------------------------------------------------------------------ */
+
+export function squarePayment(id: string, amount: number, status = 'COMPLETED') {
+  return {
+    id,
+    created_at: '2026-03-07T15:00:00.000Z',
+    status,
+    amount_money: { amount, currency: 'USD' },
+    processing_fee: [{ amount_money: { amount: Math.round(amount * 0.029) + 30, currency: 'USD' } }],
+    customer_id: 'CUST1',
+    order_id: `ORD_${id}`,
+  };
+}
+
+export function squareOrder(id: string, total: number, state = 'COMPLETED') {
+  return {
+    id,
+    location_id: 'LCP2395Z8RW11',
+    state,
+    created_at: '2026-03-07T15:00:00.000Z',
+    total_money: { amount: total, currency: 'USD' },
+    line_items: [
+      {
+        uid: 'u1',
+        name: 'AZ Gelante Stretch Belt',
+        quantity: '1',
+        catalog_object_id: 'VAR1',
+        total_money: { amount: total, currency: 'USD' },
+      },
+    ],
+  };
 }
 
 export function headers(tenant: TenantRow | { id: string }): Record<string, string> {
