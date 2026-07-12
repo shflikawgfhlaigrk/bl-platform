@@ -1,0 +1,8 @@
+{
+  "name": "@blacklabel/ui",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Mags Commerce OS — owner-facing PWA (hand-built vanilla HTML/CSS/JS, no build step, no deps). Served by @blacklabel/api from public/ when env UI_DIR points at it.",
+  "main": "src/index.mjs"
+}

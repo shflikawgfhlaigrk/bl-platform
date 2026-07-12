@@ -1,0 +1,14 @@
+{
+  "name": "Mags Commerce OS",
+  "short_name": "Mags OS",
+  "description": "Your whole business, on this computer.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#f4f5f4",
+  "theme_color": "#1f6f54",
+  "icons": [
+    { "src": "./icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
