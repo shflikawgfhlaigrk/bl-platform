@@ -8,7 +8,8 @@
   "scripts": {
     "start": "tsx src/server.ts",
     "dev": "tsx watch src/server.ts",
-    "import-square": "tsx src/import-square-ledger.ts"
+    "import-square": "tsx src/import-square-ledger.ts",
+    "seed-mags": "tsx src/seed-mags-tenant.ts"
   },
   "dependencies": {
     "@blacklabel/actions": "*",
