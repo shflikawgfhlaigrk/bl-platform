@@ -96,5 +96,11 @@ export {
   isSuppressed,
   resolveIdentities,
   evaluateSegmentAndPersist,
+  createProfile,
+  getProfile,
+  searchProfiles,
+  startDoubleOptIn,
+  confirmDoubleOptIn,
+  createRestockRequest,
 } from './service';
 export type { ImportRow, ImportSummary, ProfileInput, ConsentInput, EvaluateResult } from './service';

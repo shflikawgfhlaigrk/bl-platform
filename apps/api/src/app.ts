@@ -22,6 +22,7 @@ import { Hono } from 'hono';
 import type { Kysely } from 'kysely';
 import { runMigrations, type Migration } from '@blacklabel/db';
 import {
+  ApiError,
   EventBus,
   coreMigrations,
   createUser,
@@ -144,6 +145,22 @@ import {
   type Logger,
 } from '@blacklabel/admin';
 
+import {
+  storefrontMigrations,
+  storefrontPublicRouter,
+  type StorefrontDatabase,
+  type PlaceOrderInput,
+} from '@blacklabel/storefront';
+import {
+  createOrder as ordersCreateOrder,
+  reserveOrder as ordersReserveOrder,
+} from '@blacklabel/orders';
+import {
+  createProfile as customersCreateProfile,
+  searchProfiles as customersSearchProfiles,
+  startDoubleOptIn as customersStartDoubleOptIn,
+  createRestockRequest as customersCreateRestockRequest,
+} from '@blacklabel/customers';
 import { apiMigrations, type ApiDatabase } from './migrations';
 import { CONFIG_KEYS, coerceKey, deriveCheckoutSecret, setConfig } from './config';
 import {
@@ -187,6 +204,7 @@ export type PlatformDatabase = CoreDatabase &
   FinanceDatabase &
   WorkforceDatabase &
   AdminDatabase &
+  StorefrontDatabase &
   ApiDatabase;
 
 /** Module keys in mount order (also the /api/<key> mount points + health list). */
@@ -258,6 +276,7 @@ export const allMigrations: readonly Migration[] = [
   ...adminMigrations,
   // retail (extended by the concurrent import-lane agent) + api-owned tables.
   ...retailMigrations,
+  ...storefrontMigrations,
   ...apiMigrations,
 ];
 
@@ -296,6 +315,14 @@ export interface CreateAppOptions {
 
   /** App version for the diagnostics bundle. */
   version?: string;
+
+  /**
+   * Mount the PUBLIC storefront at /store for local live mode (single-tenant).
+   * The tenant is fixed at construction — public requests carry no tenant
+   * header. placeOrder/consent/restock are wired to the orders + customers
+   * modules below; the storefront itself only ever reads projection tables.
+   */
+  storefront?: { tenantId: string; imageSourceDir?: string };
 }
 
 export interface SeedTenantOptions {
@@ -496,6 +523,103 @@ export async function createApp(options: CreateAppOptions): Promise<PlatformApp>
       diagnostics: { version: options.version ?? '0.0.1' },
     }),
   );
+
+  // PUBLIC storefront (local live mode, single tenant fixed at construction).
+  // The storefront reads ONLY its projection tables; commerce actions forward
+  // into the orders/customers modules through the injections below.
+  if (options.storefront) {
+    const sf = options.storefront;
+    const ordersCtx = { db: dbFor<OrdersDatabase>(db), events };
+    const customersDb = dbFor<CustomersDatabase>(db);
+    app.route(
+      '/store',
+      storefrontPublicRouter({
+        db: dbFor<StorefrontDatabase>(db),
+        tenantId: sf.tenantId,
+        imageSourceDir: sf.imageSourceDir,
+        placeOrder: async (input: PlaceOrderInput) => {
+          // Price truth = the published projection (exactly what the shopper saw).
+          const lines: Array<{
+            variationId: string;
+            description: string;
+            qty: number;
+            unitPriceCents: number;
+          }> = [];
+          for (const l of input.lines) {
+            const pub = await db
+              .selectFrom('storefront_published_variations')
+              .selectAll()
+              .where('tenant_id', '=', sf.tenantId)
+              .where('source_variation_id', '=', l.variationId)
+              .orderBy('id')
+              .executeTakeFirst();
+            if (!pub) throw ApiError.badRequest(`unknown variation: ${l.variationId}`);
+            if (pub.price_cents === null) {
+              throw ApiError.badRequest(`price not listed for variation: ${l.variationId}`);
+            }
+            lines.push({
+              variationId: l.variationId,
+              description: pub.name,
+              qty: l.qty,
+              unitPriceCents: pub.price_cents,
+            });
+          }
+          const created = await ordersCreateOrder(ordersCtx, sf.tenantId, 'storefront', {
+            channel: 'storefront',
+            lines,
+          });
+          const reserved = await ordersReserveOrder(
+            ordersCtx,
+            sf.tenantId,
+            'storefront',
+            created.order.id,
+          );
+          return { orderId: created.order.id, status: reserved.status, totalCents: reserved.total_cents };
+        },
+        submitConsent: async ({ email }: { email: string }) => {
+          const existing = await customersSearchProfiles(customersDb, sf.tenantId, {
+            email,
+            page: { limit: 1, offset: 0 },
+          });
+          const profile =
+            existing[0] ??
+            (await customersCreateProfile(customersDb, sf.tenantId, 'storefront', {
+              email,
+              source: 'storefront',
+            }));
+          const result = await customersStartDoubleOptIn(
+            customersDb,
+            sf.tenantId,
+            'storefront',
+            events,
+            profile.id,
+            { channel: 'email', source: 'storefront' },
+          );
+          // Public response NEVER includes the raw confirm token beyond what the
+          // double-opt-in email lane needs; local mode returns it for the wiring.
+          return { profileId: profile.id, expiresAt: result.expiresAt, token: result.token };
+        },
+        submitRestock: async ({ variationId, email }: { variationId: string; email?: string }) => {
+          let profileId: string | null = null;
+          if (email) {
+            const found = await customersSearchProfiles(customersDb, sf.tenantId, {
+              email,
+              page: { limit: 1, offset: 0 },
+            });
+            profileId = found[0]?.id ?? null;
+          }
+          const row = await customersCreateRestockRequest(
+            customersDb,
+            sf.tenantId,
+            'storefront',
+            events,
+            { variationId, profileId, source: 'storefront' },
+          );
+          return { requestId: row.id };
+        },
+      }),
+    );
+  }
 
   // Non-API root: honest api-only fallback (server.ts serves the UI at / when
   // UI_DIR is set). CSP + security headers still apply via the global middleware.
