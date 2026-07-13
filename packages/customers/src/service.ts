@@ -730,7 +730,12 @@ export async function confirmDoubleOptIn(
   events: EventBus | undefined,
   token: string,
 ): Promise<CustomersConsentRow> {
-  return db.transaction().execute(async (trx) => {
+  // Do the token-consume + consent-insert atomically, but DEFER the domain
+  // event until AFTER commit. Emitting inside the transaction deadlocks: the
+  // automation '*' subscriber enqueues every event to the outbox via its own
+  // db.transaction(), and the better-sqlite3 dialect serializes transactions —
+  // a nested open would wait forever on the still-open outer transaction.
+  const consent = await db.transaction().execute(async (trx) => {
     const tokenRow = await trx
       .selectFrom('customers_consent_tokens')
       .selectAll()
@@ -748,14 +753,24 @@ export async function confirmDoubleOptIn(
       .where('tenant_id', '=', tenantId)
       .where('id', '=', tokenRow.id)
       .execute();
-    const consent = await insertConsent(trx as Db, tenantId, actor, events, tokenRow.profile_id, {
+    // events=undefined → insertConsent writes + audits but does NOT emit here.
+    return insertConsent(trx as Db, tenantId, actor, undefined, tokenRow.profile_id, {
       channel: tokenRow.channel,
       state: 'granted',
       source: 'storefront',
       evidence: { confirmedTokenId: tokenRow.id },
     });
-    return consent;
   });
+  // Post-commit emit — same payload insertConsent would have emitted.
+  if (events) {
+    await events.emit(tenantId, 'customers.consent.changed', {
+      v: 1,
+      customerId: consent.profile_id,
+      channel: consent.channel,
+      state: consent.state,
+    });
+  }
+  return consent;
 }
 
 /* ------------------------------------------------------------------ *
