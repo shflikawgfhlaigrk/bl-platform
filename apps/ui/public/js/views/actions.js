@@ -13,31 +13,81 @@ import { phraseReport } from '../../../src/gates.mjs';
 const PRIORITY_VARIANT = { critical: 'critical', high: 'high', medium: 'medium', low: 'low' };
 
 async function loadTiles() {
-  const grid = el('div', { class: 'grid tiles' });
+  // Real retail KPIs straight from the owner sales rollup (finance/catalog/
+  // customers). Every number is computed from the imported history — nothing is
+  // guessed. Tiles whose section is unavailable are omitted, never faked.
+  let owner;
   try {
-    const summary = await getData('/api/dashboard/export');
-    const metrics = (summary && summary.metrics) || [];
-    let shown = 0;
-    for (const m of metrics) {
-      if (m.available === false) continue; // NO fabricated numbers — omit unavailable tiles.
-      const isMoney = m.unit === 'cents';
-      const value = isMoney ? formatCents(Number(m.value) || 0) : String(m.value ?? '—');
-      grid.append(
-        metricTile({
-          label: m.name || m.key,
-          value,
-          definition: m.definition || `Metric "${m.key}" from your sales history.`,
-          source: 'Dashboard',
-          foot: 'Source: Dashboard · click to open Money',
-          href: '#/money',
-        }),
-      );
-      shown++;
-    }
-    if (!shown) return null;
+    owner = await getData('/api/dashboard/owner.json');
   } catch {
     return null;
   }
+  if (!owner || owner.available === false) return null;
+
+  const money = (c) => formatCents(Number(c) || 0);
+  const num = (n) => (Number(n) || 0).toLocaleString('en-US');
+  const tiles = [];
+
+  if (owner.allTime) {
+    tiles.push(metricTile({
+      label: 'All-time sales',
+      value: money(owner.allTime.grossCents),
+      foot: `${num(owner.allTime.paymentCount)} payments · avg ${money(owner.allTime.averageTicketCents)}`,
+      definition: `Completed payments since ${owner.dataFirstLocalDate || 'the first sale'}.`,
+      href: '#/money',
+    }));
+  }
+  if (owner.ytd) {
+    const pct = owner.ytd.pctChange;
+    const foot = pct == null
+      ? `through ${owner.ytd.throughLocalDate}`
+      : `${pct >= 0 ? '+' : ''}${pct}% vs last year (${money(owner.ytd.lastYearGrossCents)})`;
+    tiles.push(metricTile({
+      label: `This year (${owner.ytd.year})`,
+      value: money(owner.ytd.grossCents),
+      foot,
+      definition: `Gross sales Jan 1–${owner.ytd.throughLocalDate}, vs the same window a year earlier.`,
+      href: '#/money',
+    }));
+  }
+  if (owner.customers && owner.customers.available !== false) {
+    tiles.push(metricTile({
+      label: 'Customers',
+      value: num(owner.customers.total),
+      foot: `${owner.customers.repeatRatePct}% repeat · ${owner.customers.emailPct}% emailable`,
+      definition: 'Distinct customers found in your sales history.',
+      href: '#/customers',
+    }));
+  }
+  if (owner.refunds && owner.refunds.available !== false) {
+    tiles.push(metricTile({
+      label: 'Refunds (12 mo)',
+      value: money(owner.refunds.last12moCents),
+      foot: `${num(owner.refunds.last12moCount)} returns · ${money(owner.refunds.allTimeCents)} all-time`,
+      href: '#/money',
+    }));
+  }
+  const topItem = (owner.topItems12mo || [])[0];
+  if (topItem) {
+    tiles.push(metricTile({
+      label: 'Top seller (12 mo)',
+      value: money(topItem.revenueCents),
+      foot: `${topItem.name} · ${num(topItem.quantity)} sold`,
+      href: '#/stock',
+    }));
+  }
+  const topCat = (owner.topCategories12mo || [])[0];
+  if (topCat) {
+    tiles.push(metricTile({
+      label: 'Top category (12 mo)',
+      value: money(topCat.revenueCents),
+      foot: topCat.name,
+    }));
+  }
+
+  if (!tiles.length) return null;
+  const grid = el('div', { class: 'grid tiles' });
+  tiles.forEach((t) => grid.append(t));
   return grid;
 }
 
