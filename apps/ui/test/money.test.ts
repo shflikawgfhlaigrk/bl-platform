@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { formatCents, formatCentsPlain, formatBps } from '../src/money.mjs';
+import { formatCents, formatCentsPlain, formatBps } from '../public/src/money.mjs';
 
 describe('money formatting (integer cents)', () => {
   it('formats positive amounts with thousands separators', () => {

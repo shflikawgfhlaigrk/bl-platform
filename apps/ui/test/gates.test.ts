@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { phraseReport, phraseGate, reasonOf, isOpen } from '../src/gates.mjs';
+import { phraseReport, phraseGate, reasonOf, isOpen } from '../public/src/gates.mjs';
 
 // The exact shape the live /api/outreach/settings/gates endpoint returns.
 const LIVE_OUTREACH = {

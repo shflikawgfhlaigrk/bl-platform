@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { aggregateScan, wouldAggregate, DEFAULT_WINDOW_MS } from '../src/scan.mjs';
+import { aggregateScan, wouldAggregate, DEFAULT_WINDOW_MS } from '../public/src/scan.mjs';
 
 describe('scan aggregation window', () => {
   it('adds a new line for a first-seen code', () => {

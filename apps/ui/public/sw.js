@@ -14,7 +14,7 @@
  */
 
 // vvvv  BUMP THIS ON EVERY DEPLOY  vvvv
-const CACHE_NAME = 'mags-os-shell-v1';
+const CACHE_NAME = 'mags-os-shell-v2';
 // ^^^^  BUMP THIS ON EVERY DEPLOY  ^^^^
 
 const SHELL_ASSETS = [

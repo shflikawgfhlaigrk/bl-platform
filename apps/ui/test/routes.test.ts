@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { NAV, navRoutes, missingViews, parseHash, DEFAULT_ROUTE, hashFor } from '../src/routes.mjs';
+import { NAV, navRoutes, missingViews, parseHash, DEFAULT_ROUTE, hashFor } from '../public/src/routes.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const viewsDir = path.resolve(here, '../public/js/views');

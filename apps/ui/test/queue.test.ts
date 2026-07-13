@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import * as Q from '../src/queue.mjs';
+import * as Q from '../public/src/queue.mjs';
 
 function mk(id: string, over: Partial<any> = {}) {
   return {

@@ -3,7 +3,8 @@ import { registerView, navigate } from '../router.js';
 import { el, toast } from '../dom.js';
 import { getData, getList, mutate } from '../api.js';
 import { viewHeader, emptyState, dataTable, button, section, field, input, select, withLoading, chip, detailList, expandable } from '../ui.js';
-import { formatDate, formatCents } from '../ui.js';
+import { formatCents } from '../../../src/money.mjs';
+import { formatDate } from '../../../src/format.mjs';
 
 registerView('shows', async (container, params) => {
   if (params[0]) return renderShow(container, params[0]);
