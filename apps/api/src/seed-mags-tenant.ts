@@ -597,10 +597,52 @@ export interface StorefrontSeedResult {
 }
 
 /** Build a PublishSource from the tenant's non-excluded catalog (published). */
+/** One storefront product image: local basename + non-empty alt (a11y gate). */
+export type PublishImage = { path: string; alt: string };
+
+/**
+ * Build a source-item-id → images map from the read-only ledger. Resolves each
+ * product's `image_ids` JSON to the locally-downloaded file basenames (only
+ * images with exists_locally=1), alt-texted with the product name so the
+ * storefront a11y gate (every <img> needs non-empty alt) passes. Products
+ * without a local image map to [] and render their text placeholder.
+ */
+export function buildLedgerImageMap(ledger: Database.Database): Map<string, PublishImage[]> {
+  // image id → local file basename (only files actually on disk).
+  const basenameById = new Map<string, string>();
+  for (const row of ledger
+    .prepare("SELECT id, local_file FROM images WHERE exists_locally=1 AND local_file IS NOT NULL AND local_file!=''")
+    .all() as { id: string; local_file: string }[]) {
+    const base = row.local_file.split('/').pop();
+    if (base) basenameById.set(row.id, base);
+  }
+
+  const map = new Map<string, PublishImage[]>();
+  for (const item of ledger
+    .prepare("SELECT id, name, image_ids FROM catalog_items WHERE image_ids IS NOT NULL AND image_ids!='' AND image_ids!='[]'")
+    .all() as { id: string; name: string | null; image_ids: string }[]) {
+    let ids: string[];
+    try {
+      ids = JSON.parse(item.image_ids) as string[];
+    } catch {
+      continue;
+    }
+    const alt = (item.name ?? 'Product').trim() || 'Product';
+    const imgs: PublishImage[] = [];
+    for (const id of ids) {
+      const base = basenameById.get(id);
+      if (base) imgs.push({ path: base, alt: imgs.length === 0 ? alt : `${alt} — photo ${imgs.length + 1}` });
+    }
+    if (imgs.length) map.set(item.id, imgs);
+  }
+  return map;
+}
+
 export async function buildPublishSource(
   db: Kysely<PlatformDatabase>,
   tenantId: string,
-): Promise<{ source: PublishSource; itemCount: number }> {
+  imageMap?: Map<string, PublishImage[]>,
+): Promise<{ source: PublishSource; itemCount: number; itemsWithImages: number }> {
   const cdb = as<CatalogDatabase>(db);
   const depts = await cdb.selectFrom('catalog_departments').selectAll().where('tenant_id', '=', tenantId).execute();
   const brands = await cdb.selectFrom('catalog_brands').selectAll().where('tenant_id', '=', tenantId).execute();
@@ -647,6 +689,7 @@ export async function buildPublishSource(
       brandName: brand?.name ?? null,
       // First projection publishes every non-excluded product.
       publicationState: 'published' as const,
+      images: imageMap?.get(p.source_item_id) ?? [],
       variations: (varsByProduct.get(p.id) ?? []).map((v) => ({
         sourceVariationId: v.source_variation_id,
         name: v.name,
@@ -661,14 +704,16 @@ export async function buildPublishSource(
     // No stock counts exist in the source → every variation is honestly 'unknown'.
     availabilityFor: () => ({}),
   };
-  return { source, itemCount: items.length };
+  const itemsWithImages = items.filter((i) => (i.images?.length ?? 0) > 0).length;
+  return { source, itemCount: items.length, itemsWithImages };
 }
 
 export async function seedStorefront(
   db: Kysely<PlatformDatabase>,
   tenantId: string,
   events: PlatformApp['events'],
-): Promise<StorefrontSeedResult> {
+  imageMap?: Map<string, PublishImage[]>,
+): Promise<StorefrontSeedResult & { itemsWithImages?: number }> {
   const sdb = as<StorefrontDatabase>(db);
   // storefront is a wave-3 projection lane not yet wired into apps/api's
   // allMigrations; the seed owns its projection tables (idempotent).
@@ -685,7 +730,7 @@ export async function seedStorefront(
       runId: existingLive.id,
     };
   }
-  const { source } = await buildPublishSource(db, tenantId);
+  const { source, itemsWithImages } = await buildPublishSource(db, tenantId, imageMap);
   const res = await publishStorefront({ db: sdb, tenantId, source, events, actor: ACTOR });
   return {
     published: true,
@@ -695,6 +740,7 @@ export async function seedStorefront(
     status: res.status,
     failures: res.failures,
     runId: res.runId,
+    itemsWithImages,
   };
 }
 
@@ -783,11 +829,13 @@ async function main(): Promise<void> {
       `non-active-skipped ${gift.nonActiveSkipped} | outstanding liability ${gift.liabilityCents}¢${gift.issued === 0 ? ' (unchanged)' : ''}`,
   );
 
-  /* ---- 7. storefront ---- */
-  const store = await seedStorefront(db, tenantId, events);
+  /* ---- 7. storefront (with product images from the ledger) ---- */
+  const imageMap = buildLedgerImageMap(ledger);
+  const store = await seedStorefront(db, tenantId, events, imageMap);
   console.log(
     `[7] storefront: ${store.published ? 'published' : 'unchanged (live run exists)'} run=${store.runId} ` +
-      `status=${store.status} items=${store.itemCount} variations=${store.variationCount} pages=${store.pageCount}` +
+      `status=${store.status} items=${store.itemCount} variations=${store.variationCount} pages=${store.pageCount} ` +
+      `items-with-images=${store.itemsWithImages ?? 0} (image map ${imageMap.size} products)` +
       (store.failures.length ? ` FAILURES=${store.failures.slice(0, 5).join('; ')}` : ''),
   );
 
