@@ -118,6 +118,28 @@ interface JourneyResult {
 
 const results: JourneyResult[] = [];
 
+/**
+ * Fail-closed sentinel. Set true ONLY after all 20 journeys are proven passed.
+ * A partial/deadlocked run (e.g. the confirmDoubleOptIn transaction deadlock at
+ * J14 leaves main()'s promise unsettled → Node drains the event loop and exits
+ * 0 with NO results table) must NOT be able to exit green. `installFailClosedGuard`
+ * flips any code-0 exit to non-zero unless this flag was set.
+ */
+let harnessProvedAllPassed = false;
+
+function installFailClosedGuard(): void {
+  process.on('exit', (code) => {
+    if (!harnessProvedAllPassed && code === 0) {
+      // eslint-disable-next-line no-console
+      console.error(
+        '\nFAIL-CLOSED: the acceptance harness exited before proving all 20 journeys ' +
+          'passed (partial or deadlocked run — no 20/20 table printed). Forcing non-zero exit.',
+      );
+      process.exitCode = 1;
+    }
+  });
+}
+
 function assert(cond: unknown, msg: string): asserts cond {
   if (!cond) throw new Error(`assertion failed: ${msg}`);
 }
@@ -140,6 +162,23 @@ async function stockRow(db: unknown, tenantId: string, variationId: string, loca
  * ---------------------------------------------------------------- */
 
 async function main(): Promise<void> {
+  // Watchdog: a genuine deadlock (nested transaction hangs forever) would keep
+  // main()'s promise pending. If the engine keeps the loop alive the process
+  // hangs; if not, Node exits 0. Either failure mode is unacceptable — this
+  // timer converts a hang into a DETERMINISTIC non-zero exit with a clear cause.
+  // Cleared only once all 20 journeys are proven passed. Tune with ACCEPTANCE_TIMEOUT_MS.
+  const WATCHDOG_MS = Number(process.env.ACCEPTANCE_TIMEOUT_MS ?? 300_000);
+  const watchdog = setTimeout(() => {
+    // eslint-disable-next-line no-console
+    console.error(
+      `\nFAIL-CLOSED: acceptance harness exceeded ${WATCHDOG_MS}ms without proving 20/20 ` +
+        `— treating as a deadlock. Exiting non-zero.`,
+    );
+    process.exit(1);
+  }, WATCHDOG_MS);
+  // Intentionally NOT unref()'d: on a would-drain deadlock the live timer keeps
+  // the loop alive so THIS handler fires (instead of a silent exit-0 drain).
+
   const template =
     process.env.TEMPLATE_DB_PATH ??
     '/private/tmp/claude-501/-Users-michaelbarber/285a9acd-656b-4435-a891-0da839339f0b/scratchpad/mags-acceptance.db';
@@ -864,7 +903,8 @@ async function main(): Promise<void> {
 
   /* ---------------- evidence + table ---------------- */
   const passed = results.filter((r) => r.pass).length;
-  const allPass = passed === 20 && conservation.ok;
+  const ran = results.length;
+  const allPass = ran === 20 && passed === 20 && conservation.ok;
 
   const evidence = {
     generatedFrom: template,
@@ -891,15 +931,25 @@ async function main(): Promise<void> {
   console.log(`  evidence written to: ${evidencePath}`);
   console.log('='.repeat(72));
 
+  // Explicit "expected 20, got N" guard — a short run (deadlock/early throw that
+  // skipped journeys) is a FAIL even if every journey that DID run passed.
+  if (ran !== 20) {
+    console.error(`\nEXPECTED 20 journeys, only ${ran} RAN — partial run, treating as FAIL.`);
+    process.exit(1);
+  }
   if (!allPass) {
     console.error(`\n${20 - passed} JOURNEY(S) FAILED${conservation.ok ? '' : ' + conservation drift'} — NOT COMPLETE.`);
     process.exit(1);
   }
+  // Only here is the run genuinely green: 20 ran, 20 passed, conservation intact.
+  clearTimeout(watchdog);
+  harnessProvedAllPassed = true;
   console.log(`\nALL 20 ACCEPTANCE JOURNEYS PASSED — conservation intact.`);
 }
 
 const invokedDirectly = process.argv[1] && path.resolve(process.argv[1]).endsWith('acceptance-journeys.ts');
 if (invokedDirectly) {
+  installFailClosedGuard();
   main().catch((err) => {
     console.error(err);
     process.exit(1);

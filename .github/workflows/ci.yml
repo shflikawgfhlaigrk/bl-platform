@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [main, mags-commerce-os]
+  pull_request:
+
+jobs:
+  test:
+    name: typecheck + vitest (incl. confirmDoubleOptIn deadlock guard)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      # `npm test` now includes packages/customers/test/consent-deadlock.test.ts —
+      # the in-process regression that FAILS if the confirmDoubleOptIn transaction
+      # deadlock (fixed in 6f9a254) ever recurs. This is the part of the acceptance
+      # coverage that runs on a hosted runner (no external data required).
+      - run: npm test
+
+  acceptance:
+    name: 20-journey acceptance gate (requires the real Mags ledger)
+    # The full acceptance harness needs ~/MagsTack/ledger.db — a ~33MB local
+    # artifact that is NOT committed to the repo. On a hosted runner it is absent,
+    # so this job SKIPS with a clear message; on a self-hosted runner (or once the
+    # ledger is provisioned) the gate runs and BLOCKS on any deadlock/partial run.
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Run acceptance gate if the ledger is present
+        run: |
+          if [ -f "$HOME/MagsTack/ledger.db" ]; then
+            echo "ledger present — running the fail-closed acceptance gate."
+            npm run test:acceptance
+          else
+            echo "::notice::SKIPPED — $HOME/MagsTack/ledger.db not present on this runner."
+            echo "The 20-journey acceptance gate requires the real Mags ledger (not in the repo)."
+            echo "Provision it on a self-hosted runner to make this gate blocking."
+          fi
