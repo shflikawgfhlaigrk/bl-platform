@@ -85,7 +85,7 @@ export {
   availabilityNoCountGate,
   assertProjectionSchemaClean,
 } from './gates';
-export type { GateResult, RunGatesOptions } from './gates';
+export type { GateResult, RunGatesOptions, OwnIdentity } from './gates';
 
 export { buildCss, checkPalette, PALETTE_PAIRS, LIGHT, DARK, AA_MIN } from './theme';
 export type { PalettePair, ContrastCheck } from './theme';

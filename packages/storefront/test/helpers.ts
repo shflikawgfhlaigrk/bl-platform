@@ -129,7 +129,7 @@ export function makeSite(pages: Array<Partial<RenderedPage> & { path: string; bo
     description: p.description ?? 'D',
     kind: p.kind ?? 'info',
   }));
-  return { pages: full, byPath: new Map(full.map((p) => [p.path, p])), imageRefs: new Set(imageRefs) };
+  return { pages: full, byPath: new Map(full.map((p) => [p.path, p])), imageRefs: new Set(imageRefs), assetRefs: new Set<string>() };
 }
 
 /** Seed a live projection directly (no audit/gates) into a projection-only db. */

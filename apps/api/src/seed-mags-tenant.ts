@@ -638,10 +638,44 @@ export function buildLedgerImageMap(ledger: Database.Database): Map<string, Publ
   return map;
 }
 
+/**
+ * Per-variant stock truth pulled from the shop's own live store (public store
+ * API — the same data its product pages render). Keyed by Square catalog ids,
+ * which ARE this tenant's source ids.
+ */
+export interface StockSnapshot {
+  /** source_variation_id → observed stock. qty null = not tracked (sold_out is the signal). */
+  variants: Record<string, { qty: number | null; sold_out: boolean }>;
+  /** source_item_id → live-store product presence/visibility. */
+  products: Record<string, { visible: boolean }>;
+  as_of?: string;
+}
+
+export interface StockOptions {
+  snapshot: StockSnapshot;
+  /**
+   * Publish ONLY items that are visible in the live store with at least one
+   * not-sold-out variation (the client's "show what's in stock" launch rule).
+   */
+  inStockOnly: boolean;
+  /** qty at or below this shows the low-stock badge (matches the shop's own threshold). */
+  lowThreshold: number;
+}
+
+/** Map one observed variant to the projection availability state. */
+function stockState(v: { qty: number | null; sold_out: boolean }, lowThreshold: number): 'in_stock' | 'low' | 'out' | 'unknown' {
+  if (v.sold_out) return 'out';
+  if (v.qty == null) return 'unknown';
+  if (v.qty <= 0) return 'out';
+  if (v.qty <= lowThreshold) return 'low';
+  return 'in_stock';
+}
+
 export async function buildPublishSource(
   db: Kysely<PlatformDatabase>,
   tenantId: string,
   imageMap?: Map<string, PublishImage[]>,
+  stock?: StockOptions,
 ): Promise<{ source: PublishSource; itemCount: number; itemsWithImages: number }> {
   const cdb = as<CatalogDatabase>(db);
   const depts = await cdb.selectFrom('catalog_departments').selectAll().where('tenant_id', '=', tenantId).execute();
@@ -675,7 +709,20 @@ export async function buildPublishSource(
     arr.push(v);
   }
 
-  const items: PublishItemInput[] = products.map((p) => {
+  // In-stock launch filter: keep only products the live store shows as
+  // visible with >=1 not-sold-out variation. No stock data → item stays out.
+  const publishable = stock?.inStockOnly
+    ? products.filter((p) => {
+        const live = stock.snapshot.products[p.source_item_id];
+        if (!live?.visible) return false;
+        return (varsByProduct.get(p.id) ?? []).some((v) => {
+          const sv = stock.snapshot.variants[v.source_variation_id];
+          return sv != null && !sv.sold_out;
+        });
+      })
+    : products;
+
+  const items: PublishItemInput[] = publishable.map((p) => {
     const dept = p.department_id ? deptById.get(p.department_id) : undefined;
     const brand = p.brand_id ? brandById.get(p.brand_id) : undefined;
     return {
@@ -701,8 +748,18 @@ export async function buildPublishSource(
 
   const source: PublishSource = {
     listPublishableItems: () => items,
-    // No stock counts exist in the source → every variation is honestly 'unknown'.
-    availabilityFor: () => ({}),
+    // With a stock snapshot: real per-variant availability from the shop's own
+    // live store. Without: every variation is honestly 'unknown'.
+    availabilityFor: stock
+      ? (variationIds) => {
+          const out: Record<string, 'in_stock' | 'low' | 'out' | 'unknown'> = {};
+          for (const vid of variationIds) {
+            const sv = stock.snapshot.variants[vid];
+            if (sv != null) out[vid] = stockState(sv, stock.lowThreshold);
+          }
+          return out;
+        }
+      : () => ({}),
   };
   const itemsWithImages = items.filter((i) => (i.images?.length ?? 0) > 0).length;
   return { source, itemCount: items.length, itemsWithImages };

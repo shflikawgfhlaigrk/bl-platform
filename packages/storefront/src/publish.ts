@@ -3,7 +3,7 @@ import type { Kysely } from 'kysely';
 import { id, nowIso, audit, asCoreDb, type EventBus } from '@blacklabel/core';
 import type { AvailabilityState, PublishRunStatus, StorefrontDatabase } from './schema';
 import { renderSite, type ProjectionSite, type RenderItem, type RenderFacet, type SiteConfig } from './render';
-import { runContentGates, assertProjectionSchemaClean, type GateResult } from './gates';
+import { runContentGates, assertProjectionSchemaClean, type GateResult, type OwnIdentity } from './gates';
 
 type Db = Kysely<StorefrontDatabase>;
 
@@ -188,6 +188,8 @@ export interface PublishOptions {
   dataAsOf?: string;
   denylist?: string[];
   crossBrandTerms?: string[];
+  /** The shop's own public contact identity — exempted by the leakage/link gates. */
+  ownIdentity?: OwnIdentity;
 }
 
 export interface PublishResult {
@@ -335,7 +337,7 @@ export async function publishStorefront(opts: PublishOptions): Promise<PublishRe
 
   // --- Gates.
   const schemaGate = await assertProjectionSchemaClean(db);
-  const contentGates = runContentGates(rendered, { denylist: opts.denylist, crossBrandTerms: opts.crossBrandTerms });
+  const contentGates = runContentGates(rendered, { denylist: opts.denylist, crossBrandTerms: opts.crossBrandTerms, ownIdentity: opts.ownIdentity });
   const gateResults = [schemaGate, ...contentGates];
   const failures = gateResults.flatMap((g) => g.failures);
 

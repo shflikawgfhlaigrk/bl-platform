@@ -53,6 +53,18 @@ export interface ProjectionSite {
   brands: RenderFacet[];
 }
 
+/** The shop's own public contact identity (renders in footer/about/checkout). */
+export interface SiteContactConfig {
+  phone?: string;
+  email?: string;
+  /** Instagram handle, no @. */
+  instagram?: string;
+  /** Facebook page path after facebook.com/. */
+  facebook?: string;
+  /** Public locality line, e.g. 'Newnan, Georgia'. Never a street address. */
+  city?: string;
+}
+
 export interface SiteConfig {
   /** The storefront brand — NEVER another property's name. */
   brandName: string;
@@ -66,6 +78,24 @@ export interface SiteConfig {
   mode: 'static' | 'live';
   featuredLimit: number;
   relatedLimit: number;
+  /** Logo image basename under assets/ ('' = text-only brand). */
+  logoFile: string;
+  /**
+   * Announcement bar text. '' = bar hidden. POLICY: only client-confirmed
+   * offers/notices go here — never an invented promotion.
+   */
+  announcement: string;
+  /** Shop contact identity; empty object = no contact rendered. */
+  contact: SiteContactConfig;
+  /** Escaped-at-render about paragraphs (client story). */
+  aboutParagraphs: string[];
+  /** Number of brand links in the homepage brand row (by sales rank). 0 = hidden. */
+  brandRowLimit: number;
+  /**
+   * Extra informational pages (shipping/returns/privacy/terms). POLICY: only
+   * the client's own published policy text — never an invented policy.
+   */
+  infoPages: Array<{ slug: string; title: string; paragraphs: string[] }>;
 }
 
 export const DEFAULT_CONFIG: SiteConfig = {
@@ -77,6 +107,12 @@ export const DEFAULT_CONFIG: SiteConfig = {
   mode: 'static',
   featuredLimit: 12,
   relatedLimit: 6,
+  logoFile: '',
+  announcement: '',
+  contact: {},
+  aboutParagraphs: [],
+  brandRowLimit: 10,
+  infoPages: [],
 };
 
 export interface RenderedPage {
@@ -93,6 +129,9 @@ export interface RenderedSite {
   byPath: Map<string, RenderedPage>;
   /** image basenames referenced by any item page (for the export image copier). */
   imageRefs: Set<string>;
+  /** extra asset basenames referenced under assets/ (e.g. the logo) — the
+   * export must copy these via extraAssets. */
+  assetRefs: Set<string>;
 }
 
 /* ------------------------------- helpers ------------------------------- */
@@ -147,6 +186,27 @@ function imageBasename(path: string): string {
   return parts[parts.length - 1] || path;
 }
 
+/** Two-word brands render the second word in the accent color (logo style). */
+function brandWordmark(name: string): string {
+  const words = name.trim().split(/\s+/);
+  if (words.length !== 2) return escapeHtml(name);
+  return `${escapeHtml(words[0])} <span class="accent">${escapeHtml(words[1])}</span>`;
+}
+
+/** Footer/about contact line from the configured shop identity. */
+function contactLine(cfg: SiteConfig): string {
+  const c = cfg.contact;
+  const parts: string[] = [];
+  if (c.phone) {
+    const tel = c.phone.replace(/[^+\d]/g, '');
+    parts.push(`<a href="tel:${escapeHtml(tel)}">${escapeHtml(c.phone)}</a>`);
+  }
+  if (c.email) parts.push(`<a href="mailto:${escapeHtml(c.email)}">${escapeHtml(c.email)}</a>`);
+  if (c.instagram) parts.push(`<a href="https://www.instagram.com/${escapeHtml(c.instagram)}" rel="noopener">Instagram</a>`);
+  if (c.facebook) parts.push(`<a href="https://www.facebook.com/${escapeHtml(c.facebook)}" rel="noopener">Facebook</a>`);
+  return parts.length ? `<p>${parts.join(' · ')}</p>` : '';
+}
+
 /* --------------------------- page chrome ------------------------------- */
 
 interface LayoutInput {
@@ -179,13 +239,15 @@ function layout(i: LayoutInput): string {
 <title>${escapeHtml(i.title)}</title>
 <meta name="description" content="${escapeHtml(i.description)}">
 <link rel="canonical" href="${escapeHtml(canonical)}">
-<link rel="stylesheet" href="assets/site.css">${jsonLd}
+<link rel="stylesheet" href="assets/site.css">
+${cfg.logoFile ? '<link rel="icon" type="image/png" href="assets/favicon.png">' : ''}${jsonLd}
 </head>
 <body>
 <a class="skip-link" href="#main">Skip to main content</a>
+${cfg.announcement ? `<p class="announce">${escapeHtml(cfg.announcement)}</p>` : ''}
 <header class="site">
   <div class="wrap">
-    <a class="brand" href="index.html">${escapeHtml(cfg.brandName)}<small>${escapeHtml(cfg.tagline)}</small></a>
+    <a class="brand" href="index.html">${cfg.logoFile ? `<img src="assets/${escapeHtml(cfg.logoFile)}" alt="" aria-hidden="true" width="42" height="42">` : ''}<span>${brandWordmark(cfg.brandName)}<small>${escapeHtml(cfg.tagline)}</small></span></a>
     <form class="searchbar" role="search" action="search.html" method="get">
       <label class="visually-hidden" for="q">Search products</label>
       <input id="q" name="q" type="search" placeholder="Search products" autocomplete="off">
@@ -199,8 +261,9 @@ ${i.bodyHtml}
 </main>
 <footer class="site">
   <div class="wrap">
-    <p>${escapeHtml(cfg.brandName)} — ${escapeHtml(cfg.tagline)}.</p>
-    <p><a href="gift-cards.html">Gift cards</a> · <a href="order-status.html">Order status</a> · <a href="consent.html">Email updates</a> · <a href="about.html">About</a></p>
+    <p>${escapeHtml(cfg.brandName)} — ${escapeHtml(cfg.tagline)}.${cfg.contact.city ? ` ${escapeHtml(cfg.contact.city)}.` : ''}</p>
+    ${contactLine(cfg)}
+    <p><a href="gift-cards.html">Gift cards</a> · <a href="order-status.html">Order status</a> · <a href="consent.html">Email updates</a> · <a href="about.html">About</a>${cfg.infoPages.map((ip) => ` · <a href="${escapeHtml(ip.slug)}.html">${escapeHtml(ip.title)}</a>`).join('')}</p>
     <p class="muted">Availability shown as in-stock / low / out only. Prices in USD. Data as of ${escapeHtml(site.dataAsOf)}.</p>
   </div>
   <script src="assets/app.js" defer></script>
@@ -352,7 +415,30 @@ export function renderSite(site: ProjectionSite, config?: Partial<SiteConfig>): 
   const deptGrid = navDepartments
     .map((d) => `<a href="department-${escapeHtml(d.slug)}.html">${escapeHtml(d.name)} <span class="muted">(${d.itemCount})</span></a>`)
     .join('');
-  const homeBody = `<div class="hero"><h1>${escapeHtml(cfg.brandName)}</h1><p>${escapeHtml(cfg.tagline)}. Browse tack, apparel, and horse care for the show ring.</p></div>
+  // Brand row: brands ranked by their best-selling item (min velocity rank).
+  const brandBest = new Map<string, number>();
+  for (const it of site.items) {
+    if (!it.brandSlug) continue;
+    const cur = brandBest.get(it.brandSlug);
+    if (cur === undefined || it.velocityRank < cur) brandBest.set(it.brandSlug, it.velocityRank);
+  }
+  const topBrands = site.brands
+    .filter((b) => brandBest.has(b.slug))
+    .sort((a, b) => (brandBest.get(a.slug)! - brandBest.get(b.slug)!) || (a.slug < b.slug ? -1 : 1))
+    .slice(0, cfg.brandRowLimit);
+  const brandRow = topBrands.length
+    ? `<h2 id="brands">Shop by brand</h2>
+<nav class="brandrow" aria-labelledby="brands">${topBrands.map((b) => `<a href="brand-${escapeHtml(b.slug)}.html">${escapeHtml(b.name)}</a>`).join('')}</nav>`
+    : '';
+  const c = cfg.contact;
+  const trustStrip = `<div class="trust">
+<div><strong>On the show circuit</strong>Find our trailer at horse shows across the region — follow along${c.instagram ? ` at <a href="https://www.instagram.com/${escapeHtml(c.instagram)}" rel="noopener">@${escapeHtml(c.instagram)}</a>` : ''}.</div>
+<div><strong>Family-run</strong>A real tack shop${c.city ? ` from ${escapeHtml(c.city)}` : ''} — talk to people who ride.</div>
+<div><strong>Ask us anything</strong>${c.phone ? `Call or text <a href="tel:${escapeHtml(c.phone.replace(/[^+\d]/g, ''))}">${escapeHtml(c.phone)}</a>` : 'Reach out'}${c.email ? ` or email <a href="mailto:${escapeHtml(c.email)}">${escapeHtml(c.email)}</a>` : ''}.</div>
+</div>`;
+  const homeBody = `<div class="hero"><p class="kicker">Tack · Apparel · Horse care</p><h1>${brandWordmark(cfg.brandName)}</h1><p>${escapeHtml(cfg.tagline)}. Browse tack, apparel, and horse care for the show ring.</p><p><a class="btn" href="#featured">Shop bestsellers</a> <a class="btn secondary" href="about.html">Our story</a></p></div>
+${trustStrip}
+${brandRow}
 <h2>Departments</h2>
 <nav class="deptgrid" aria-label="Shop by department">${deptGrid}</nav>
 <h2 id="featured">Featured</h2>
@@ -415,7 +501,7 @@ ${pager}`;
     // Note: SKUs are internal identifiers and are NEVER rendered publicly
     // (they leak internal codes and collide with phone-number detection).
     const rows = item.variations
-      .map((v) => `<tr><td>${escapeHtml(v.name)}</td><td>${v.priceCents != null ? escapeHtml(money(v.priceCents)) : '<span class="muted">Price not listed</span>'}</td><td>${availabilityBadge(v.state, cfg.lowStockLabel) || '<span class="muted">—</span>'}</td><td><button class="btn" type="button" onclick="addToCart('${escapeHtml(v.id)}','${escapeHtml(item.name)} ${escapeHtml(v.name)}',${v.priceCents != null ? v.priceCents : 'null'})">Add to cart</button></td></tr>`)
+      .map((v) => `<tr><td>${escapeHtml(v.name)}</td><td>${v.priceCents != null ? escapeHtml(money(v.priceCents)) : '<span class="muted">Price not listed</span>'}</td><td>${availabilityBadge(v.state, cfg.lowStockLabel) || '<span class="muted">—</span>'}</td><td>${v.state === 'out' ? '<span class="muted">Unavailable</span>' : `<button class="btn" type="button" onclick="addToCart('${escapeHtml(v.id)}','${escapeHtml(item.name)} ${escapeHtml(v.name)}',${v.priceCents != null ? v.priceCents : 'null'})">Add to cart</button>`}</td></tr>`)
       .join('');
     const related = site.items
       .filter((o) => o.id !== item.id && o.categoryName && o.categoryName === item.categoryName)
@@ -428,7 +514,9 @@ ${pager}`;
       cfg.mode === 'live'
         ? `<p><button class="btn secondary" type="button" onclick="document.getElementById('restock').hidden=!document.getElementById('restock').hidden">Request restock</button></p>
 <form id="restock" hidden method="post" action="/store/api/restock-request"><label for="rvid">Variation</label><select id="rvid" name="variationId" class="field">${item.variations.map((v) => `<option value="${escapeHtml(v.id)}">${escapeHtml(v.name)}</option>`).join('')}</select><label for="remail">Your email (optional)</label><input id="remail" class="field" type="email" name="email"><p><button class="btn" type="submit">Notify me</button></p></form>`
-        : `<p class="muted">Restock requests open when this shop is running in live mode.</p>`;
+        : cfg.contact.email
+          ? `<p class="muted">Looking for a size or color you don't see? Email <a href="mailto:${escapeHtml(cfg.contact.email)}">${escapeHtml(cfg.contact.email)}</a>${cfg.contact.phone ? ` or call/text <a href="tel:${escapeHtml(cfg.contact.phone.replace(/[^+\d]/g, ''))}">${escapeHtml(cfg.contact.phone)}</a>` : ''} — we restock often.</p>`
+          : `<p class="muted">Looking for a size you don't see? Ask us at a show — we restock often.</p>`;
     const jsonLd = JSON.stringify({
       '@context': 'https://schema.org',
       '@type': 'Product',
@@ -496,7 +584,7 @@ ${relatedHtml}`;
 <p class="note">Live-local mode: this posts your order to the Mags OS server, which reserves stock. Hosted card payment is a separate, approval-gated step.</p>`
       : `<h1>Checkout</h1>
 <div id="cart-lines"></div><p id="cart-total" class="price"></p>
-<p class="note">This is a static preview of the storefront. Placing an order and paying requires the Mags OS server (live mode); hosted payments are pending founder approval. Your cart is saved on this device.</p>`;
+<p class="note">Online card checkout is opening soon. Your cart is saved on this device — ${cfg.contact.email ? `email your list to <a href="mailto:${escapeHtml(cfg.contact.email)}">${escapeHtml(cfg.contact.email)}</a>${cfg.contact.phone ? ` or call/text <a href="tel:${escapeHtml(cfg.contact.phone.replace(/[^+\d]/g, ''))}">${escapeHtml(cfg.contact.phone)}</a>` : ''} and we'll get you taken care of, or ` : ''}find our trailer at a show near you.</p>`;
   add({ path: 'checkout.html', contentType: 'text/html; charset=utf-8', kind: 'checkout', title: `Checkout — ${cfg.brandName}`, description: 'Checkout.', body: layout({ cfg, site, navDepartments, title: `Checkout — ${cfg.brandName}`, description: 'Checkout.', canonicalFile: 'checkout.html', bodyHtml: checkoutBody }) });
 
   /* Order status */
@@ -531,9 +619,20 @@ ${relatedHtml}`;
   add({ path: 'gift-cards.html', contentType: 'text/html; charset=utf-8', kind: 'gift_cards', title: `Gift cards — ${cfg.brandName}`, description: 'Gift cards.', body: layout({ cfg, site, navDepartments, title: `Gift cards — ${cfg.brandName}`, description: 'Gift cards.', canonicalFile: 'gift-cards.html', bodyHtml: giftBody }) });
 
   /* About */
+  const aboutParas = cfg.aboutParagraphs.length
+    ? cfg.aboutParagraphs.map((p) => `<p>${escapeHtml(p)}</p>`).join('\n')
+    : `<p>${escapeHtml(cfg.brandName)} is a ${escapeHtml(cfg.tagline)}. Find us at horse shows across the region with tack, apparel and horse care for every rider.</p>`;
   const aboutBody = `<h1>About ${escapeHtml(cfg.brandName)}</h1>
-<p>${escapeHtml(cfg.brandName)} is a ${escapeHtml(cfg.tagline)}. Find us at horse shows across the region with tack, apparel and horse care for every rider.</p>`;
+${aboutParas}
+${contactLine(cfg)}`;
   add({ path: 'about.html', contentType: 'text/html; charset=utf-8', kind: 'info', title: `About — ${cfg.brandName}`, description: `About ${cfg.brandName}.`, body: layout({ cfg, site, navDepartments, title: `About — ${cfg.brandName}`, description: `About ${cfg.brandName}.`, canonicalFile: 'about.html', bodyHtml: aboutBody }) });
+
+  /* Info / policy pages (client-authored text via config) */
+  for (const ip of cfg.infoPages) {
+    const body = `<h1>${escapeHtml(ip.title)}</h1>
+${ip.paragraphs.map((p) => `<p>${escapeHtml(p)}</p>`).join('\n')}`;
+    add({ path: `${ip.slug}.html`, contentType: 'text/html; charset=utf-8', kind: 'info', title: `${ip.title} — ${cfg.brandName}`, description: `${ip.title}.`, body: layout({ cfg, site, navDepartments, title: `${ip.title} — ${cfg.brandName}`, description: `${ip.title}.`, canonicalFile: `${ip.slug}.html`, bodyHtml: body }) });
+  }
 
   /* 404 */
   const notFoundBody = `<h1>Page not found</h1><p>We couldn't find that page. <a href="index.html">Return home</a>.</p>`;
@@ -574,5 +673,10 @@ function finalize(
   pages.push({ path: 'robots.txt', contentType: 'text/plain; charset=utf-8', kind: 'robots', title: '', description: '', body: robots });
 
   const byPath = new Map(pages.map((p) => [p.path, p]));
-  return { pages, byPath, imageRefs };
+  const assetRefs = new Set<string>();
+  if (cfg.logoFile) {
+    assetRefs.add(cfg.logoFile);
+    assetRefs.add('favicon.png');
+  }
+  return { pages, byPath, imageRefs, assetRefs };
 }

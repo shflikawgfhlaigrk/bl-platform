@@ -34,21 +34,42 @@ const EMAIL_RE = /[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/gi;
 // Phone: require separators/parens so bare digit SKUs/barcodes don't false-positive.
 const PHONE_RE = /(?:\+?1[\s.-])?\(?\d{3}\)?[\s.-]\d{3}[\s.-]\d{4}/g;
 
+/**
+ * The shop's OWN public identity — the one email/phone/social set that is
+ * allowed to render (it is the store's public contact info, not a leak).
+ * Fail-closed: default empty, so nothing is exempt unless explicitly
+ * configured by the integrator.
+ */
+export interface OwnIdentity {
+  emails?: string[];
+  phones?: string[];
+  /** Hosts allowed as outbound NAVIGATION links (social profiles). */
+  linkHosts?: string[];
+}
+
+const digitsOnly = (s: string): string => s.replace(/\D/g, '').replace(/^1(?=\d{10}$)/, '');
+
 export function leakageGate(
   site: RenderedSite,
-  opts: { denylist?: string[]; crossBrandTerms?: string[] } = {},
+  opts: { denylist?: string[]; crossBrandTerms?: string[]; ownIdentity?: OwnIdentity } = {},
 ): GateResult {
   const failures: string[] = [];
   let checked = 0;
   const denylist = opts.denylist ?? [];
   const crossBrand = ['black label', ...(opts.crossBrandTerms ?? [])].map((s) => s.toLowerCase());
+  const ownEmails = new Set((opts.ownIdentity?.emails ?? []).map((e) => e.toLowerCase()));
+  const ownPhones = new Set((opts.ownIdentity?.phones ?? []).map(digitsOnly));
 
   for (const p of textPages(site)) {
     checked++;
     const body = p.body;
     const lower = body.toLowerCase();
-    for (const m of body.match(EMAIL_RE) ?? []) failures.push(`${p.path}: email-like string "${m}"`);
-    for (const m of body.match(PHONE_RE) ?? []) failures.push(`${p.path}: phone-like string "${m}"`);
+    for (const m of body.match(EMAIL_RE) ?? []) {
+      if (!ownEmails.has(m.toLowerCase())) failures.push(`${p.path}: email-like string "${m}"`);
+    }
+    for (const m of body.match(PHONE_RE) ?? []) {
+      if (!ownPhones.has(digitsOnly(m))) failures.push(`${p.path}: phone-like string "${m}"`);
+    }
     for (const term of denylist) {
       if (!term) continue;
       if (lower.includes(term.toLowerCase())) failures.push(`${p.path}: denylist term "${term}"`);
@@ -120,7 +141,11 @@ export function a11yGate(site: RenderedSite): GateResult {
       const tag = m[0];
       const alt = tag.match(/\balt=["']([^"']*)["']/i);
       if (!alt) failures.push(`${p.path}: <img> without alt (${tag.slice(0, 60)})`);
-      else if (alt[1].trim() === '') failures.push(`${p.path}: <img> with empty alt (${tag.slice(0, 60)})`);
+      // Decorative images (empty alt) are allowed ONLY when explicitly hidden
+      // from the accessibility tree.
+      else if (alt[1].trim() === '' && !/\baria-hidden=["']true["']/i.test(tag)) {
+        failures.push(`${p.path}: <img> with empty alt (${tag.slice(0, 60)})`);
+      }
     }
     // labeled controls
     const labelFors = new Set([...b.matchAll(/<label\b[^>]*\bfor=["']([^"']+)["']/gi)].map((m) => m[1]));
@@ -149,14 +174,22 @@ export function a11yGate(site: RenderedSite): GateResult {
 
 /* ----------------------------- external URLs --------------------------- */
 
-export function externalUrlGate(site: RenderedSite): GateResult {
+export function externalUrlGate(site: RenderedSite, ownIdentity?: OwnIdentity): GateResult {
   const failures: string[] = [];
   let checked = 0;
+  const allowedHosts = new Set((ownIdentity?.linkHosts ?? []).map((h) => h.toLowerCase()));
   for (const p of textPages(site)) {
     checked++;
+    // Collect URLs that appear as anchor NAVIGATION targets — the only place a
+    // configured social host is allowed. Resource loads (src=, link href=,
+    // fetch targets) stay forbidden regardless of host.
+    const navUrls = new Set<string>();
+    for (const a of p.body.matchAll(/<a\b[^>]*\bhref=["'](https?:\/\/[^"']+)["']/gi)) navUrls.add(a[1]);
     for (const m of p.body.matchAll(/https?:\/\/([^\s"'<>)]+)/gi)) {
       const host = m[1].split(/[/?#]/)[0].toLowerCase();
-      if (!IDENTIFIER_HOSTS.has(host)) failures.push(`${p.path}: external URL ${m[0]}`);
+      if (IDENTIFIER_HOSTS.has(host)) continue;
+      if (allowedHosts.has(host) && navUrls.has(m[0])) continue;
+      failures.push(`${p.path}: external URL ${m[0]}`);
     }
   }
   return { name: 'external-urls', pass: failures.length === 0, failures, checked };
@@ -172,6 +205,10 @@ export function brokenLinkGate(site: RenderedSite): GateResult {
     if (target.startsWith('assets/img/')) {
       const base = target.slice('assets/img/'.length);
       return site.imageRefs.has(base);
+    }
+    if (target.startsWith('assets/')) {
+      // Declared extra assets (e.g. the logo) — the export copies these.
+      return site.assetRefs.has(target.slice('assets/'.length));
     }
     return false;
   };
@@ -258,6 +295,7 @@ export function availabilityNoCountGate(site: RenderedSite): GateResult {
 export interface RunGatesOptions {
   denylist?: string[];
   crossBrandTerms?: string[];
+  ownIdentity?: OwnIdentity;
 }
 
 /** Run every content gate over the rendered site. Deterministic order. */
@@ -266,7 +304,7 @@ export function runContentGates(site: RenderedSite, opts: RunGatesOptions = {}):
     leakageGate(site, opts),
     exclusionOutputGate(site),
     a11yGate(site),
-    externalUrlGate(site),
+    externalUrlGate(site, opts.ownIdentity),
     brokenLinkGate(site),
     seoGate(site),
     availabilityNoCountGate(site),

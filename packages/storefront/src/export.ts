@@ -4,7 +4,7 @@ import type { Kysely } from 'kysely';
 import type { StorefrontDatabase } from './schema';
 import { renderSite, type SiteConfig } from './render';
 import { readProjection, getLiveRun } from './publish';
-import { runContentGates, type GateResult } from './gates';
+import { runContentGates, type GateResult, type OwnIdentity } from './gates';
 
 type Db = Kysely<StorefrontDatabase>;
 
@@ -23,6 +23,10 @@ export interface ExportOptions {
   runGates?: boolean;
   denylist?: string[];
   crossBrandTerms?: string[];
+  /** The shop's own public contact identity — exempted by the leakage/link gates. */
+  ownIdentity?: OwnIdentity;
+  /** Extra static assets copied to assets/<destName> (e.g. the logo). */
+  extraAssets?: Array<{ sourcePath: string; destName: string }>;
 }
 
 export interface ExportStats {
@@ -91,12 +95,24 @@ export async function exportStaticSite(opts: ExportOptions): Promise<ExportStats
     }
   }
 
+  for (const asset of opts.extraAssets ?? []) {
+    const dest = join(outDir, 'assets', asset.destName);
+    await mkdir(dirname(dest), { recursive: true });
+    await copyFile(asset.sourcePath, dest);
+  }
+
   const searchIndexShards = rendered.pages.filter((p) => /^search-index\/.+\.json$/.test(p.path) && p.path !== 'search-index/manifest.json').length;
 
   let gateResults: GateResult[] = [];
   let gatesPassed = true;
   if (opts.runGates !== false) {
-    gateResults = runContentGates(rendered, { denylist: opts.denylist, crossBrandTerms: opts.crossBrandTerms });
+    gateResults = runContentGates(rendered, { denylist: opts.denylist, crossBrandTerms: opts.crossBrandTerms, ownIdentity: opts.ownIdentity });
+    // Every asset the render references must actually have been copied.
+    const assetFailures: string[] = [];
+    for (const name of [...rendered.assetRefs].sort()) {
+      if (!(await fileExists(join(outDir, 'assets', name)))) assetFailures.push(`assets/${name} referenced but not copied (extraAssets)`);
+    }
+    gateResults.push({ name: 'asset-files', pass: assetFailures.length === 0, failures: assetFailures, checked: rendered.assetRefs.size });
     gatesPassed = gateResults.every((g) => g.pass);
   }
 

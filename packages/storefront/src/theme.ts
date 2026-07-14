@@ -8,15 +8,19 @@ import { contrastRatio } from './contrast';
 
 export const AA_MIN = 4.5;
 
-/** Light theme tokens. */
+/**
+ * Light theme tokens — the Mags Tack brand: white ground, near-black ink,
+ * crimson accent (#c20017 sampled from the registered logo wordmark).
+ */
 export const LIGHT = {
-  bg: '#faf6ef',
+  bg: '#f7f6f4',
   surface: '#ffffff',
-  text: '#241d18',
-  muted: '#57493d',
-  link: '#6b4a2b',
+  text: '#141414',
+  muted: '#5c5650',
+  link: '#a00013',
   onPrimary: '#ffffff',
-  primary: '#6b4a2b',
+  primary: '#141414',
+  accent: '#c20017',
   inStockFg: '#173a17',
   inStockBg: '#dcefdc',
   lowFg: '#5a3d07',
@@ -25,15 +29,16 @@ export const LIGHT = {
   outBg: '#f3dcdc',
 } as const;
 
-/** Dark theme tokens. */
+/** Dark theme tokens (crimson lifted to keep AA on dark ground). */
 export const DARK = {
-  bg: '#17120d',
-  surface: '#211a13',
-  text: '#f3ede2',
-  muted: '#c6b8a6',
-  link: '#e0ad50',
-  onPrimary: '#17120d',
-  primary: '#e0ad50',
+  bg: '#151313',
+  surface: '#201c1c',
+  text: '#f3f0ef',
+  muted: '#c9c2c0',
+  link: '#ff9d9d',
+  onPrimary: '#1c1717',
+  primary: '#f3f0ef',
+  accent: '#ff9d9d',
   inStockFg: '#bfe6bf',
   inStockBg: '#1c3320',
   lowFg: '#f0d69a',
@@ -57,6 +62,8 @@ export const PALETTE_PAIRS: PalettePair[] = [
   { name: 'light/link', fg: LIGHT.link, bg: LIGHT.bg },
   { name: 'light/link-surface', fg: LIGHT.link, bg: LIGHT.surface },
   { name: 'light/primary-button', fg: LIGHT.onPrimary, bg: LIGHT.primary },
+  { name: 'light/accent', fg: LIGHT.accent, bg: LIGHT.bg },
+  { name: 'light/accent-surface', fg: LIGHT.accent, bg: LIGHT.surface },
   { name: 'light/badge-in', fg: LIGHT.inStockFg, bg: LIGHT.inStockBg },
   { name: 'light/badge-low', fg: LIGHT.lowFg, bg: LIGHT.lowBg },
   { name: 'light/badge-out', fg: LIGHT.outFg, bg: LIGHT.outBg },
@@ -67,6 +74,8 @@ export const PALETTE_PAIRS: PalettePair[] = [
   { name: 'dark/link', fg: DARK.link, bg: DARK.bg },
   { name: 'dark/link-surface', fg: DARK.link, bg: DARK.surface },
   { name: 'dark/primary-button', fg: DARK.onPrimary, bg: DARK.primary },
+  { name: 'dark/accent', fg: DARK.accent, bg: DARK.bg },
+  { name: 'dark/accent-surface', fg: DARK.accent, bg: DARK.surface },
   { name: 'dark/badge-in', fg: DARK.inStockFg, bg: DARK.inStockBg },
   { name: 'dark/badge-low', fg: DARK.lowFg, bg: DARK.lowBg },
   { name: 'dark/badge-out', fg: DARK.outFg, bg: DARK.outBg },
@@ -93,13 +102,14 @@ export function checkPalette(pairs: PalettePair[] = PALETTE_PAIRS): ContrastChec
 export function buildCss(): string {
   const vars = (t: Record<string, string>) => `
   --bg:${t.bg};--surface:${t.surface};--text:${t.text};--muted:${t.muted};
-  --link:${t.link};--primary:${t.primary};--on-primary:${t.onPrimary};
+  --link:${t.link};--primary:${t.primary};--on-primary:${t.onPrimary};--accent:${t.accent};
   --in-fg:${t.inStockFg};--in-bg:${t.inStockBg};--low-fg:${t.lowFg};--low-bg:${t.lowBg};
   --out-fg:${t.outFg};--out-bg:${t.outBg};`;
   return `
 :root{${vars(LIGHT)}
   --maxw:64rem;--radius:10px;--gap:1rem;
   --font:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  --font-display:Georgia,'Iowan Old Style','Times New Roman',serif;
 }
 :root[data-theme="dark"]{${vars(DARK)}}
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){${vars(DARK)}}}
@@ -110,6 +120,7 @@ img{max-width:100%;height:auto;display:block}
 a{color:var(--link);text-decoration:underline;text-underline-offset:2px}
 a:hover{text-decoration:none}
 h1,h2,h3{line-height:1.2;margin:0 0 .5em;font-weight:700;letter-spacing:-.01em}
+h1,h2{font-family:var(--font-display)}
 h1{font-size:1.8rem}h2{font-size:1.35rem}h3{font-size:1.05rem}
 p{margin:0 0 1em}
 :focus-visible{outline:3px solid var(--primary);outline-offset:2px;border-radius:3px}
@@ -119,15 +130,27 @@ p{margin:0 0 1em}
 .wrap{max-width:var(--maxw);margin:0 auto;padding:0 1rem}
 header.site{border-bottom:1px solid var(--muted);background:var(--surface)}
 header.site .wrap{display:flex;align-items:center;justify-content:space-between;gap:1rem;padding-top:.8rem;padding-bottom:.8rem;flex-wrap:wrap}
-.brand{font-size:1.3rem;font-weight:800;color:var(--text);text-decoration:none;letter-spacing:.02em}
-.brand small{display:block;font-size:.62rem;font-weight:600;color:var(--muted);letter-spacing:.18em;text-transform:uppercase}
+.brand{font-family:var(--font-display);font-size:1.35rem;font-weight:700;color:var(--text);text-decoration:none;letter-spacing:.02em;display:flex;align-items:center;gap:.55rem}
+.brand small{display:block;font-size:.62rem;font-weight:600;color:var(--muted);letter-spacing:.18em;text-transform:uppercase;font-family:var(--font)}
+.brand .accent{color:var(--accent)}
+.brand img{width:2.4rem;height:2.4rem;object-fit:contain}
+.announce{background:var(--text);color:var(--bg);text-align:center;font-size:.85rem;padding:.45rem 1rem}
+.announce a{color:inherit}
+.trust{display:grid;grid-template-columns:repeat(auto-fit,minmax(12rem,1fr));gap:var(--gap);margin:1.5rem 0}
+.trust div{background:var(--surface);border:1px solid var(--muted);border-radius:var(--radius);padding:.9rem 1rem;font-size:.9rem}
+.trust strong{display:block;font-family:var(--font-display);font-size:1rem}
+.brandrow{display:flex;gap:.6rem;flex-wrap:wrap;margin:0 0 1.5rem}
+.brandrow a{background:var(--surface);border:1px solid var(--muted);border-radius:999px;padding:.45rem 1rem;color:var(--text);text-decoration:none;font-weight:600;font-size:.92rem}
+.brandrow a:hover{border-color:var(--primary);color:var(--primary)}
+.hero .kicker{color:var(--accent);font-weight:700;text-transform:uppercase;letter-spacing:.14em;font-size:.75rem;margin:0 0 .4rem}
+h1 .accent,h2 .accent{color:var(--accent)}
 nav.primary ul{list-style:none;display:flex;gap:1rem;margin:0;padding:0;flex-wrap:wrap}
 nav.primary a{color:var(--text)}
 .searchbar{display:flex;gap:.5rem;flex:1 1 14rem;min-width:12rem}
 .searchbar input{flex:1;padding:.55rem .7rem;border:1px solid var(--muted);border-radius:var(--radius);
   background:var(--surface);color:var(--text);font-size:1rem}
-.btn{display:inline-block;background:var(--primary);color:var(--on-primary);border:0;border-radius:var(--radius);
-  padding:.6rem 1rem;font-size:1rem;font-weight:600;cursor:pointer;text-decoration:none}
+.btn{display:inline-block;background:var(--primary);color:var(--on-primary);border:0;border-radius:999px;
+  padding:.6rem 1.2rem;font-size:1rem;font-weight:600;cursor:pointer;text-decoration:none}
 .btn:hover{filter:brightness(1.06)}
 .btn.secondary{background:var(--surface);color:var(--text);border:1px solid var(--muted)}
 main{padding:1.5rem 0 3rem;min-height:60vh}
