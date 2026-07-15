@@ -32,8 +32,18 @@ import { RulesService } from './rules';
 export { automationMigrations } from './migrations';
 export { automationRouter, automationDispatcherRouter } from './router';
 
-export { OutboxService } from './outbox';
-export type { EnqueueInput, EnqueueResult } from './outbox';
+export {
+  OutboxService,
+  OutboxLeaseLostError,
+  DEFAULT_OUTBOX_LEASE_SECONDS,
+} from './outbox';
+export type {
+  EnqueueInput,
+  EnqueueResult,
+  OutboxLease,
+  ClaimDueOptions,
+  ClaimDueResult,
+} from './outbox';
 
 export { RulesService } from './rules';
 export type {
@@ -44,7 +54,12 @@ export type {
 } from './rules';
 
 export { DispatcherRegistry, runOnce } from './dispatcher';
-export type { OutboxJob, OutboxHandler, RunOnceResult } from './dispatcher';
+export type {
+  OutboxJob,
+  OutboxHandler,
+  RunOnceResult,
+  RunOnceOptions,
+} from './dispatcher';
 
 export {
   backoffSeconds,

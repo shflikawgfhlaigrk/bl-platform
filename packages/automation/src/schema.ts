@@ -98,6 +98,14 @@ export interface AutomationOutboxRow {
   max_attempts: number;
   /** Earliest ISO time this row may be claimed for delivery. */
   next_attempt_at: string;
+  /** Dispatcher instance currently holding the delivery lease. */
+  lease_owner: string | null;
+  /** ISO deadline after which another dispatcher may reclaim this row. */
+  lease_expires_at: string | null;
+  /** Last successful lease heartbeat, for operator visibility. */
+  lease_heartbeat_at: string | null;
+  /** Monotonic fencing token. Incremented on every claim/reclaim. */
+  lease_token: number;
   last_error: string | null;
   created_at: string;
   updated_at: string;

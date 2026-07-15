@@ -139,4 +139,32 @@ export const automationMigrations: Migration[] = [
         .execute();
     },
   },
+  {
+    name: 'automation.0005_outbox_delivery_leases',
+    up: async (db) => {
+      // Append-only compatibility migration: pre-lease rows retain their
+      // status and become immediately claimable with fencing token 0.
+      await db.schema
+        .alterTable('automation_outbox')
+        .addColumn('lease_owner', 'text')
+        .execute();
+      await db.schema
+        .alterTable('automation_outbox')
+        .addColumn('lease_expires_at', 'text')
+        .execute();
+      await db.schema
+        .alterTable('automation_outbox')
+        .addColumn('lease_heartbeat_at', 'text')
+        .execute();
+      await db.schema
+        .alterTable('automation_outbox')
+        .addColumn('lease_token', 'integer', (c) => c.notNull().defaultTo(0))
+        .execute();
+      await db.schema
+        .createIndex('automation_outbox_tenant_lease_expiry_idx')
+        .on('automation_outbox')
+        .columns(['tenant_id', 'status', 'lease_expires_at'])
+        .execute();
+    },
+  },
 ];

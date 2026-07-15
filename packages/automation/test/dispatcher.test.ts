@@ -79,4 +79,98 @@ describe('dispatcher runOnce', () => {
     const second = await runOnce(db, registry, tenantA.id, future(), 50, events);
     expect(second.claimed).toBe(0);
   });
+
+  it('allows only one concurrent worker to deliver the same idempotency key', async () => {
+    const { db, events, tenantA } = await setup();
+    const outbox = new OutboxService(db, events);
+    let release!: () => void;
+    let started!: () => void;
+    const waiting = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const didStart = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const deliveries: string[] = [];
+    const registry = new DispatcherRegistry().register('email.send', async (job) => {
+      deliveries.push(job.idempotencyKey);
+      started();
+      await waiting;
+    });
+    await outbox.enqueue(tenantA.id, {
+      kind: 'email.send',
+      payload: {},
+      idempotencyKey: 'provider-key-1',
+    });
+
+    const firstRun = runOnce(db, registry, tenantA.id, future(), 50, events, {
+      workerId: 'worker-a',
+      leaseSeconds: 60,
+    });
+    await didStart;
+    const secondRun = await runOnce(db, registry, tenantA.id, future(), 50, events, {
+      workerId: 'worker-b',
+      leaseSeconds: 60,
+    });
+    expect(secondRun.claimed).toBe(0);
+    release();
+    const firstResult = await firstRun;
+    expect(firstResult.delivered).toBe(1);
+    expect(deliveries).toEqual(['provider-key-1']);
+  });
+
+  it('passes the fencing token and an explicit heartbeat to handlers', async () => {
+    const { db, events, tenantA } = await setup();
+    const outbox = new OutboxService(db, events);
+    let observed: { owner: string; token: number } | undefined;
+    const registry = new DispatcherRegistry().register('long.job', async (job) => {
+      observed = { owner: job.leaseOwner, token: job.leaseToken };
+      await job.heartbeat();
+    });
+    await outbox.enqueue(tenantA.id, {
+      kind: 'long.job',
+      payload: {},
+      idempotencyKey: 'heartbeat-job',
+    });
+
+    const result = await runOnce(db, registry, tenantA.id, future(), 50, events, {
+      workerId: 'worker-heartbeat',
+      leaseSeconds: 60,
+    });
+    expect(result.delivered).toBe(1);
+    expect(result.leaseLost).toBe(0);
+    expect(observed).toEqual({ owner: 'worker-heartbeat', token: 1 });
+  });
+
+  it('surfaces a crash-recovered dead letter even when no row is claimed', async () => {
+    const { db, events, tenantA } = await setup();
+    const outbox = new OutboxService(db, events);
+    const registry = new DispatcherRegistry();
+    const t0 = DateTime.fromISO('2030-01-01T00:00:00.000Z', { zone: 'utc' });
+    const { row } = await outbox.enqueue(tenantA.id, {
+      kind: 'email.send',
+      payload: {},
+      idempotencyKey: 'dead-recovery-result',
+      maxAttempts: 1,
+    });
+    await outbox.claimDue(tenantA.id, t0.toISO()!, 1, {
+      leaseOwner: 'worker-that-died',
+      leaseSeconds: 10,
+    });
+
+    const result = await runOnce(
+      db,
+      registry,
+      tenantA.id,
+      t0.plus({ seconds: 11 }).toISO()!,
+      50,
+      events,
+      { workerId: 'recovery-worker', leaseSeconds: 10 },
+    );
+    expect(result).toMatchObject({ claimed: 0, delivered: 0, failed: 0, dead: 1 });
+    expect(await outbox.get(tenantA.id, row.id)).toMatchObject({
+      status: 'dead',
+      attempts: 1,
+    });
+  });
 });
