@@ -1,0 +1,20 @@
+{
+  "name": "@blacklabel/client-ops-api",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "scripts": {
+    "start": "tsx src/server.ts",
+    "dev": "tsx watch src/server.ts",
+    "test": "cd ../.. && vitest run apps/client-ops-api/test"
+  },
+  "dependencies": {
+    "@blacklabel/client-ops": "*",
+    "@blacklabel/core": "*",
+    "@blacklabel/db": "*",
+    "@hono/node-server": "^1.13.0",
+    "hono": "^4.6.0"
+  }
+}

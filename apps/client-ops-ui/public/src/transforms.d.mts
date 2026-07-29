@@ -1,0 +1,55 @@
+export interface NormalizedConnector {
+  id: string;
+  installationId: string;
+  name: string;
+  category: string;
+  status: string;
+  required: boolean;
+  lastChecked: unknown;
+  externalRef: string;
+  message: string;
+  capabilities: unknown[];
+}
+
+export function unwrap(payload: unknown): unknown;
+export function listFrom(payload: unknown, keys?: string[]): any[];
+export function normalizeStatus(value?: unknown): string;
+export function statusTone(value: unknown): 'danger' | 'warning' | 'neutral' | 'info' | 'gold';
+export function titleCase(value: unknown): string;
+export function formatDateTime(value: unknown, locale?: string): string;
+export function formatRelativeTime(value: unknown, now?: number): string;
+export function formatMoney(cents: unknown, currency?: string): string;
+export function formatBytes(value: unknown): string;
+export function clampProgress(value: unknown): number | null;
+export function transformService(value: unknown): any;
+export function transformWorkflow(value: unknown): any;
+export function transformReview(value: unknown): any;
+export function transformConnector(value: unknown): NormalizedConnector;
+export function transformArtifact(value: unknown): any;
+export function transformReport(value: unknown): any;
+export function transformSetupStep(value: unknown, index?: number): any;
+export function transformOverview(payload: unknown): any;
+export function transformCatalogPayload(payload: unknown): {
+  services: any[];
+  verticalPacks: any[];
+  engagementModels: any[];
+  catalogVersion: string;
+};
+export function transformInstalledWorkflows(payload: unknown): any[];
+export function transformInstalledConnectors(payload: unknown): NormalizedConnector[];
+export function transformSetupPayload(payload: unknown): any[];
+export function transformArtifactsPayload(payload: unknown): { artifacts: any[]; receipts: any[]; all: any[] };
+export function transformOverviewPayload(payload: unknown): any;
+export function transformReportingPayload(payload: unknown): any;
+export function portfolioOriginGroup(value: unknown): string;
+export function portfolioOriginLabel(value: unknown): string;
+export function portfolioReadinessTone(value: unknown): 'danger' | 'warning' | 'neutral' | 'info' | 'gold';
+export function transformPortfolioEvidence(value: unknown): any;
+export function transformPortfolioFeature(value: unknown): any;
+export function transformPortfolioTestRun(value: unknown): any;
+export function transformPortfolioPackage(value: unknown): any;
+export function transformPortfolioProduct(value: unknown): any;
+export function transformPortfolioPayload(payload: unknown): { summary: Record<string, number>; products: any[] };
+export function transformPortfolioDetailPayload(detailPayload: unknown, testRunsPayload?: unknown, packagesPayload?: unknown): { product: any; testRuns: any[]; packages: any[] };
+export function filterPortfolioProducts(products: any[], filters?: { query?: string; origin?: string; kind?: string; readiness?: string; packageState?: string }): any[];
+export function filterConnectors(connectors: NormalizedConnector[], query?: string, status?: string): NormalizedConnector[];

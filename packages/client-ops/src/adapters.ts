@@ -1,0 +1,168 @@
+import { ApiError } from '@blacklabel/core';
+
+export type FoundationAdapterReadiness = 'declared' | 'ready' | 'degraded';
+
+export interface ServiceExecutionFoundation {
+  serviceId: string;
+  capabilityId: string;
+  ownedSourceIdentifier: string;
+  readiness: FoundationAdapterReadiness;
+  requiredFoundationIdentifiers: string[];
+  invokeBoundary: string;
+  verifyBoundary: string;
+}
+
+export interface FoundationInvocationRequest {
+  tenantId: string;
+  installationId: string;
+  runId: string;
+  workflowTemplateId: string;
+  actionType: string;
+  input: unknown;
+}
+
+export interface FoundationInvocationResult {
+  invocationId: string;
+  status: 'accepted' | 'completed' | 'failed';
+  output: unknown;
+  externalReferences: string[];
+}
+
+export interface FoundationVerificationRequest {
+  tenantId: string;
+  installationId: string;
+  runId: string;
+  invocationId: string;
+  expected: unknown;
+}
+
+export interface FoundationVerificationResult {
+  verified: boolean;
+  evidence: unknown;
+  checkedAt: string;
+}
+
+/**
+ * Provider-neutral execution boundary. Concrete adapters own credentials and
+ * provider calls; client-ops owns invocation identity, tenancy, and evidence.
+ */
+export interface ServiceFoundationAdapter {
+  readonly serviceId: string;
+  readonly capabilityId: string;
+  readonly ownedSourceIdentifier: string;
+  readiness(): FoundationAdapterReadiness;
+  invoke(request: FoundationInvocationRequest): Promise<FoundationInvocationResult>;
+  verify(request: FoundationVerificationRequest): Promise<FoundationVerificationResult>;
+}
+
+/** One explicit execution foundation for every sellable service. */
+export const SERVICE_EXECUTION_FOUNDATIONS: readonly ServiceExecutionFoundation[] = Object.freeze([
+  {
+    serviceId: 'workflow-operating-system', capabilityId: 'client_ops.workflow.execute',
+    ownedSourceIdentifier: 'BlackLabelPlatform.workflows', readiness: 'ready',
+    requiredFoundationIdentifiers: ['BlackLabelPlatform.workflows', 'BlackLabelPlatform.actions', 'BlackLabelPlatform.automation', 'BlackLabelPlatform.reviews'],
+    invokeBoundary: 'Execute a versioned installed workflow action sequence with idempotency and retry lineage.',
+    verifyBoundary: 'Read back action results and return a completion or exception evidence packet.',
+  },
+  {
+    serviceId: 'ai-front-desk', capabilityId: 'client_ops.front_desk.handle_call',
+    ownedSourceIdentifier: 'BlackLabelFrontDesk.call_operations', readiness: 'declared',
+    requiredFoundationIdentifiers: ['BlackLabelFrontDesk.realtime_voice', 'BlackLabelFrontDesk.call_operations', 'BlackLabelPlatform.scheduling', 'BlackLabelPlatform.customers'],
+    invokeBoundary: 'Handle one policy-scoped call turn, contact mutation, scheduling action, transfer, or callback.',
+    verifyBoundary: 'Read back call disposition, contact state, and appointment or transfer result.',
+  },
+  {
+    serviceId: 'sales-operator', capabilityId: 'client_ops.sales.process_lead',
+    ownedSourceIdentifier: 'BlackLabelLeadsAPI', readiness: 'declared',
+    requiredFoundationIdentifiers: ['BlackLabelLeadsAPI', 'BlackLabelMarketing.outreach', 'BlackLabelPlatform.crm', 'BlackLabelPlatform.reviews'],
+    invokeBoundary: 'Validate, enrich, route, or follow up one provenance-linked lead within approved policy.',
+    verifyBoundary: 'Read back the CRM record, message delivery, and pipeline next step.',
+  },
+  {
+    serviceId: 'marketing-operator', capabilityId: 'client_ops.marketing.publish_campaign',
+    ownedSourceIdentifier: 'BlackLabelMarketing.media_engine', readiness: 'declared',
+    requiredFoundationIdentifiers: ['BlackLabelMarketing.media_engine', 'BlackLabelMarketing.publisher', 'BlackLabelPlatform.files', 'BlackLabelPlatform.reviews'],
+    invokeBoundary: 'Produce, register, or publish an exact approved campaign artifact version.',
+    verifyBoundary: 'Confirm artifact hash, destination publication identity, delivery, and available outcomes.',
+  },
+  {
+    serviceId: 'support-operator', capabilityId: 'client_ops.support.resolve_ticket',
+    ownedSourceIdentifier: 'BlackLabelSupport.ticket_workflow', readiness: 'declared',
+    requiredFoundationIdentifiers: ['BlackLabelSupport.safety_engine', 'BlackLabelSupport.ticket_workflow', 'BlackLabelPlatform.messaging', 'BlackLabelPlatform.files'],
+    invokeBoundary: 'Create, classify, draft, escalate, or respond to one grounded support ticket.',
+    verifyBoundary: 'Confirm grounding citations, approval, message delivery, and final ticket state.',
+  },
+  {
+    serviceId: 'executive-operations-hq', capabilityId: 'client_ops.hq.publish_brief',
+    ownedSourceIdentifier: 'BlackLabelHQ', readiness: 'declared',
+    requiredFoundationIdentifiers: ['BlackLabelHQ', 'BlackLabelAtlas', 'BlackLabelPlatform.dashboard', 'BlackLabelPlatform.actions'],
+    invokeBoundary: 'Assemble and publish one module-scoped operations brief or resolution card.',
+    verifyBoundary: 'Resolve each statement and deep link to client-ops owned run, review, artifact, receipt, or usage evidence.',
+  },
+  {
+    serviceId: 'private-company-agent', capabilityId: 'client_ops.private_agent.execute',
+    ownedSourceIdentifier: 'BlackLabelSovereign', readiness: 'declared',
+    requiredFoundationIdentifiers: ['BlackLabelSovereign', 'ProjectUtah.RAG', 'BlackLabelOperatorKit', 'BlackLabelPlatform.reviews'],
+    invokeBoundary: 'Answer from authorized private context or execute one explicitly approved local computer action.',
+    verifyBoundary: 'Return citations or signed post-action computer evidence inside the requesting tenant and role scope.',
+  },
+  {
+    serviceId: 'data-operations-service', capabilityId: 'client_ops.data.execute_job',
+    ownedSourceIdentifier: 'BlackLabelPropertyHarvest.jobs', readiness: 'declared',
+    requiredFoundationIdentifiers: ['BlackLabelPropertyHarvest.jobs', 'BlackLabelLeadsAPI.source_ledger', 'BlackLabelPlatform.files', 'BlackLabelPlatform.automation'],
+    invokeBoundary: 'Run one checkpointed, versioned import, transform, enrichment, or delivery slice.',
+    verifyBoundary: 'Return source range, accepted and rejected counts, destination readback, and the next checkpoint.',
+  },
+]);
+
+export interface RegisteredFoundationState extends ServiceExecutionFoundation {
+  connected: boolean;
+  adapterReadiness: FoundationAdapterReadiness;
+}
+
+/** Deterministic adapter registry; starts with all eight declarations disconnected. */
+export class ServiceFoundationRegistry {
+  private readonly adapters = new Map<string, ServiceFoundationAdapter>();
+
+  register(adapter: ServiceFoundationAdapter): void {
+    const declaration = SERVICE_EXECUTION_FOUNDATIONS.find((item) => item.capabilityId === adapter.capabilityId);
+    if (!declaration) throw ApiError.badRequest(`unknown client-ops capability: ${adapter.capabilityId}`);
+    if (declaration.serviceId !== adapter.serviceId || declaration.ownedSourceIdentifier !== adapter.ownedSourceIdentifier) {
+      throw ApiError.badRequest(`adapter identity does not match declaration: ${adapter.capabilityId}`);
+    }
+    if (this.adapters.has(adapter.capabilityId)) throw ApiError.conflict(`adapter already registered: ${adapter.capabilityId}`);
+    this.adapters.set(adapter.capabilityId, adapter);
+  }
+
+  unregister(capabilityId: string): boolean {
+    return this.adapters.delete(capabilityId);
+  }
+
+  get(capabilityId: string): ServiceFoundationAdapter | undefined {
+    return this.adapters.get(capabilityId);
+  }
+
+  list(): RegisteredFoundationState[] {
+    return SERVICE_EXECUTION_FOUNDATIONS.map((declaration) => {
+      const adapter = this.adapters.get(declaration.capabilityId);
+      return {
+        ...declaration,
+        connected: adapter !== undefined,
+        adapterReadiness: adapter?.readiness() ?? 'declared',
+      };
+    }).sort((a, b) => a.serviceId.localeCompare(b.serviceId));
+  }
+
+  async invoke(capabilityId: string, request: FoundationInvocationRequest): Promise<FoundationInvocationResult> {
+    const adapter = this.adapters.get(capabilityId);
+    if (!adapter) throw new ApiError(501, `service foundation adapter not connected: ${capabilityId}`, 'not_implemented');
+    if (adapter.readiness() !== 'ready') throw ApiError.conflict(`service foundation adapter is not ready: ${capabilityId}`);
+    return adapter.invoke(request);
+  }
+
+  async verify(capabilityId: string, request: FoundationVerificationRequest): Promise<FoundationVerificationResult> {
+    const adapter = this.adapters.get(capabilityId);
+    if (!adapter) throw new ApiError(501, `service foundation adapter not connected: ${capabilityId}`, 'not_implemented');
+    return adapter.verify(request);
+  }
+}

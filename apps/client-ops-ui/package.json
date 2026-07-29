@@ -1,0 +1,10 @@
+{
+  "name": "@blacklabel/client-ops-ui",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Black Label Client Operations — dependency-free operator console.",
+  "scripts": {
+    "test": "cd ../.. && vitest run apps/client-ops-ui/test"
+  }
+}

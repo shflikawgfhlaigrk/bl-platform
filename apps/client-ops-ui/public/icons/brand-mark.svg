@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title">
+  <title id="title">Black Label</title>
+  <rect width="64" height="64" rx="8" fill="#080806"/>
+  <rect x="8" y="8" width="48" height="48" rx="3" fill="none" stroke="#d6ab54" stroke-width="2"/>
+  <path d="M18 20h11c6 0 9 3 9 7 0 3-2 5-4 6 3 1 5 3 5 7 0 5-4 8-10 8H18V20Zm10 11c3 0 5-1 5-4s-2-4-5-4h-5v8h5Zm1 13c3 0 5-2 5-5 0-2-2-4-5-4h-6v9h6Z" fill="#d6ab54"/>
+  <path d="M42 20h5v23h9v5H42V20Z" fill="#f3dfb0"/>
+</svg>
