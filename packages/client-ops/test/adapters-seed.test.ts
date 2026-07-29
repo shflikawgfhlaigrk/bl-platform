@@ -8,11 +8,14 @@ import {
 import { setup } from './helpers';
 
 describe('client-ops execution foundations', () => {
-  it('declares an invoke/verify boundary for all eight services', () => {
-    expect(SERVICE_EXECUTION_FOUNDATIONS).toHaveLength(8);
+  it('declares an invoke/verify boundary for all eight services and seven vertical packs', () => {
+    expect(SERVICE_EXECUTION_FOUNDATIONS).toHaveLength(15);
     expect(new Set(SERVICE_EXECUTION_FOUNDATIONS.map((item) => item.serviceId))).toEqual(new Set([
       'workflow-operating-system', 'ai-front-desk', 'sales-operator', 'marketing-operator',
       'support-operator', 'executive-operations-hq', 'private-company-agent', 'data-operations-service',
+      'medical-dental-receptionist', 'real-estate-acquisition-desk', 'home-services-lead-scheduling-operator',
+      'law-firm-intake-document-routing', 'property-management-maintenance-desk',
+      'ecommerce-support-marketing-operator', 'local-business-review-reactivation-system',
     ]));
     for (const item of SERVICE_EXECUTION_FOUNDATIONS) {
       expect(item.capabilityId).toMatch(/^client_ops\.[a-z_]+\.[a-z_]+$/);
@@ -34,7 +37,7 @@ describe('client-ops execution foundations', () => {
       readiness: () => 'ready', invoke, verify,
     };
     const registry = new ServiceFoundationRegistry();
-    expect(registry.list()).toHaveLength(8);
+    expect(registry.list()).toHaveLength(15);
     await expect(registry.invoke(declaration.capabilityId, {
       tenantId: 't', installationId: 'i', runId: 'r', workflowTemplateId: 'w', actionType: 'execute', input: {},
     })).rejects.toMatchObject({ status: 501 });

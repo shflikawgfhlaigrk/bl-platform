@@ -31,12 +31,12 @@ describe('client-ops execution routes', () => {
     expect(execute.status).toBe(501);
   });
 
-  it('lists all eight declared foundations with real connection state', async () => {
+  it('lists all fifteen declared foundations with real connection state', async () => {
     const { app, tenantA } = await setupWithRegistry();
     const response = await app.request('/foundations', { headers: headers(tenantA) });
     expect(response.status).toBe(200);
     const list = ((await response.json()) as { data: any[] }).data;
-    expect(list).toHaveLength(8);
+    expect(list).toHaveLength(15);
     const wos = list.find((item) => item.serviceId === 'workflow-operating-system');
     expect(wos).toMatchObject({ connected: true, adapterReadiness: 'ready' });
     const frontDesk = list.find((item) => item.serviceId === 'ai-front-desk');

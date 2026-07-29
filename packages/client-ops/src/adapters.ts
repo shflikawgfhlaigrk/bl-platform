@@ -55,7 +55,7 @@ export interface ServiceFoundationAdapter {
   verify(request: FoundationVerificationRequest): Promise<FoundationVerificationResult>;
 }
 
-/** One explicit execution foundation for every sellable service. */
+/** One explicit execution foundation for every sellable offering: 8 services + 7 vertical packs. */
 export const SERVICE_EXECUTION_FOUNDATIONS: readonly ServiceExecutionFoundation[] = Object.freeze([
   {
     serviceId: 'workflow-operating-system', capabilityId: 'client_ops.workflow.execute',
@@ -113,6 +113,58 @@ export const SERVICE_EXECUTION_FOUNDATIONS: readonly ServiceExecutionFoundation[
     invokeBoundary: 'Run one checkpointed, versioned import, transform, enrichment, or delivery slice.',
     verifyBoundary: 'Return source range, accepted and rejected counts, destination readback, and the next checkpoint.',
   },
+  // Vertical packs: same declaration contract as services, so the runner can
+  // resolve a capability for every installable catalog offering. All start
+  // 'declared' — each needs its client-system adapter before it can execute.
+  {
+    serviceId: 'medical-dental-receptionist', capabilityId: 'client_ops.medical_dental.route_patient_call',
+    ownedSourceIdentifier: 'BlackLabelFrontDesk.realtime_voice', readiness: 'declared',
+    requiredFoundationIdentifiers: ['BlackLabelFrontDesk.realtime_voice', 'BlackLabelPlatform.scheduling', 'BlackLabelPlatform.messaging', 'BlackLabelPlatform.reviews'],
+    invokeBoundary: 'Route, schedule, or follow up one patient interaction within the approved privacy scope.',
+    verifyBoundary: 'Read back routing, appointment, and notification delivery evidence with minimum necessary data.',
+  },
+  {
+    serviceId: 'real-estate-acquisition-desk', capabilityId: 'client_ops.real_estate.process_property_lead',
+    ownedSourceIdentifier: 'BlackLabelPropertyHarvest', readiness: 'declared',
+    requiredFoundationIdentifiers: ['BlackLabelPropertyHarvest', 'BlackLabelLeadsAPI', 'ProjectUtah.sales', 'BlackLabelPlatform.crm'],
+    invokeBoundary: 'Validate, enrich, or follow up one provenance-linked property lead under review policy.',
+    verifyBoundary: 'Read back the acquisition pipeline record, approval, and delivered message evidence.',
+  },
+  {
+    serviceId: 'home-services-lead-scheduling-operator', capabilityId: 'client_ops.home_services.schedule_lead',
+    ownedSourceIdentifier: 'BlackLabelFrontDesk', readiness: 'declared',
+    requiredFoundationIdentifiers: ['BlackLabelFrontDesk', 'BlackLabelPlatform.scheduling', 'BlackLabelPlatform.customers', 'BlackLabelPlatform.industries'],
+    invokeBoundary: 'Qualify one service request or book one approved appointment within territory and capacity policy.',
+    verifyBoundary: 'Read back serviceability checks, the created calendar slot, and confirmation delivery.',
+  },
+  {
+    serviceId: 'law-firm-intake-document-routing', capabilityId: 'client_ops.law_firm.route_intake',
+    ownedSourceIdentifier: 'BlackLabelSupport.ticket_workflow', readiness: 'declared',
+    requiredFoundationIdentifiers: ['BlackLabelSupport.ticket_workflow', 'BlackLabelPlatform.files', 'BlackLabelPlatform.reviews', 'BlackLabelPlatform.crm'],
+    invokeBoundary: 'Capture one intake packet or classify and route one preserved document without legal conclusions.',
+    verifyBoundary: 'Read back the intake record, document custody hash, and firm review routing.',
+  },
+  {
+    serviceId: 'property-management-maintenance-desk', capabilityId: 'client_ops.property_management.dispatch_work_order',
+    ownedSourceIdentifier: 'BlackLabelPlatform.vendors', readiness: 'declared',
+    requiredFoundationIdentifiers: ['BlackLabelPlatform.files', 'BlackLabelPlatform.vendors', 'BlackLabelPlatform.workflows', 'BlackLabelPlatform.messaging'],
+    invokeBoundary: 'Triage one maintenance request or dispatch one approved vendor work order.',
+    verifyBoundary: 'Read back work-order state, dispatch approval, and resident and manager notification evidence.',
+  },
+  {
+    serviceId: 'ecommerce-support-marketing-operator', capabilityId: 'client_ops.ecommerce.operate_support_campaign',
+    ownedSourceIdentifier: 'BlackLabelPlatform.orders', readiness: 'declared',
+    requiredFoundationIdentifiers: ['BlackLabelPlatform.orders', 'BlackLabelSupport', 'BlackLabelMarketing', 'BlackLabelPlatform.reviews'],
+    invokeBoundary: 'Resolve one order-grounded support case or publish one exact approved commerce campaign item.',
+    verifyBoundary: 'Read back order facts, approval, reply or publication proof, and recorded outcomes.',
+  },
+  {
+    serviceId: 'local-business-review-reactivation-system', capabilityId: 'client_ops.local_business.run_reactivation',
+    ownedSourceIdentifier: 'BlackLabelPlatform.customers', readiness: 'declared',
+    requiredFoundationIdentifiers: ['BlackLabelPlatform.reviews', 'BlackLabelPlatform.customers', 'BlackLabelMarketing.outreach', 'BlackLabelPlatform.loyalty'],
+    invokeBoundary: 'Send one eligible feedback request or run one approved reactivation step under consent policy.',
+    verifyBoundary: 'Read back eligibility rules, approval, delivery, and response or opt-out routing.',
+  },
 ]);
 
 export interface RegisteredFoundationState extends ServiceExecutionFoundation {
@@ -120,7 +172,7 @@ export interface RegisteredFoundationState extends ServiceExecutionFoundation {
   adapterReadiness: FoundationAdapterReadiness;
 }
 
-/** Deterministic adapter registry; starts with all eight declarations disconnected. */
+/** Deterministic adapter registry; starts with all fifteen declarations disconnected. */
 export class ServiceFoundationRegistry {
   private readonly adapters = new Map<string, ServiceFoundationAdapter>();
 

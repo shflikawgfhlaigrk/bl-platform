@@ -10,7 +10,8 @@
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc -b",
-    "test:acceptance": "bash scripts/acceptance.sh"
+    "test:acceptance": "bash scripts/acceptance.sh",
+    "check:engine-map": "tsx scripts/check-engine-map.ts"
   },
   "engines": {
     "node": ">=22"
