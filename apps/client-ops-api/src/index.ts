@@ -1,3 +1,3 @@
-export { createClientOpsHttpApp, withDefaultTenant } from './app';
-export type { ClientOpsHttpAppOptions } from './app';
+export { createClientOpsHttpApp, withBearerAuth, withTenantGuard } from './app';
+export type { ClientOpsHttpAppOptions, TenantGuardOptions } from './app';
 export { seedClientOpsProductStarter } from './demo';

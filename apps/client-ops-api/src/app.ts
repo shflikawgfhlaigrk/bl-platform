@@ -142,18 +142,49 @@ export function withBearerAuth(
   };
 }
 
-/** Inject the configured local tenant only when the caller did not choose one. */
-export function withDefaultTenant(
+export interface TenantGuardOptions {
+  /**
+   * Loopback-development escape hatch ONLY (CLIENT_OPS_DEV_DEFAULT_TENANT).
+   * Leave it unset everywhere else: once the engine hosts more than one paying
+   * client an unlabelled request has no honest tenant, and injecting one would
+   * pool every client's data, runs and receipts into whichever tenant the
+   * process happens to own. server.ts refuses to boot with it set alongside
+   * NODE_ENV=production or a configured bearer token.
+   */
+  devDefaultTenantId?: string;
+}
+
+/**
+ * Tenancy fails closed. Every /api/client-ops request must name its tenant; an
+ * unlabelled one is refused with `tenant_required` instead of being silently
+ * defaulted. An x-tenant-id naming a tenant that does not exist is rejected
+ * downstream by tenantMiddleware (404 `tenant_unknown`) — the engine never
+ * creates or assumes a tenant. Compose this INSIDE withBearerAuth so an
+ * unauthenticated caller is rejected before any tenant work happens.
+ */
+export function withTenantGuard(
   fetcher: (request: Request) => Response | Promise<Response>,
-  tenantId: string,
+  options: TenantGuardOptions = {},
 ): (request: Request) => Promise<Response> {
   return async (request) => {
     const pathname = new URL(request.url).pathname;
-    if (!pathname.startsWith('/api/client-ops') || request.headers.has('x-tenant-id')) {
-      return fetcher(request);
+    if (!pathname.startsWith('/api/client-ops')) return fetcher(request);
+    if ((request.headers.get('x-tenant-id') ?? '').trim() !== '') return fetcher(request);
+    const fallback = (options.devDefaultTenantId ?? '').trim();
+    if (fallback === '') {
+      return Response.json(
+        {
+          error: {
+            code: 'tenant_required',
+            message: 'x-tenant-id is required; the engine never assumes a tenant',
+            details: null,
+          },
+        },
+        { status: 400 },
+      );
     }
     const headers = new Headers(request.headers);
-    headers.set('x-tenant-id', tenantId);
+    headers.set('x-tenant-id', fallback);
     return fetcher(new Request(request, { headers }));
   };
 }

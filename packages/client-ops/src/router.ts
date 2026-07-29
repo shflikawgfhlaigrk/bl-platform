@@ -16,6 +16,7 @@ import { executeRun, type RunnerOutcome } from './runner';
 import type { ClientOpsDatabase, ReviewStatus } from './schema';
 import { ClientOpsService, type ReviewItem, type Run } from './service';
 import { PortfolioService } from './portfolio-service';
+import { resolveTenantFoundations } from './tenant-foundations';
 
 async function jsonBody(c: Context): Promise<unknown> {
   try {
@@ -208,7 +209,11 @@ export function clientOpsRouter(
     sha256: CLIENT_OPS_MANIFEST_SHA256,
   } }));
 
-  app.get('/foundations', (c) => c.json({ data: requireRegistry().list() }));
+  // Per-tenant, never process-wide: `connected` here means THIS tenant can
+  // execute against its OWN source, not merely that an adapter is loaded.
+  app.get('/foundations', async (c) => c.json({
+    data: await resolveTenantFoundations(service, c.get('tenantId'), requireRegistry()),
+  }));
 
   app.get('/portfolio', async (c) => c.json({ data: await portfolio.listPortfolio(c.get('tenantId')) }));
 

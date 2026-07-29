@@ -2,6 +2,7 @@ import type { Kysely } from '@blacklabel/db';
 import {
   CLIENT_OPS_CATALOG,
   ClientOpsService,
+  declareOwnedSourceConnector,
   type ClientOpsDatabase,
   type InstallationDetail,
 } from '@blacklabel/client-ops';
@@ -36,8 +37,18 @@ async function activateWorkflowFoundation(
   tenantId: string,
   installation: InstallationDetail,
 ): Promise<InstallationDetail> {
+  // Black Label's OWN tenant, provisioned deliberately: this row is what makes
+  // the Workflow OS foundation ready for THIS tenant. Client tenants never get
+  // one automatically — each connects its own source through the connector API,
+  // otherwise every client would execute against our workflows. Run it before
+  // the early return so a store seeded by an older build is upgraded too.
+  await declareOwnedSourceConnector(
+    service, tenantId, installation.id, 'operations-system',
+    'local:black-label-owned:operations-system', 'demo-bootstrap',
+  );
   if (installation.status === 'active') return installation;
   for (const binding of installation.connectors) {
+    if (binding.connectorId === 'operations-system') continue; // owned-source row already connected above
     await service.updateConnector(tenantId, installation.id, binding.id, {
       status: 'connected',
       credentialRef: `local:${binding.connectorId}`,

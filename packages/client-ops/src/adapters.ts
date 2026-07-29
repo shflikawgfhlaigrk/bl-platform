@@ -12,6 +12,20 @@ export interface ServiceExecutionFoundation {
   verifyBoundary: string;
 }
 
+/**
+ * One tenant's OWN connector row for an adapter's owned source. It is the only
+ * thing that makes a foundation ready for that tenant: without it the engine
+ * would silently resolve every client to Black Label's own sources. The secret
+ * itself never lives here — connector-security forces it behind `credentialRef`.
+ */
+export interface OwnedSourceConnection {
+  ownedSourceIdentifier: string;
+  bindingId: string;
+  installationId: string;
+  connectorId: string;
+  credentialRef: string;
+}
+
 export interface FoundationInvocationRequest {
   tenantId: string;
   installationId: string;
@@ -19,6 +33,13 @@ export interface FoundationInvocationRequest {
   workflowTemplateId: string;
   actionType: string;
   input: unknown;
+  /**
+   * The invoking tenant's own connector row for this adapter's owned source.
+   * The runner refuses to invoke without one, so an adapter that touches a real
+   * source MUST resolve it through this ref rather than a process-wide default.
+   * Optional on the contract so already-registered adapters keep compiling.
+   */
+  ownedSourceRef?: OwnedSourceConnection;
 }
 
 export interface FoundationInvocationResult {

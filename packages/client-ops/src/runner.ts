@@ -4,6 +4,7 @@ import {
   ServiceFoundationRegistry,
   type FoundationInvocationResult,
 } from './adapters';
+import { resolveTenantFoundation } from './tenant-foundations';
 
 /**
  * Execution runner — the missing engine that drives a `requested` run to a real,
@@ -101,6 +102,21 @@ export async function executeRun(deps: RunnerDeps, args: RunnerArgs): Promise<Ru
     return fail(`no execution foundation declared for service '${installation.catalogId}'`);
   }
 
+  // Tenant isolation gate. The live adapters bind to Black Label's own sources,
+  // so a tenant that has not connected its OWN source for this capability must
+  // stop here — awaiting connection, never silently executing against our data.
+  // An unregistered or not-ready adapter is left alone so registry.invoke can
+  // still fail honestly (501/409) exactly as before.
+  const foundation = await resolveTenantFoundation(service, tenantId, capabilityId, registry);
+  if (foundation?.connectionStatus === 'awaiting_connection') {
+    return {
+      status: 'not_ready',
+      run,
+      reason: `awaiting client connection: this tenant has no connected connector for owned source '${foundation.ownedSourceIdentifier}'`,
+    };
+  }
+  const ownedSourceRef = foundation?.ownedSourceConnection ?? undefined;
+
   const actions = normalizeActions(workflow.actions);
   if (actions.length === 0) return fail('workflow has no actions to execute');
 
@@ -123,6 +139,8 @@ export async function executeRun(deps: RunnerDeps, args: RunnerArgs): Promise<Ru
         workflowTemplateId: workflow.templateId,
         actionType: action.type,
         input: run.input,
+        // Adapters must reach the client's own instance through this ref.
+        ownedSourceRef,
       });
     } catch (err) {
       // e.g. 501 "adapter not connected" — honest failure, never a fake receipt.

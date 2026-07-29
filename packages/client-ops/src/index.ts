@@ -71,10 +71,22 @@ export type {
   FoundationInvocationResult,
   FoundationVerificationRequest,
   FoundationVerificationResult,
+  OwnedSourceConnection,
   RegisteredFoundationState,
   ServiceExecutionFoundation,
   ServiceFoundationAdapter,
 } from './adapters';
+export {
+  declareOwnedSourceConnector,
+  OWNED_SOURCE_METADATA_KEY,
+  resolveTenantFoundation,
+  resolveTenantFoundations,
+} from './tenant-foundations';
+export type {
+  OwnedSourceLookup,
+  TenantFoundationConnectionStatus,
+  TenantFoundationState,
+} from './tenant-foundations';
 export { ClientOpsService, installationOffering } from './service';
 export { executeRun } from './runner';
 export type { ActionResult, RunnerArgs, RunnerDeps, RunnerOutcome } from './runner';

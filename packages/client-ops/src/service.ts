@@ -15,6 +15,8 @@ import {
 } from './catalog';
 import { canonicalManifestJson, CLIENT_OPS_MANIFEST_SHA256 } from './manifest';
 import { assertSafeConnectorMetadata } from './connector-security';
+import { OWNED_SOURCE_METADATA_KEY } from './tenant-foundations';
+import type { OwnedSourceConnection } from './adapters';
 import type {
   CatalogKind,
   ClientOpsArtifactRow,
@@ -450,6 +452,38 @@ export class ClientOpsService {
     });
     await this.events.emit(tenantId, 'client_ops.installation.created', { installationId, catalogKind: input.catalogKind, catalogId: input.catalogId });
     return this.getInstallation(tenantId, installationId);
+  }
+
+  /**
+   * Every connector row through which THIS tenant has connected one of its own
+   * owned sources: status connected, its own credential ref, and metadata that
+   * names the owned source. Per-tenant execution readiness resolves off this
+   * list alone — a tenant with no row here must never reach an adapter bound to
+   * Black Label's sources.
+   */
+  async listConnectedOwnedSources(tenantId: string): Promise<OwnedSourceConnection[]> {
+    const rows = await this.db.selectFrom('client_ops_connector_bindings').selectAll()
+      .where('tenant_id', '=', tenantId)
+      .where('status', '=', 'connected')
+      .orderBy('created_at').orderBy('id')
+      .execute();
+    const connections: OwnedSourceConnection[] = [];
+    for (const row of rows) {
+      const credentialRef = row.credential_ref?.trim() ?? '';
+      // No credential ref means no client-owned access path; refuse to treat it
+      // as a connection rather than falling back to our own credentials.
+      if (credentialRef === '') continue;
+      const declared = parseJson<Record<string, unknown>>(row.metadata_json)[OWNED_SOURCE_METADATA_KEY];
+      if (typeof declared !== 'string' || declared.trim() === '') continue;
+      connections.push({
+        ownedSourceIdentifier: declared.trim(),
+        bindingId: row.id,
+        installationId: row.installation_id,
+        connectorId: row.connector_id,
+        credentialRef,
+      });
+    }
+    return connections;
   }
 
   async listInstallations(tenantId: string, page: Pagination): Promise<Installation[]> {

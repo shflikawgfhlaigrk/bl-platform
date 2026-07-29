@@ -6,7 +6,7 @@ import { ServiceFoundationRegistry } from '../src/adapters';
 import { ExecutiveOperationsHqAdapter } from '../src/foundations/executive-operations-hq';
 import { executeRun } from '../src/runner';
 import { ClientOpsService } from '../src/service';
-import { createInstallation, createRun, headers, setup } from './helpers';
+import { createActiveInstallation, createInstallation, createRun, headers, setup } from './helpers';
 
 /**
  * Runtime proof for the Executive Operations HQ execution adapter
@@ -55,47 +55,22 @@ function fixturePacket(): Record<string, unknown> {
 }
 
 /**
- * Activate an installation for a specific catalog offering. `createActiveInstallation`
- * in ./helpers hardcodes `workflow-operating-system`, so this reproduces its
- * connector/onboarding/activate dance while overriding the catalogId — the one
- * documented way to build an `executive-operations-hq` install through the harness.
+ * Activate an installation for a specific catalog offering, WITH this tenant's own
+ * instance of the service's owned source connected. Execution is gated per tenant
+ * now — a tenant that has connected nothing of its own resolves to
+ * awaiting-connection instead of reaching Black Label's sources — so a test that
+ * wants a real run must model a properly connected client.
  */
 async function createActiveInstallationFor(
   app: Awaited<ReturnType<typeof setup>>['app'],
   tenant: { id: string },
   catalogId: string,
+  options: { declareOwnedSource?: boolean } = {},
 ) {
-  const installation = await createInstallation(app, tenant, { catalogId });
-  for (const binding of installation.connectors) {
-    if (!binding.required) continue;
-    const response = await app.request(`/installations/${installation.id}/connectors/${binding.id}`, {
-      method: 'PATCH',
-      headers: headers(tenant),
-      body: JSON.stringify({
-        status: 'connected',
-        credentialRef: `test:${binding.connectorId}`,
-        metadata: { accountId: 'demo-account' },
-        health: { ok: true },
-      }),
-    });
-    if (response.status !== 200) throw new Error(`connect binding failed: ${response.status} ${await response.text()}`);
-  }
-  for (const step of installation.onboarding) {
-    if (!step.required) continue;
-    const response = await app.request(`/installations/${installation.id}/onboarding/${step.id}`, {
-      method: 'PATCH',
-      headers: headers(tenant),
-      body: JSON.stringify({ status: 'completed', evidence: { verified: true } }),
-    });
-    if (response.status !== 200) throw new Error(`complete onboarding failed: ${response.status} ${await response.text()}`);
-  }
-  const response = await app.request(`/installations/${installation.id}`, {
-    method: 'PATCH',
-    headers: headers(tenant),
-    body: JSON.stringify({ status: 'active' }),
+  return createActiveInstallation(app, tenant, {
+    catalogId,
+    declareOwnedSource: options.declareOwnedSource ?? true,
   });
-  if (response.status !== 200) throw new Error(`activate installation failed: ${response.status} ${await response.text()}`);
-  return ((await response.json()) as { data: any }).data;
 }
 
 afterEach(() => {

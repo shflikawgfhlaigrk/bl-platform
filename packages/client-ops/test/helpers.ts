@@ -6,6 +6,7 @@ import {
   type TenantRow,
 } from '@blacklabel/core';
 import { createTestDb, runMigrations } from '@blacklabel/db';
+import { SERVICE_EXECUTION_FOUNDATIONS } from '../src/adapters';
 import { clientOpsMigrations } from '../src/migrations';
 import { clientOpsRouter } from '../src/router';
 import type { ClientOpsDatabase } from '../src/schema';
@@ -37,16 +38,36 @@ export async function createInstallation(
   return ((await response.json()) as { data: any }).data;
 }
 
+/**
+ * A fully connected installation for ONE tenant. `declareOwnedSource` controls
+ * whether that tenant also connects its own instance of the service's owned
+ * source — the per-tenant gate that execution now requires. Pass false to model
+ * a client that has installed the service but connected nothing of its own.
+ */
 export async function createActiveInstallation(
   app: ReturnType<typeof clientOpsRouter>,
   tenant: TenantRow | { id: string },
+  options: { declareOwnedSource?: boolean; catalogId?: string } = {},
 ) {
-  const installation = await createInstallation(app, tenant);
+  const declareOwnedSource = options.declareOwnedSource ?? true;
+  const installation = await createInstallation(
+    app, tenant, options.catalogId ? { catalogId: options.catalogId } : {},
+  );
+  const foundation = SERVICE_EXECUTION_FOUNDATIONS.find((item) => item.serviceId === installation.catalogId);
+  const ownedSourceBindingId = installation.connectors.find((item: any) => item.required)?.id;
   for (const binding of installation.connectors) {
     if (!binding.required) continue;
+    const ownsSource = declareOwnedSource && foundation !== undefined && binding.id === ownedSourceBindingId;
     const response = await app.request(`/installations/${installation.id}/connectors/${binding.id}`, {
       method: 'PATCH', headers: headers(tenant),
-      body: JSON.stringify({ status: 'connected', credentialRef: `test:${binding.connectorId}`, metadata: { accountId: 'demo-account' }, health: { ok: true } }),
+      body: JSON.stringify({
+        status: 'connected',
+        credentialRef: `test:${tenant.id}:${binding.connectorId}`,
+        metadata: ownsSource
+          ? { accountId: 'demo-account', ownedSource: foundation!.ownedSourceIdentifier }
+          : { accountId: 'demo-account' },
+        health: { ok: true },
+      }),
     });
     if (response.status !== 200) throw new Error(`connect binding failed: ${response.status} ${await response.text()}`);
   }

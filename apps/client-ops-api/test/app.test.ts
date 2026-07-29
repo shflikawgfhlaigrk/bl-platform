@@ -7,7 +7,7 @@ import {
 } from '@blacklabel/client-ops';
 import { asCoreDb, coreMigrations, createTenant, EventBus } from '@blacklabel/core';
 import { createTestDb, runMigrations } from '@blacklabel/db';
-import { createClientOpsHttpApp, withBearerAuth, withDefaultTenant } from '../src/app';
+import { createClientOpsHttpApp, withBearerAuth, withTenantGuard } from '../src/app';
 import { seedClientOpsProductStarter } from '../src/demo';
 
 const databases: Array<ReturnType<typeof createTestDb<ClientOpsDatabase>>> = [];
@@ -64,22 +64,51 @@ describe('client-ops standalone HTTP app', () => {
     expect(externalConnected).toHaveLength(0);
   });
 
-  it('injects the local tenant for client-ops requests but preserves an explicit tenant', async () => {
+  it('refuses a client-ops request that names no tenant instead of defaulting one', async () => {
     const { app, tenant } = await setup();
-    const fetch = withDefaultTenant((request) => app.fetch(request), tenant.id);
-    const response = await fetch(new Request('http://localhost/api/client-ops/overview'));
-    expect(response.status).toBe(200);
+    const fetch = withTenantGuard((request) => app.fetch(request));
+
+    const unlabelled = await fetch(new Request('http://localhost/api/client-ops/overview'));
+    expect(unlabelled.status).toBe(400);
+    expect(((await unlabelled.json()) as any).error.code).toBe('tenant_required');
+
+    // A blank header is not a tenant either.
+    const blank = await fetch(new Request('http://localhost/api/client-ops/overview', {
+      headers: { 'x-tenant-id': '   ' },
+    }));
+    expect(blank.status).toBe(400);
+    expect(((await blank.json()) as any).error.code).toBe('tenant_required');
+
+    // An unknown tenant is rejected, never created or assumed.
+    const unknown = await fetch(new Request('http://localhost/api/client-ops/overview', {
+      headers: { 'x-tenant-id': 'tenant_that_does_not_exist' },
+    }));
+    expect(unknown.status).toBe(404);
+    expect(((await unknown.json()) as any).error.code).toBe('tenant_unknown');
+
+    const named = await fetch(new Request('http://localhost/api/client-ops/overview', {
+      headers: { 'x-tenant-id': tenant.id },
+    }));
+    expect(named.status).toBe(200);
+  });
+
+  it('injects a tenant only under the explicit loopback-development opt-in', async () => {
+    const { app, tenant } = await setup();
+    const fetch = withTenantGuard((request) => app.fetch(request), { devDefaultTenantId: tenant.id });
+    const injected = await fetch(new Request('http://localhost/api/client-ops/overview'));
+    expect(injected.status).toBe(200);
+    // Even with the opt-in on, an explicit tenant is never overwritten.
     const explicit = await fetch(new Request('http://localhost/api/client-ops/overview', {
       headers: { 'x-tenant-id': 'tenant_that_does_not_exist' },
     }));
     expect(explicit.status).toBe(404);
   });
 
-  it('rejects unauthenticated API calls before tenant injection while /api/health stays open', async () => {
+  it('rejects unauthenticated API calls before any tenant work while /api/health stays open', async () => {
     const { app, tenant } = await setup();
     const token = 'engine-shared-secret';
     const fetch = withBearerAuth(
-      withDefaultTenant((request) => app.fetch(request), tenant.id),
+      withTenantGuard((request) => app.fetch(request)),
       token,
     );
     const health = await fetch(new Request('http://localhost/api/health'));
@@ -92,8 +121,13 @@ describe('client-ops standalone HTTP app', () => {
     expect(wrong.status).toBe(401);
     const bootstrap = await fetch(new Request('http://localhost/api/bootstrap'));
     expect(bootstrap.status).toBe(401);
-    const authorized = await fetch(new Request('http://localhost/api/client-ops/overview', {
+    // Authenticated but unlabelled still fails closed on tenancy.
+    const unlabelled = await fetch(new Request('http://localhost/api/client-ops/overview', {
       headers: { authorization: `Bearer ${token}` },
+    }));
+    expect(unlabelled.status).toBe(400);
+    const authorized = await fetch(new Request('http://localhost/api/client-ops/overview', {
+      headers: { authorization: `Bearer ${token}`, 'x-tenant-id': tenant.id },
     }));
     expect(authorized.status).toBe(200);
   });
@@ -101,8 +135,11 @@ describe('client-ops standalone HTTP app', () => {
   it('executes a run end-to-end through the mounted engine: request → approval → receipt', async () => {
     const registry = registerReadyFoundations(new ServiceFoundationRegistry());
     const { app, db, tenant } = await setup({ seedDemo: true, registry });
-    const fetch = withDefaultTenant((request) => app.fetch(request), tenant.id);
-    const api = (path: string, init?: RequestInit) => fetch(new Request(`http://localhost/api/client-ops${path}`, init));
+    const fetch = withTenantGuard((request) => app.fetch(request));
+    const api = (path: string, init?: RequestInit) => fetch(new Request(`http://localhost/api/client-ops${path}`, {
+      ...init,
+      headers: { ...(init?.headers as Record<string, string> | undefined), 'x-tenant-id': tenant.id },
+    }));
     const post = (path: string, body: unknown) => api(path, {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-user-id': 'app-test' },

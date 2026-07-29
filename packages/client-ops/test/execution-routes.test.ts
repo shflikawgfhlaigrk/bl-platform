@@ -31,16 +31,17 @@ describe('client-ops execution routes', () => {
     expect(execute.status).toBe(501);
   });
 
-  it('lists all fifteen declared foundations with real connection state', async () => {
+  it('lists all fifteen declared foundations with real per-tenant connection state', async () => {
     const { app, tenantA } = await setupWithRegistry();
+    await createActiveInstallation(app, tenantA);
     const response = await app.request('/foundations', { headers: headers(tenantA) });
     expect(response.status).toBe(200);
     const list = ((await response.json()) as { data: any[] }).data;
     expect(list).toHaveLength(15);
     const wos = list.find((item) => item.serviceId === 'workflow-operating-system');
-    expect(wos).toMatchObject({ connected: true, adapterReadiness: 'ready' });
+    expect(wos).toMatchObject({ connected: true, adapterConnected: true, adapterReadiness: 'ready', connectionStatus: 'ready' });
     const frontDesk = list.find((item) => item.serviceId === 'ai-front-desk');
-    expect(frontDesk).toMatchObject({ connected: false, adapterReadiness: 'declared' });
+    expect(frontDesk).toMatchObject({ connected: false, adapterConnected: false, adapterReadiness: 'declared', connectionStatus: 'adapter_not_connected' });
   });
 
   it('stops a mutating run at needs_approval with exactly one pending review and no receipt', async () => {
