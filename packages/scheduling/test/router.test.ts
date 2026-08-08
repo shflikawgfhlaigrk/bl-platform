@@ -242,7 +242,7 @@ describe('router availability + ICS + reminders', () => {
     expect(body).toContain('DTSTART:20270405T100000Z');
   });
 
-  it('creates reminders, lists pending ones, and sends via the stub provider', async () => {
+  it('creates reminders, lists pending ones, and sends via the configured provider', async () => {
     const world = await setup();
     const { app, tenantA, reminderDelivery } = world;
     const ids = await createBasics(world);

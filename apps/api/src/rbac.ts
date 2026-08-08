@@ -31,6 +31,27 @@ const endsWith = (suffix: string) => (_m: string, p: string) => p.endsWith(suffi
  */
 export function defaultRbacRules(): RbacRule[] {
   return [
+    // automation mutations require automation administration, including
+    // approval paths that would otherwise match the generic purchasing rule.
+    {
+      test: (method, path) => path.includes('/api/automation') && method !== 'GET',
+      permission: 'automation.admin',
+    },
+    // manually recording an invoice payment is a finance mutation.
+    {
+      test: (method, path) =>
+        method === 'POST' && /^\/api\/billing\/invoices\/[^/]+\/payments$/.test(path),
+      permission: 'finance.write',
+    },
+    // scheduling reads and mutations are workforce surfaces.
+    {
+      test: (method, path) => path.includes('/api/scheduling') && method === 'GET',
+      permission: 'workforce.read',
+    },
+    {
+      test: (method, path) => path.includes('/api/scheduling') && method !== 'GET',
+      permission: 'workforce.admin',
+    },
     // purchasing: approving a PO is the guarded privilege (journey 18).
     { test: endsWith('/approve'), permission: 'purchasing.approve' },
     // customers PII export.

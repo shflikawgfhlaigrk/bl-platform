@@ -10,7 +10,7 @@ import {
   type ModuleDeps,
   type TenantEnv,
 } from '@blacklabel/core';
-import type { AutomationDatabase, OutboxStatus } from './schema';
+import type { ApprovalStatus, AutomationDatabase, OutboxStatus } from './schema';
 import { OutboxService } from './outbox';
 import { RulesService } from './rules';
 import { DispatcherRegistry, runOnce } from './dispatcher';
@@ -57,7 +57,10 @@ const evaluateSchema = z.object({
 });
 
 const rejectSchema = z.object({ reason: z.string().trim().min(1).max(1000) });
+const holdSchema = z.object({ reason: z.string().trim().min(1).max(1000) });
 const runOnceSchema = z.object({ limit: z.number().int().min(1).max(500).optional() });
+
+const APPROVAL_STATUSES: ApprovalStatus[] = ['pending', 'held', 'approved', 'rejected'];
 
 const OUTBOX_STATUSES: OutboxStatus[] = [
   'pending',
@@ -163,12 +166,22 @@ export function automationRouter(
 
   app.get('/approvals', async (c) => {
     const page = parsePagination(c.req.query());
-    const list = await rules.listApprovals(c.get('tenantId'), { status: c.req.query('status') }, page);
+    const status = c.req.query('status');
+    if (status !== undefined && !APPROVAL_STATUSES.includes(status as ApprovalStatus)) {
+      throw ApiError.badRequest(`invalid status "${status}"`, { allowed: APPROVAL_STATUSES });
+    }
+    const list = await rules.listApprovals(c.get('tenantId'), { status }, page);
     return c.json({ data: list, limit: page.limit, offset: page.offset });
   });
 
   app.post('/approvals/:id/approve', async (c) => {
     const row = await rules.approve(c.get('tenantId'), c.req.param('id'), actorOf(c));
+    return c.json({ data: row });
+  });
+
+  app.post('/approvals/:id/hold', async (c) => {
+    const body = holdSchema.parse(await jsonBody(c));
+    const row = await rules.hold(c.get('tenantId'), c.req.param('id'), body.reason, actorOf(c));
     return c.json({ data: row });
   });
 

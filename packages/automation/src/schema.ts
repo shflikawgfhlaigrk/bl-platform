@@ -12,7 +12,8 @@ import type { CoreDatabase } from '@blacklabel/core';
  *                                 not code). Editing a rule appends a new version
  *                                 row sharing a `rule_key`; prior versions stay.
  *   3. `automation_executions`  — append-only history of every evaluate() outcome.
- *   4. `automation_approvals`   — pending approvals for `approval_required` rules.
+ *   4. `automation_approvals`   — durable approval requests for
+ *                                 `approval_required` rules.
  *
  * Money is integer cents; timestamps are ISO-8601 UTC (nowIso); JSON is stored
  * as TEXT (JSON.stringify/parse at the service boundary); booleans are 0/1.
@@ -50,7 +51,7 @@ export type ExecutionOutcome =
   | 'invalid_event'
   | 'dry_run';
 
-export type ApprovalStatus = 'pending' | 'approved' | 'rejected';
+export type ApprovalStatus = 'pending' | 'held' | 'approved' | 'rejected';
 
 /* ------------------------- Typed JSON payloads ------------------------- */
 
@@ -160,7 +161,7 @@ export interface AutomationExecutionRow {
   created_at: string;
 }
 
-/** A pending owner approval for an `approval_required` rule that matched. */
+/** A durable owner approval request for an `approval_required` rule that matched. */
 export interface AutomationApprovalRow {
   id: string;
   tenant_id: string;

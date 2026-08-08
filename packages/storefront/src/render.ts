@@ -81,6 +81,12 @@ export interface SiteConfig {
   /** Logo image basename under assets/ ('' = text-only brand). */
   logoFile: string;
   /**
+   * Full-bleed homepage hero image basename under assets/ ('' = branded
+   * gradient band, no photo). Rendered decorative (aria-hidden); the headline
+   * is real text over it.
+   */
+  heroImage: string;
+  /**
    * Announcement bar text. '' = bar hidden. POLICY: only client-confirmed
    * offers/notices go here — never an invented promotion.
    */
@@ -96,6 +102,25 @@ export interface SiteConfig {
    * the client's own published policy text — never an invented policy.
    */
   infoPages: Array<{ slug: string; title: string; paragraphs: string[] }>;
+  /**
+   * Shipping/returns figures emitted as merchant-listing structured data on
+   * item pages. POLICY: values must mirror the client's published policy
+   * (infoPages) — never an invented rate or window. Omit to emit none.
+   * Requires canonicalBase (Google needs absolute offer URLs).
+   */
+  merchantListing?: {
+    /** ISO 3166-1 alpha-2 country the policy applies to, e.g. 'US'. */
+    applicableCountry: string;
+    currency: string;
+    /** Order value (cents) strictly above which shipping is free ("over $100"). */
+    freeShippingThresholdCents: number;
+    /** Flat shipping rate (cents) below the threshold. */
+    flatRateCents: number;
+    /** Max handling time in days (order placed → handed to carrier). */
+    handlingDaysMax: number;
+    /** Return window in days from delivery. */
+    returnDays: number;
+  };
 }
 
 export const DEFAULT_CONFIG: SiteConfig = {
@@ -108,6 +133,7 @@ export const DEFAULT_CONFIG: SiteConfig = {
   featuredLimit: 12,
   relatedLimit: 6,
   logoFile: '',
+  heroImage: '',
   announcement: '',
   contact: {},
   aboutParagraphs: [],
@@ -132,6 +158,9 @@ export interface RenderedSite {
   /** extra asset basenames referenced under assets/ (e.g. the logo) — the
    * export must copy these via extraAssets. */
   assetRefs: Set<string>;
+  /** Hostname of canonicalBase ('' when canonicals are relative). Self-URL
+   * references on this host are not external-resource loads. */
+  selfHost: string;
 }
 
 /* ------------------------------- helpers ------------------------------- */
@@ -186,6 +215,13 @@ function imageBasename(path: string): string {
   return parts[parts.length - 1] || path;
 }
 
+/** Public extensionless route for a generated file. The host 308-redirects
+ * `*.html` to the pretty route, so absolute canonicals/sitemap entries must
+ * point at the pretty form or every indexed URL is a redirect. */
+function publicPath(file: string): string {
+  return file === 'index.html' ? '' : file.replace(/\.html$/, '');
+}
+
 /** Two-word brands render the second word in the accent color (logo style). */
 function brandWordmark(name: string): string {
   const words = name.trim().split(/\s+/);
@@ -223,7 +259,7 @@ interface LayoutInput {
 function layout(i: LayoutInput): string {
   const { cfg, site, navDepartments } = i;
   const canonical = cfg.canonicalBase
-    ? `${cfg.canonicalBase.replace(/\/$/, '')}/${i.canonicalFile}`
+    ? `${cfg.canonicalBase.replace(/\/$/, '')}/${publicPath(i.canonicalFile)}`
     : i.canonicalFile;
   const nav = navDepartments
     .map((d) => `<li><a href="department-${escapeHtml(d.slug)}.html">${escapeHtml(d.name)}</a></li>`)
@@ -410,8 +446,17 @@ export function renderSite(site: ProjectionSite, config?: Partial<SiteConfig>): 
   };
   site.items.forEach(collectImages);
 
-  /* Home */
-  const featured = site.items.slice().sort(byVelocityThenSlug).slice(0, cfg.featuredLimit);
+  /* Home — featured grid leads with photographed items so it never renders as a
+     wall of gray placeholders; velocity order is preserved within each group. */
+  const featured = site.items
+    .slice()
+    .sort((a, b) => {
+      const ai = a.images.length ? 0 : 1;
+      const bi = b.images.length ? 0 : 1;
+      if (ai !== bi) return ai - bi;
+      return byVelocityThenSlug(a, b);
+    })
+    .slice(0, cfg.featuredLimit);
   const deptGrid = navDepartments
     .map((d) => `<a href="department-${escapeHtml(d.slug)}.html">${escapeHtml(d.name)} <span class="muted">(${d.itemCount})</span></a>`)
     .join('');
@@ -436,7 +481,11 @@ export function renderSite(site: ProjectionSite, config?: Partial<SiteConfig>): 
 <div><strong>Family-run</strong>A real tack shop${c.city ? ` from ${escapeHtml(c.city)}` : ''} — talk to people who ride.</div>
 <div><strong>Ask us anything</strong>${c.phone ? `Call or text <a href="tel:${escapeHtml(c.phone.replace(/[^+\d]/g, ''))}">${escapeHtml(c.phone)}</a>` : 'Reach out'}${c.email ? ` or email <a href="mailto:${escapeHtml(c.email)}">${escapeHtml(c.email)}</a>` : ''}.</div>
 </div>`;
-  const homeBody = `<div class="hero"><p class="kicker">Tack · Apparel · Horse care</p><h1>${brandWordmark(cfg.brandName)}</h1><p>${escapeHtml(cfg.tagline)}. Browse tack, apparel, and horse care for the show ring.</p><p><a class="btn" href="#featured">Shop bestsellers</a> <a class="btn secondary" href="about.html">Our story</a></p></div>
+  const heroInner = `<div class="hero-inner"><p class="kicker">Tack · Apparel · Horse care</p><h1>${escapeHtml(cfg.tagline)}</h1><p>Durable tack and riding essentials built for horse and rider — from a family-run shop that comes to you.</p><p><a class="btn" href="#featured">Shop bestsellers</a> <a class="btn secondary" href="about.html">Our story</a></p></div>`;
+  const heroBlock = cfg.heroImage
+    ? `<section class="hero-photo" aria-label="${escapeHtml(cfg.brandName)}"><img class="hero-bg" src="assets/${escapeHtml(cfg.heroImage)}" alt="" aria-hidden="true" width="1600" height="720">${heroInner}</section>`
+    : `<section class="hero-band" aria-label="${escapeHtml(cfg.brandName)}">${heroInner}</section>`;
+  const homeBody = `${heroBlock}
 ${trustStrip}
 ${brandRow}
 <h2>Departments</h2>
@@ -517,25 +566,77 @@ ${pager}`;
         : cfg.contact.email
           ? `<p class="muted">Looking for a size or color you don't see? Email <a href="mailto:${escapeHtml(cfg.contact.email)}">${escapeHtml(cfg.contact.email)}</a>${cfg.contact.phone ? ` or call/text <a href="tel:${escapeHtml(cfg.contact.phone.replace(/[^+\d]/g, ''))}">${escapeHtml(cfg.contact.phone)}</a>` : ''} — we restock often.</p>`
           : `<p class="muted">Looking for a size you don't see? Ask us at a show — we restock often.</p>`;
+    const urlBase = cfg.canonicalBase ? cfg.canonicalBase.replace(/\/$/, '') : '';
+    const itemUrl = urlBase ? `${urlBase}/${publicPath(file)}` : undefined;
+    const ml = cfg.merchantListing;
+    // Shipping/returns per offer — figures come from cfg.merchantListing which
+    // mirrors the published policy page (never invented here). The rate is
+    // price-dependent: free at/above the published threshold, flat below it.
+    const offerExtras = (priceCents: number) => ({
+      ...(itemUrl ? { url: itemUrl } : {}),
+      ...(ml
+        ? {
+            shippingDetails: {
+              '@type': 'OfferShippingDetails',
+              shippingRate: {
+                '@type': 'MonetaryAmount',
+                value: (priceCents > ml.freeShippingThresholdCents ? 0 : ml.flatRateCents / 100).toFixed(2),
+                currency: ml.currency,
+              },
+              shippingDestination: { '@type': 'DefinedRegion', addressCountry: ml.applicableCountry },
+              deliveryTime: {
+                '@type': 'ShippingDeliveryTime',
+                handlingTime: { '@type': 'QuantitativeValue', minValue: 0, maxValue: ml.handlingDaysMax, unitCode: 'DAY' },
+              },
+            },
+            hasMerchantReturnPolicy: {
+              '@type': 'MerchantReturnPolicy',
+              applicableCountry: ml.applicableCountry,
+              returnPolicyCategory: 'https://schema.org/MerchantReturnFiniteReturnWindow',
+              merchantReturnDays: ml.returnDays,
+              returnMethod: 'https://schema.org/ReturnByMail',
+            },
+          }
+        : {}),
+    });
+    // Variations often share a price; identical (price, availability) pairs
+    // collapse to one Offer so the markup lists distinct offers, not sizes.
+    const seenOffers = new Set<string>();
+    const offers = item.variations
+      .filter((v) => v.priceCents != null)
+      .map((v) => ({
+        priceCents: v.priceCents!,
+        availability:
+          v.state === 'out'
+            ? 'https://schema.org/OutOfStock'
+            : v.state === 'unknown'
+              ? 'https://schema.org/LimitedAvailability'
+              : 'https://schema.org/InStock',
+      }))
+      .filter((o) => {
+        const key = `${o.priceCents}|${o.availability}`;
+        if (seenOffers.has(key)) return false;
+        seenOffers.add(key);
+        return true;
+      })
+      .map((o) => ({
+        '@type': 'Offer',
+        priceCurrency: 'USD',
+        price: (o.priceCents / 100).toFixed(2),
+        availability: o.availability,
+        ...offerExtras(o.priceCents),
+      }));
     const jsonLd = JSON.stringify({
       '@context': 'https://schema.org',
       '@type': 'Product',
       name: item.name,
+      ...(itemUrl ? { url: itemUrl } : {}),
+      ...(urlBase && item.images.length
+        ? { image: item.images.map((im) => `${urlBase}/assets/img/${imageBasename(im.path)}`) }
+        : {}),
       ...(item.brandName ? { brand: { '@type': 'Brand', name: item.brandName } } : {}),
       ...(item.description ? { description: item.description } : {}),
-      offers: item.variations
-        .filter((v) => v.priceCents != null)
-        .map((v) => ({
-          '@type': 'Offer',
-          priceCurrency: 'USD',
-          price: (v.priceCents! / 100).toFixed(2),
-          availability:
-            v.state === 'out'
-              ? 'https://schema.org/OutOfStock'
-              : v.state === 'unknown'
-                ? 'https://schema.org/LimitedAvailability'
-                : 'https://schema.org/InStock',
-        })),
+      offers,
     });
     const body = `<p class="crumbs"><a href="index.html">Home</a>${item.departmentSlug ? ` / <a href="department-${escapeHtml(item.departmentSlug)}.html">${escapeHtml(item.departmentName ?? '')}</a>` : ''}${item.brandSlug ? ` / <a href="brand-${escapeHtml(item.brandSlug)}.html">${escapeHtml(item.brandName ?? '')}</a>` : ''}</p>
 <div class="item-layout">
@@ -662,8 +763,9 @@ function finalize(
   // sitemap.xml (only content pages, deterministic order)
   const contentKinds = new Set(['home', 'department', 'brand', 'item', 'search', 'cart', 'checkout', 'order_status', 'gift_cards', 'consent', 'info']);
   const urls = pages
-    .filter((p) => contentKinds.has(p.kind))
-    .map((p) => (cfg.canonicalBase ? `${cfg.canonicalBase.replace(/\/$/, '')}/${p.path}` : p.path))
+    // 404.html is kind 'info' but must never be sitemapped.
+    .filter((p) => contentKinds.has(p.kind) && p.path !== '404.html')
+    .map((p) => (cfg.canonicalBase ? `${cfg.canonicalBase.replace(/\/$/, '')}/${publicPath(p.path)}` : p.path))
     .sort();
   const sitemap = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls.map((u) => `  <url><loc>${escapeHtml(u)}</loc></url>`).join('\n')}\n</urlset>\n`;
   pages.push({ path: 'sitemap.xml', contentType: 'application/xml; charset=utf-8', kind: 'sitemap', title: '', description: '', body: sitemap });
@@ -678,5 +780,6 @@ function finalize(
     assetRefs.add(cfg.logoFile);
     assetRefs.add('favicon.png');
   }
-  return { pages, byPath, imageRefs, assetRefs };
+  const selfHost = cfg.canonicalBase ? new URL(cfg.canonicalBase).hostname.toLowerCase() : '';
+  return { pages, byPath, imageRefs, assetRefs, selfHost };
 }

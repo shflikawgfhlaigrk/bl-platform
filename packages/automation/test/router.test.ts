@@ -86,7 +86,7 @@ describe('evaluate + outbox + approvals + executions over HTTP', () => {
     expect(((await execs.json() as any).data)).toHaveLength(1);
   });
 
-  it('approval flow: evaluate → /approvals → approve', async () => {
+  it('approval flow: evaluate → hold → approve/reject from held', async () => {
     const { app, tenantA } = await setup();
     await createRule(app, tenantA, { policy: 'approval_required', idempotencyWindowSeconds: 0 });
     await app.request('/evaluate', {
@@ -99,6 +99,22 @@ describe('evaluate + outbox + approvals + executions over HTTP', () => {
     const approval = (await pending.json() as any).data[0];
     expect(approval.status).toBe('pending');
 
+    const noHoldReason = await app.request(`/approvals/${approval.id}/hold`, {
+      method: 'POST',
+      headers: headers(tenantA),
+      body: '{}',
+    });
+    expect(noHoldReason.status).toBe(400);
+
+    const hold = await app.request(`/approvals/${approval.id}/hold`, {
+      method: 'POST',
+      headers: { ...headers(tenantA), 'x-user-id': 'operator_1' },
+      body: JSON.stringify({ reason: 'waiting on owner' }),
+    });
+    expect(hold.status).toBe(200);
+    expect((await hold.json() as any).data).toMatchObject({ status: 'held', reason: 'waiting on owner' });
+    expect(((await (await app.request('/approvals?status=held', { headers: headers(tenantA) })).json() as any).data)).toHaveLength(1);
+
     const approve = await app.request(`/approvals/${approval.id}/approve`, {
       method: 'POST',
       headers: headers(tenantA),
@@ -106,7 +122,10 @@ describe('evaluate + outbox + approvals + executions over HTTP', () => {
     });
     expect((await approve.json() as any).data.status).toBe('approved');
 
-    // reject needs a reason (400 without it)
+    const invalidStatus = await app.request('/approvals?status=bogus', { headers: headers(tenantA) });
+    expect(invalidStatus.status).toBe(400);
+
+    // Rejection remains available from held and still requires its own reason.
     const { app: app2, tenantA: t2 } = await setup();
     await createRule(app2, t2, { policy: 'approval_required', idempotencyWindowSeconds: 0 });
     await app2.request('/evaluate', {
@@ -115,12 +134,31 @@ describe('evaluate + outbox + approvals + executions over HTTP', () => {
       body: JSON.stringify({ eventType: 'inventory.stock.below_reorder_point', payload: reorderEvent() }),
     });
     const p2 = (await (await app2.request('/approvals?status=pending', { headers: headers(t2) })).json() as any).data[0];
+    const hold2 = await app2.request(`/approvals/${p2.id}/hold`, {
+      method: 'POST',
+      headers: headers(t2),
+      body: JSON.stringify({ reason: 'needs review' }),
+    });
+    expect((await hold2.json() as any).data.status).toBe('held');
     const noReason = await app2.request(`/approvals/${p2.id}/reject`, {
       method: 'POST',
       headers: headers(t2),
       body: '{}',
     });
     expect(noReason.status).toBe(400);
+    const reject = await app2.request(`/approvals/${p2.id}/reject`, {
+      method: 'POST',
+      headers: headers(t2),
+      body: JSON.stringify({ reason: 'not this quarter' }),
+    });
+    expect((await reject.json() as any).data).toMatchObject({ status: 'rejected', reason: 'not this quarter' });
+
+    const holdFinal = await app2.request(`/approvals/${p2.id}/hold`, {
+      method: 'POST',
+      headers: headers(t2),
+      body: JSON.stringify({ reason: 'too late' }),
+    });
+    expect(holdFinal.status).toBe(409);
   });
 
   it('dead-letter list + replay + cancel over HTTP', async () => {
@@ -219,6 +257,14 @@ describe('tenant isolation — every entity', () => {
       body: '{}',
     });
     expect(approveAcross.status).toBe(404);
+
+    // B cannot hold A's approval → 404.
+    const holdAcross = await app.request(`/approvals/${aApproval.id}/hold`, {
+      method: 'POST',
+      headers: headers(tenantB),
+      body: JSON.stringify({ reason: 'hijack' }),
+    });
+    expect(holdAcross.status).toBe(404);
 
     // A's data is untouched: still one pending approval.
     const aStill = (await (await app.request('/approvals?status=pending', { headers: headers(tenantA) })).json() as any).data;

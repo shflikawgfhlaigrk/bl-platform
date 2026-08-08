@@ -22,7 +22,11 @@ export { schedulingRouter } from './router';
 export type { SchedulingRouterOptions } from './router';
 
 // Contract implementations (CreateAppointmentContract, CreateAppointmentTypeContract)
-export { createSchedulingContract, createSchedulingAppointmentTypeContract } from './service';
+export {
+  assertExpectedActiveStaffCount,
+  createSchedulingContract,
+  createSchedulingAppointmentTypeContract,
+} from './service';
 
 // Next-available slot finder (Front Desk V2)
 export { findNextAvailable } from './service';
@@ -38,6 +42,8 @@ export type {
   ExternalEventInput,
   ReminderDeliveryProvider,
   ReminderDeliveryInput,
+  SchedulingReadinessConfig,
+  SchedulingReadinessResult,
 } from './service';
 
 // Seed helper
@@ -50,6 +56,7 @@ export type {
   OwnerType,
   RecurrenceFrequency,
   ReminderStatus,
+  CalendarSyncStatus,
   SchedulingCalendarRow,
   SchedulingLocationRow,
   SchedulingStaffMemberRow,

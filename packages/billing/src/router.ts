@@ -167,8 +167,8 @@ const updateAccountSchema = z.object({
 export interface BillingRouterOptions {
   /**
    * Payment provider adapters, keyed by PaymentProvider.key. Defaults to the
-   * manual (offline) and stub adapters. apps/api adds real processors here
-   * (e.g. a Stripe adapter) without touching billing code.
+   * manual (offline) adapter only; simulators and real processors must be
+   * explicitly injected by the integrator.
    */
   providers?: readonly PaymentProvider[];
 }
@@ -289,15 +289,23 @@ export function billingRouter(
   });
 
   app.post('/payments/webhooks/:provider', async (c) => {
-    const payload = await c.req.json().catch(() => {
+    const rawBody = await c.req.text();
+    let payload: unknown;
+    try {
+      payload = JSON.parse(rawBody);
+    } catch {
       throw ApiError.badRequest('webhook payload must be JSON');
-    });
+    }
     const result = await recordWebhookEvent(
       ctx,
       providers,
       c.get('tenantId'),
       c.req.param('provider'),
-      payload,
+      {
+        rawBody,
+        headers: Object.fromEntries(c.req.raw.headers.entries()),
+        payload,
+      },
     );
     return c.json({ data: { event: result.event, outcome: result.outcome } }, 201);
   });

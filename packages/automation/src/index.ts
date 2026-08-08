@@ -14,6 +14,7 @@
  *   - automation.outbox.enqueued    { v, outboxId, kind }
  *   - automation.outbox.dead        { v, outboxId, attempts }
  *   - automation.approval.requested { v, approvalId, ruleKey }
+ *   - automation.approval.held      { v, approvalId, reason }
  *
  * Integrator wiring:
  *   - Call registerAutomationSubscriptions({ db, events, contracts }) once so

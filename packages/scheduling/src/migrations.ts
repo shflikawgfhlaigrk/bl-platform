@@ -245,4 +245,25 @@ export const schedulingMigrations: Migration[] = [
         .execute();
     },
   },
+  {
+    name: 'scheduling.0005_calendar_sync_state',
+    up: async (db) => {
+      await db.schema
+        .alterTable('scheduling_appointments')
+        .addColumn('calendar_sync_status', 'text', (c) => c.notNull().defaultTo('pending'))
+        .execute();
+      await db.schema
+        .alterTable('scheduling_appointments')
+        .addColumn('calendar_sync_error', 'text')
+        .execute();
+      await db.schema
+        .alterTable('scheduling_appointments')
+        .addColumn('calendar_external_id', 'text')
+        .execute();
+      await db.schema
+        .alterTable('scheduling_appointments')
+        .addColumn('calendar_synced_at', 'text')
+        .execute();
+    },
+  },
 ];

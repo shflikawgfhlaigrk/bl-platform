@@ -85,4 +85,54 @@ describe('consents: append-only history, double-opt-in, event without PII', () =
     const cur = (await body(await ctx.req(ctx.A, `/profiles/${p.id}/consents/current?channel=email`))).data;
     expect(cur.state).toBe('pending_double_opt_in'); // never granted
   });
+
+  it('invalidates an outstanding confirmation token when consent is withdrawn', async () => {
+    const ctx = await setup();
+    const p = await create(ctx, ctx.A, '/profiles', { email: 'withdrawn@x.com' });
+    const start = (
+      await body(
+        await ctx.json(ctx.A, 'POST', `/profiles/${p.id}/consents/double-opt-in/start`, {
+          channel: 'email',
+        }),
+      )
+    ).data;
+
+    await create(ctx, ctx.A, `/profiles/${p.id}/consents`, {
+      channel: 'email',
+      state: 'withdrawn',
+    });
+
+    const stale = await ctx.json(ctx.A, 'POST', '/consents/double-opt-in/confirm', {
+      token: start.token,
+    });
+    expect(stale.status).toBe(409);
+    const current = (await body(await ctx.req(ctx.A, `/profiles/${p.id}/consents/current?channel=email`))).data;
+    expect(current.state).toBe('withdrawn');
+  });
+
+  it('invalidates an older token when a newer double-opt-in starts', async () => {
+    const ctx = await setup();
+    const p = await create(ctx, ctx.A, '/profiles', { email: 'renewed@x.com' });
+    const first = (
+      await body(
+        await ctx.json(ctx.A, 'POST', `/profiles/${p.id}/consents/double-opt-in/start`, {
+          channel: 'email',
+        }),
+      )
+    ).data;
+    const second = (
+      await body(
+        await ctx.json(ctx.A, 'POST', `/profiles/${p.id}/consents/double-opt-in/start`, {
+          channel: 'email',
+        }),
+      )
+    ).data;
+
+    expect(
+      (await ctx.json(ctx.A, 'POST', '/consents/double-opt-in/confirm', { token: first.token })).status,
+    ).toBe(409);
+    expect(
+      (await ctx.json(ctx.A, 'POST', '/consents/double-opt-in/confirm', { token: second.token })).status,
+    ).toBe(200);
+  });
 });

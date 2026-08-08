@@ -24,6 +24,11 @@ export interface PlaceOrderInput {
   customer?: { name?: string; email?: string; fulfillment?: string };
 }
 
+export interface SubmitConsentResult {
+  profileId: string;
+  expiresAt: string;
+}
+
 export interface StorefrontRouterDeps {
   /** A DB handle that need only expose the storefront_* projection tables. */
   db: Kysely<StorefrontDatabase>;
@@ -35,7 +40,7 @@ export interface StorefrontRouterDeps {
   /** Injected order placement (forwards to the Mags OS inventory API). */
   placeOrder?: (input: PlaceOrderInput) => Promise<unknown> | unknown;
   /** Injected double-opt-in consent capture. */
-  submitConsent?: (input: { email: string }) => Promise<unknown> | unknown;
+  submitConsent?: (input: { email: string }) => Promise<SubmitConsentResult> | SubmitConsentResult;
   /** Injected restock request. */
   submitRestock?: (input: { variationId: string; email?: string }) => Promise<unknown> | unknown;
   /** Injected order-status lookup by id + email hash. */
@@ -147,7 +152,8 @@ export function storefrontPublicRouter(deps: StorefrontRouterDeps): Hono {
   app.post('/api/consent', async (c) => {
     if (!deps.submitConsent) throw new ApiError(501, 'consent capture is not available in this mode', 'not_implemented');
     const body = z.object({ email: z.string().email() }).parse(await c.req.json());
-    return c.json({ data: await deps.submitConsent(body) }, 202);
+    const result = await deps.submitConsent(body);
+    return c.json({ data: { profileId: result.profileId, expiresAt: result.expiresAt } }, 202);
   });
 
   app.post('/api/restock-request', async (c) => {

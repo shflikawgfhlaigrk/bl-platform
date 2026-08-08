@@ -112,10 +112,9 @@ export function buildCss(): string {
   --font-display:Georgia,'Iowan Old Style','Times New Roman',serif;
 }
 :root[data-theme="dark"]{${vars(DARK)}}
-@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){${vars(DARK)}}}
 *{box-sizing:border-box}
 html{font-family:var(--font);font-size:17px;line-height:1.5;-webkit-text-size-adjust:100%}
-body{margin:0;background:var(--bg);color:var(--text)}
+body{margin:0;background:var(--bg);color:var(--text);overflow-x:hidden}
 img{max-width:100%;height:auto;display:block}
 a{color:var(--link);text-decoration:underline;text-underline-offset:2px}
 a:hover{text-decoration:none}
@@ -155,6 +154,16 @@ nav.primary a{color:var(--text)}
 .btn.secondary{background:var(--surface);color:var(--text);border:1px solid var(--muted)}
 main{padding:1.5rem 0 3rem;min-height:60vh}
 .hero{background:var(--surface);border:1px solid var(--muted);border-radius:var(--radius);padding:1.5rem;margin-bottom:1.5rem}
+.hero-photo,.hero-band{position:relative;width:100vw;margin-left:calc(50% - 50vw);margin-top:-1.5rem;margin-bottom:2rem;min-height:clamp(320px,50vh,540px);display:flex;align-items:flex-end;overflow:hidden}
+.hero-band{background:linear-gradient(118deg,#1c1613 0%,#3a1414 52%,#7d0f16 100%)}
+.hero-photo .hero-bg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:0}
+.hero-photo::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,rgba(20,16,14,.10),rgba(20,16,14,.62));z-index:1}
+.hero-inner{position:relative;z-index:2;width:100%;max-width:var(--maxw);margin:0 auto;padding:2.4rem 1.25rem;color:#fff;text-align:right}
+.hero-inner .kicker{color:rgba(255,255,255,.9);font-weight:700;text-transform:uppercase;letter-spacing:.16em;font-size:.72rem;margin:0 0 .5rem}
+.hero-inner h1{color:#fff;font-family:var(--font-display);font-size:clamp(2rem,4.6vw,3.1rem);margin:0 0 .4rem;letter-spacing:-.01em;text-shadow:0 2px 18px rgba(0,0,0,.35)}
+.hero-inner p{color:rgba(255,255,255,.94);max-width:34rem;margin-left:auto;font-size:1.05rem}
+.hero-inner .btn.secondary{background:rgba(255,255,255,.12);color:#fff;border-color:rgba(255,255,255,.55)}
+@media(max-width:34rem){.hero-inner{text-align:left}.hero-inner p{margin-left:0}}
 .muted{color:var(--muted)}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(9rem,1fr));gap:var(--gap)}
 .card{background:var(--surface);border:1px solid var(--muted);border-radius:var(--radius);overflow:hidden;display:flex;flex-direction:column}

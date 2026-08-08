@@ -91,18 +91,18 @@ describe('rate limiting', () => {
 });
 
 describe('RBAC (journey 18)', () => {
-  async function assignCashier(db: unknown, tenantId: string): Promise<string> {
+  async function assignRole(db: unknown, tenantId: string, roleKey: 'cashier' | 'manager'): Promise<string> {
     const wdb = db as import('kysely').Kysely<WorkforceDatabase>;
     const user = await createUser(asCoreDb(db as never), tenantId, {
-      name: 'Casey Cashier',
-      email: 'cashier@local.invalid',
+      name: `Security ${roleKey}`,
+      email: `${roleKey}@local.invalid`,
       role: 'member',
     });
     const role = await wdb
       .selectFrom('workforce_roles')
       .select('id')
       .where('tenant_id', '=', tenantId)
-      .where('key', '=', 'cashier')
+      .where('key', '=', roleKey)
       .executeTakeFirstOrThrow();
     await wdb
       .insertInto('workforce_user_roles')
@@ -116,12 +116,30 @@ describe('RBAC (journey 18)', () => {
     { method: 'GET', path: '/api/customers/export' },
     { method: 'GET', path: '/api/finance/payouts' },
     { method: 'GET', path: '/api/admin/credentials' },
+    { method: 'POST', path: '/api/automation/rules', body: {} },
+    { method: 'POST', path: '/api/automation/evaluate', body: {} },
+    { method: 'POST', path: '/api/automation/outbox/nope/replay', body: {} },
+    { method: 'POST', path: '/api/automation/outbox/nope/cancel', body: {} },
+    { method: 'POST', path: '/api/automation/outbox/run-once', body: {} },
+    { method: 'POST', path: '/api/billing/invoices/nope/payments', body: { amountCents: 100 } },
+    { method: 'GET', path: '/api/scheduling/staff' },
+    { method: 'POST', path: '/api/scheduling/staff', body: {} },
+  ];
+
+  const AUTOMATION_ADMIN_GUARDED = [
+    '/api/automation/rules',
+    '/api/automation/evaluate',
+    '/api/automation/approvals/nope/approve',
+    '/api/automation/approvals/nope/reject',
+    '/api/automation/outbox/nope/replay',
+    '/api/automation/outbox/nope/cancel',
+    '/api/automation/outbox/run-once',
   ];
 
   it('denies a cashier on guarded routes and allows the owner', async () => {
     const { platform, db, tenantId } = await boot();
     await platform.seedTenant(tenantId); // owner + built-in roles
-    const cashierId = await assignCashier(db, tenantId);
+    const cashierId = await assignRole(db, tenantId, 'cashier');
 
     for (const r of GUARDED) {
       const init: RequestInit = {
@@ -142,6 +160,21 @@ describe('RBAC (journey 18)', () => {
       };
       const res = await platform.app.request(r.path, init);
       expect(res.status, `owner should pass the guard on ${r.method} ${r.path}`).not.toBe(403);
+    }
+  });
+
+  it('requires automation.admin even when the user has unrelated approval permissions', async () => {
+    const { platform, db, tenantId } = await boot();
+    await platform.seedTenant(tenantId);
+    const managerId = await assignRole(db, tenantId, 'manager');
+
+    for (const path of AUTOMATION_ADMIN_GUARDED) {
+      const denied = await platform.app.request(path, {
+        method: 'POST',
+        headers: { 'x-tenant-id': tenantId, 'x-user-id': managerId, 'content-type': 'application/json' },
+        body: '{}',
+      });
+      expect(denied.status, `manager should be 403 on POST ${path}`).toBe(403);
     }
   });
 });

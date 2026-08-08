@@ -3,6 +3,8 @@ import { billingCreateInvoiceContract } from '../src/service';
 import { manualPaymentProvider, stubPaymentProvider } from '../src/providers';
 import { api, json, makeInvoice, makeSentInvoice, setupBilling } from './helpers';
 
+const setupWithStub = () => setupBilling({ providers: [manualPaymentProvider, stubPaymentProvider] });
+
 describe('payment providers', () => {
   it('manual (offline) adapter issues collect-offline instructions for the remaining balance', async () => {
     const ctx = await setupBilling();
@@ -21,7 +23,7 @@ describe('payment providers', () => {
   });
 
   it('stub adapter is Stripe-shaped: pi_* intent id + client secret', async () => {
-    const ctx = await setupBilling();
+    const ctx = await setupWithStub();
     const sent = await makeSentInvoice(ctx, ctx.tenantA.id);
     const res = await api(ctx.app, ctx.tenantA.id, 'POST', `/invoices/${sent.id}/payment-intents`, {
       provider: 'stub',
@@ -49,7 +51,7 @@ describe('payment providers', () => {
   });
 
   it('stub webhook (payment_intent.succeeded) records the payment and pays the invoice', async () => {
-    const ctx = await setupBilling();
+    const ctx = await setupWithStub();
     const paidEvents: any[] = [];
     ctx.events.on('billing.invoice.paid', (e) => {
       paidEvents.push(e);
@@ -102,7 +104,7 @@ describe('payment providers', () => {
   });
 
   it('a redelivered webhook (same provider ref) does not double-count the payment', async () => {
-    const ctx = await setupBilling();
+    const ctx = await setupWithStub();
     const sent = await makeSentInvoice(ctx, ctx.tenantA.id);
     const delivery = {
       type: 'payment_intent.succeeded',
@@ -144,7 +146,7 @@ describe('payment providers', () => {
   });
 
   it('ignores unhandled webhook types and manual-provider webhooks (still persisted)', async () => {
-    const ctx = await setupBilling();
+    const ctx = await setupWithStub();
     const other = await api(ctx.app, ctx.tenantA.id, 'POST', '/payments/webhooks/stub', {
       type: 'customer.updated',
     });
@@ -169,7 +171,7 @@ describe('payment providers', () => {
   });
 
   it("a webhook in tenant B's scope cannot pay tenant A's invoice", async () => {
-    const ctx = await setupBilling();
+    const ctx = await setupWithStub();
     const sent = await makeSentInvoice(ctx, ctx.tenantA.id);
     const res = await api(ctx.app, ctx.tenantB.id, 'POST', '/payments/webhooks/stub', {
       type: 'payment_intent.succeeded',
@@ -179,6 +181,95 @@ describe('payment providers', () => {
     const invoice = await json(await api(ctx.app, ctx.tenantA.id, 'GET', `/invoices/${sent.id}`));
     expect(invoice.data.status).toBe('sent');
     expect(invoice.data.paid_cents).toBe(0);
+  });
+
+  it('does not expose the unsigned stub provider from the default registry', async () => {
+    const ctx = await setupBilling();
+    const res = await api(ctx.app, ctx.tenantA.id, 'POST', '/payments/webhooks/stub', {
+      type: 'payment_intent.succeeded',
+    });
+    expect(res.status).toBe(501);
+  });
+
+  it('serializes concurrent redeliveries so one provider reference is recorded once', async () => {
+    const ctx = await setupWithStub();
+    const sent = await makeSentInvoice(ctx, ctx.tenantA.id);
+    const delivery = {
+      type: 'payment_intent.succeeded',
+      data: {
+        object: { id: 'pi_concurrent_1', amount_received: 4_000, metadata: { invoiceId: sent.id } },
+      },
+    };
+
+    const responses = await Promise.all([
+      api(ctx.app, ctx.tenantA.id, 'POST', '/payments/webhooks/stub', delivery),
+      api(ctx.app, ctx.tenantA.id, 'POST', '/payments/webhooks/stub', delivery),
+    ]);
+    expect(responses.map((r) => r.status)).toEqual([201, 201]);
+    const outcomes = await Promise.all(responses.map(async (r) => (await json(r)).data.outcome.kind));
+    expect(outcomes.sort()).toEqual(['ignored', 'payment_succeeded']);
+
+    const payments = await json(
+      await api(ctx.app, ctx.tenantA.id, 'GET', `/invoices/${sent.id}/payments`),
+    );
+    expect(payments.data).toHaveLength(1);
+    expect(payments.data[0].provider_ref).toBe('pi_concurrent_1');
+  });
+
+  it('passes exact raw JSON and request headers to a production provider adapter', async () => {
+    let observed: { rawBody: string; signature: string | undefined } | undefined;
+    const ctx = await setupBilling({
+      providers: [
+        {
+          key: 'signed',
+          async createPaymentIntent() {
+            throw new Error('not used');
+          },
+          async recordWebhookEvent(event) {
+            observed = { rawBody: event.rawBody, signature: event.headers['x-provider-signature'] };
+            return { kind: 'ignored' };
+          },
+        },
+      ],
+    });
+    const rawBody = '{"type":"provider.event","data":{"value":1}}';
+    const res = await ctx.app.request('/payments/webhooks/signed', {
+      method: 'POST',
+      headers: {
+        'x-tenant-id': ctx.tenantA.id,
+        'content-type': 'application/json',
+        'x-provider-signature': 'sig_test',
+      },
+      body: rawBody,
+    });
+    expect(res.status).toBe(201);
+    expect(observed).toEqual({ rawBody, signature: 'sig_test' });
+  });
+
+  it('does not apply a provider payment that lacks an idempotency reference', async () => {
+    const ctx = await setupBilling({
+      providers: [
+        {
+          key: 'missing-ref',
+          async createPaymentIntent() {
+            throw new Error('not used');
+          },
+          async recordWebhookEvent() {
+            return { kind: 'payment_succeeded', invoiceId: 'unused', amountCents: 1_000 };
+          },
+        },
+      ],
+    });
+    const res = await api(ctx.app, ctx.tenantA.id, 'POST', '/payments/webhooks/missing-ref', {
+      type: 'payment.succeeded',
+    });
+    expect(res.status).toBe(201);
+    expect((await json(res)).data.outcome).toEqual({
+      kind: 'ignored',
+      reason: 'payment event missing provider reference',
+    });
+    const payments = await json(await api(ctx.app, ctx.tenantA.id, 'GET', '/payments'));
+    expect(payments.data).toEqual([]);
   });
 
   it('custom providers can be injected via BillingRouterOptions', async () => {

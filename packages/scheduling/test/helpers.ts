@@ -13,9 +13,20 @@ import type { SchedulingDatabase } from '../src/schema';
 import {
   createSchedulingContext,
   NoopExternalCalendarProvider,
-  StubReminderProvider,
+  type ReminderDeliveryInput,
+  type ReminderDeliveryProvider,
   type SchedulingCtx,
 } from '../src/service';
+
+class TestReminderProvider implements ReminderDeliveryProvider {
+  readonly name = 'test';
+  readonly deliveries: ReminderDeliveryInput[] = [];
+
+  async deliver(input: ReminderDeliveryInput): Promise<{ delivered: boolean }> {
+    this.deliveries.push(input);
+    return { delivered: true };
+  }
+}
 
 export interface TestWorld {
   db: Kysely<SchedulingDatabase>;
@@ -24,7 +35,7 @@ export interface TestWorld {
   app: Hono<TenantEnv>;
   tenantA: TenantRow;
   tenantB: TenantRow;
-  reminderDelivery: StubReminderProvider;
+  reminderDelivery: TestReminderProvider;
   calendarSync: NoopExternalCalendarProvider;
 }
 
@@ -34,7 +45,7 @@ export async function setup(): Promise<TestWorld> {
   const tenantA = await createTenant(asCoreDb(db), { name: 'Tenant A' });
   const tenantB = await createTenant(asCoreDb(db), { name: 'Tenant B' });
   const events = new EventBus();
-  const reminderDelivery = new StubReminderProvider();
+  const reminderDelivery = new TestReminderProvider();
   const calendarSync = new NoopExternalCalendarProvider();
   const ctx = createSchedulingContext({ db, events, reminderDelivery, calendarSync });
   const app = schedulingRouter({ db, events, contracts: {} }, { reminderDelivery, calendarSync });

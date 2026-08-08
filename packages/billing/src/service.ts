@@ -30,7 +30,7 @@ import type {
   SubscriptionInterval,
   SubscriptionStatus,
 } from './schema';
-import type { PaymentIntent, PaymentProvider, WebhookOutcome } from './providers';
+import type { PaymentIntent, PaymentProvider, ProviderWebhookEvent, WebhookOutcome } from './providers';
 
 /* ------------------------------------------------------------------ *
  * Shared context + DTO helpers
@@ -568,6 +568,11 @@ export interface RecordPaymentResult {
   invoice: InvoiceDto;
 }
 
+interface RecordPaymentOptions {
+  /** Webhook transactions defer events until after commit. */
+  emitEvents?: boolean;
+}
+
 /**
  * Record a payment against a sent/partial/overdue invoice and recompute the
  * status. Emits billing.invoice.paid exactly once, on the transition to paid.
@@ -578,6 +583,7 @@ export async function recordPayment(
   actor: string,
   invoiceId: string,
   input: RecordPaymentInputSvc,
+  options: RecordPaymentOptions = {},
 ): Promise<RecordPaymentResult> {
   const invoice = await getInvoiceRow(ctx.db, tenantId, invoiceId);
   if (!invoice) throw ApiError.notFound(`invoice not found: ${invoiceId}`);
@@ -628,21 +634,32 @@ export async function recordPayment(
     amountCents: input.amountCents,
     status: next.status,
   });
-  await ctx.events.emit(tenantId, 'billing.payment.recorded', {
-    paymentId: payment.id,
-    invoiceId,
-    amountCents: input.amountCents,
+  const result = { payment, invoice: toInvoiceDto(next) };
+  if (options.emitEvents !== false) {
+    await emitPaymentEvents(ctx.events, tenantId, result);
+  }
+  return result;
+}
+
+async function emitPaymentEvents(
+  events: EventBus,
+  tenantId: string,
+  result: RecordPaymentResult,
+): Promise<void> {
+  await events.emit(tenantId, 'billing.payment.recorded', {
+    paymentId: result.payment.id,
+    invoiceId: result.payment.invoice_id,
+    amountCents: result.payment.amount_cents,
   });
-  // The guards above reject already-paid invoices, so reaching "paid" here is
-  // always the transition — billing.invoice.paid is emitted exactly once.
-  if (next.status === 'paid') {
-    await ctx.events.emit(tenantId, 'billing.invoice.paid', {
-      invoiceId,
-      customerId: invoice.customer_id,
-      totalCents: invoice.total_cents,
+  // The guards reject already-paid invoices, so reaching "paid" is the
+  // transition and this event is emitted exactly once after a successful commit.
+  if (result.invoice.status === 'paid') {
+    await events.emit(tenantId, 'billing.invoice.paid', {
+      invoiceId: result.invoice.id,
+      customerId: result.invoice.customer_id,
+      totalCents: result.invoice.total_cents,
     });
   }
-  return { payment, invoice: toInvoiceDto(next) };
 }
 
 export async function listPayments(
@@ -721,75 +738,98 @@ export async function recordWebhookEvent(
   providers: ProviderRegistry,
   tenantId: string,
   providerKey: string,
-  payload: unknown,
+  event: Omit<ProviderWebhookEvent, 'tenantId'>,
 ): Promise<WebhookResult> {
   const provider = requireProvider(providers, providerKey);
-  const now = nowIso();
-  const eventType =
-    payload && typeof payload === 'object' && typeof (payload as { type?: unknown }).type === 'string'
-      ? ((payload as { type: string }).type)
-      : null;
-  const row: BillingWebhookEventRow = {
-    id: id(),
-    tenant_id: tenantId,
-    provider: providerKey,
-    event_type: eventType,
-    payload: JSON.stringify(payload ?? null),
-    outcome: null,
-    processed: 0,
-    created_at: now,
-  };
-  await ctx.db.insertInto('billing_webhook_events').values(row).execute();
-  await audit(
-    asCoreDb(ctx.db),
-    tenantId,
-    'system',
-    'billing.webhook_event.received',
-    'billing.webhook_event',
-    row.id,
-    { provider: providerKey, eventType },
-  );
+  const normalized = await provider.recordWebhookEvent({ tenantId, ...event });
 
-  let outcome = await provider.recordWebhookEvent({ tenantId, payload });
-  let processed = 0;
-  if (outcome.kind === 'payment_succeeded') {
-    // Providers redeliver webhook events on retry; a payment we already
-    // recorded for this provider ref must not be double-counted.
-    const duplicate = outcome.externalRef
-      ? await ctx.db
+  // One process owns SQLite, so this transaction serializes provider-ref
+  // idempotency with the payment insert and invoice read-modify-write.
+  const committed = await ctx.db.transaction().execute(async (trx) => {
+    const now = nowIso();
+    const eventType =
+      event.payload &&
+      typeof event.payload === 'object' &&
+      typeof (event.payload as { type?: unknown }).type === 'string'
+        ? ((event.payload as { type: string }).type)
+        : null;
+    const row: BillingWebhookEventRow = {
+      id: id(),
+      tenant_id: tenantId,
+      provider: providerKey,
+      event_type: eventType,
+      payload: event.rawBody,
+      outcome: null,
+      processed: 0,
+      created_at: now,
+    };
+    await trx.insertInto('billing_webhook_events').values(row).execute();
+    await audit(
+      asCoreDb(trx),
+      tenantId,
+      'system',
+      'billing.webhook_event.received',
+      'billing.webhook_event',
+      row.id,
+      { provider: providerKey, eventType },
+    );
+
+    let outcome = normalized;
+    let processed = 0;
+    let payment: RecordPaymentResult | undefined;
+    if (outcome.kind === 'payment_succeeded') {
+      if (!outcome.externalRef || outcome.externalRef.trim() === '') {
+        outcome = { kind: 'ignored', reason: 'payment event missing provider reference' };
+      } else {
+        const duplicate = await trx
           .selectFrom('billing_payments')
           .select('id')
           .where('tenant_id', '=', tenantId)
           .where('provider', '=', providerKey)
           .where('provider_ref', '=', outcome.externalRef)
           .where('status', '=', 'succeeded')
-          .executeTakeFirst()
-      : undefined;
-    if (duplicate) {
-      outcome = {
-        kind: 'ignored',
-        reason: `duplicate delivery: payment ${duplicate.id} already recorded for ${outcome.externalRef}`,
-      };
-    } else {
-      await recordPayment(ctx, tenantId, 'system', outcome.invoiceId, {
-        amountCents: outcome.amountCents,
-        method: `provider:${providerKey}`,
-        provider: providerKey,
-        providerRef: outcome.externalRef,
-      });
-      processed = 1;
+          .executeTakeFirst();
+        if (duplicate) {
+          outcome = {
+            kind: 'ignored',
+            reason: `duplicate delivery: payment ${duplicate.id} already recorded for ${outcome.externalRef}`,
+          };
+        } else {
+          payment = await recordPayment(
+            { db: trx, events: ctx.events },
+            tenantId,
+            'system',
+            outcome.invoiceId,
+            {
+              amountCents: outcome.amountCents,
+              method: `provider:${providerKey}`,
+              provider: providerKey,
+              providerRef: outcome.externalRef,
+            },
+            { emitEvents: false },
+          );
+          processed = 1;
+        }
+      }
     }
+    await trx
+      .updateTable('billing_webhook_events')
+      .set({ outcome: JSON.stringify(outcome), processed })
+      .where('tenant_id', '=', tenantId)
+      .where('id', '=', row.id)
+      .execute();
+    return {
+      result: {
+        event: toWebhookEventDto({ ...row, outcome: JSON.stringify(outcome), processed }),
+        outcome,
+      },
+      payment,
+    };
+  });
+  if (committed.payment) {
+    await emitPaymentEvents(ctx.events, tenantId, committed.payment);
   }
-  await ctx.db
-    .updateTable('billing_webhook_events')
-    .set({ outcome: JSON.stringify(outcome), processed })
-    .where('tenant_id', '=', tenantId)
-    .where('id', '=', row.id)
-    .execute();
-  return {
-    event: toWebhookEventDto({ ...row, outcome: JSON.stringify(outcome), processed }),
-    outcome,
-  };
+  return committed.result;
 }
 
 /* ------------------------------------------------------------------ *

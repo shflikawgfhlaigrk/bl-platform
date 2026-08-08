@@ -431,9 +431,9 @@ export function mountPublicStorefront(args: {
           profile.id,
           { channel: 'email', source: 'storefront' },
         );
-        // Local mode returns the confirm token so the (founder-gated) mail lane
-        // or the acceptance harness can complete the double-opt-in.
-        return { profileId: profile.id, expiresAt: result.expiresAt, token: result.token };
+        // Confirmation tokens are reserved for an out-of-band delivery lane and
+        // must never be returned to the public requester.
+        return { profileId: profile.id, expiresAt: result.expiresAt };
       },
       submitRestock: async ({ variationId, email }: { variationId: string; email?: string }) => {
         let profileId: string | null = null;

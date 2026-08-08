@@ -627,6 +627,37 @@ async function insertConsent(
   return row;
 }
 
+async function invalidateConsentTokens(
+  db: Db,
+  tenantId: string,
+  profileId: string,
+  channel: ConsentChannel,
+  consumedAt: string,
+): Promise<void> {
+  await db
+    .updateTable('customers_consent_tokens')
+    .set({ consumed_at: consumedAt })
+    .where('tenant_id', '=', tenantId)
+    .where('profile_id', '=', profileId)
+    .where('channel', '=', channel)
+    .where('consumed_at', 'is', null)
+    .execute();
+}
+
+async function emitConsentChanged(
+  events: EventBus | undefined,
+  tenantId: string,
+  consent: CustomersConsentRow,
+): Promise<void> {
+  if (!events) return;
+  await events.emit(tenantId, 'customers.consent.changed', {
+    v: 1,
+    customerId: consent.profile_id,
+    channel: consent.channel,
+    state: consent.state,
+  });
+}
+
 /** Record a consent change (grant/withdraw/pending). Appends a history row. */
 export async function recordConsent(
   db: Db,
@@ -637,7 +668,12 @@ export async function recordConsent(
   input: ConsentInput,
 ): Promise<CustomersConsentRow> {
   await mustGetProfile(db, tenantId, profileId);
-  return insertConsent(db, tenantId, actor, events, profileId, input);
+  const consent = await db.transaction().execute(async (trx) => {
+    await invalidateConsentTokens(trx as Db, tenantId, profileId, input.channel, nowIso());
+    return insertConsent(trx as Db, tenantId, actor, undefined, profileId, input);
+  });
+  await emitConsentChanged(events, tenantId, consent);
+  return consent;
 }
 
 export async function consentHistory(
@@ -694,31 +730,36 @@ export async function startDoubleOptIn(
   input: { channel: ConsentChannel; textShown?: string | null; source?: CustomerSource | null; ttlMinutes?: number; ip?: string | null; userAgent?: string | null },
 ): Promise<StartDoubleOptInResult> {
   await mustGetProfile(db, tenantId, profileId);
-  const consent = await insertConsent(db, tenantId, actor, events, profileId, {
-    channel: input.channel,
-    state: 'pending_double_opt_in',
-    textShown: input.textShown ?? null,
-    source: input.source ?? null,
-    ip: input.ip ?? null,
-    userAgent: input.userAgent ?? null,
-  });
   const token = id();
   const now = Date.parse(nowIso());
   const ttl = (input.ttlMinutes ?? 1440) * 60_000;
   const expiresAt = new Date(now + ttl).toISOString();
-  await db
-    .insertInto('customers_consent_tokens')
-    .values({
-      id: id(),
-      tenant_id: tenantId,
-      profile_id: profileId,
+  const consent = await db.transaction().execute(async (trx) => {
+    await invalidateConsentTokens(trx as Db, tenantId, profileId, input.channel, nowIso());
+    const pending = await insertConsent(trx as Db, tenantId, actor, undefined, profileId, {
       channel: input.channel,
-      token,
-      expires_at: expiresAt,
-      consumed_at: null,
-      created_at: nowIso(),
-    })
-    .execute();
+      state: 'pending_double_opt_in',
+      textShown: input.textShown ?? null,
+      source: input.source ?? null,
+      ip: input.ip ?? null,
+      userAgent: input.userAgent ?? null,
+    });
+    await trx
+      .insertInto('customers_consent_tokens')
+      .values({
+        id: id(),
+        tenant_id: tenantId,
+        profile_id: profileId,
+        channel: input.channel,
+        token,
+        expires_at: expiresAt,
+        consumed_at: null,
+        created_at: nowIso(),
+      })
+      .execute();
+    return pending;
+  });
+  await emitConsentChanged(events, tenantId, consent);
   return { consent, token, expiresAt };
 }
 
@@ -747,6 +788,15 @@ export async function confirmDoubleOptIn(
     if (Date.parse(tokenRow.expires_at) < Date.parse(nowIso())) {
       throw ApiError.conflict('confirmation token expired');
     }
+    const state = await currentConsent(
+      trx as Db,
+      tenantId,
+      tokenRow.profile_id,
+      tokenRow.channel,
+    );
+    if (state !== 'pending_double_opt_in') {
+      throw ApiError.conflict('confirmation token is no longer pending');
+    }
     await trx
       .updateTable('customers_consent_tokens')
       .set({ consumed_at: nowIso() })
@@ -762,14 +812,7 @@ export async function confirmDoubleOptIn(
     });
   });
   // Post-commit emit — same payload insertConsent would have emitted.
-  if (events) {
-    await events.emit(tenantId, 'customers.consent.changed', {
-      v: 1,
-      customerId: consent.profile_id,
-      channel: consent.channel,
-      state: consent.state,
-    });
-  }
+  await emitConsentChanged(events, tenantId, consent);
   return consent;
 }
 

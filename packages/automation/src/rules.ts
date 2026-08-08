@@ -417,10 +417,10 @@ export class RulesService {
       .executeTakeFirst();
   }
 
-  /** Approve a pending approval → enqueue its effect to the outbox. */
+  /** Approve a pending or held approval → enqueue its effect to the outbox. */
   async approve(tenantId: string, approvalId: string, actor = 'system'): Promise<AutomationApprovalRow> {
     const approval = await this.requireApproval(tenantId, approvalId);
-    if (approval.status !== 'pending') {
+    if (approval.status !== 'pending' && approval.status !== 'held') {
       throw ApiError.conflict(`approval "${approvalId}" is already ${approval.status}`);
     }
     const { row } = await this.outbox.enqueue(
@@ -445,7 +445,44 @@ export class RulesService {
     return this.requireApproval(tenantId, approvalId);
   }
 
-  /** Reject a pending approval with a reason (no effect is enqueued). */
+  /** Put a pending or held approval on hold with a durable reason. */
+  async hold(
+    tenantId: string,
+    approvalId: string,
+    reason: string,
+    actor = 'system',
+  ): Promise<AutomationApprovalRow> {
+    const normalizedReason = reason.trim();
+    if (!normalizedReason) throw ApiError.badRequest('hold reason is required');
+
+    const approval = await this.requireApproval(tenantId, approvalId);
+    if (approval.status === 'approved' || approval.status === 'rejected') {
+      throw ApiError.conflict(`approval "${approvalId}" is already ${approval.status}`);
+    }
+
+    const now = nowIso();
+    await this.db
+      .updateTable('automation_approvals')
+      .set({ status: 'held', reason: normalizedReason, updated_at: now })
+      .where('tenant_id', '=', tenantId)
+      .where('id', '=', approvalId)
+      .execute();
+    await audit(asCoreDb(this.db), tenantId, actor, 'automation.approval.held', 'automation.approval', approvalId, {
+      reason: normalizedReason,
+      previous_reason: approval.reason,
+      previous_status: approval.status,
+    });
+    if (this.events) {
+      await this.events.emit(tenantId, 'automation.approval.held', {
+        v: 1,
+        approvalId,
+        reason: normalizedReason,
+      });
+    }
+    return this.requireApproval(tenantId, approvalId);
+  }
+
+  /** Reject a pending or held approval with a reason (no effect is enqueued). */
   async reject(
     tenantId: string,
     approvalId: string,
@@ -453,7 +490,7 @@ export class RulesService {
     actor = 'system',
   ): Promise<AutomationApprovalRow> {
     const approval = await this.requireApproval(tenantId, approvalId);
-    if (approval.status !== 'pending') {
+    if (approval.status !== 'pending' && approval.status !== 'held') {
       throw ApiError.conflict(`approval "${approvalId}" is already ${approval.status}`);
     }
     const now = nowIso();

@@ -40,7 +40,11 @@ export interface PaymentIntent {
 
 export interface ProviderWebhookEvent {
   tenantId: string;
-  /** Raw webhook payload as received (already JSON-parsed). */
+  /** Exact request bytes decoded as UTF-8, before JSON parsing or reserialization. */
+  rawBody: string;
+  /** Lower-cased HTTP request headers, including provider signature metadata. */
+  headers: Readonly<Record<string, string>>;
+  /** Webhook payload after JSON parsing. */
   payload: unknown;
 }
 
@@ -117,21 +121,28 @@ export const stubPaymentProvider: PaymentProvider = {
       return { kind: 'ignored', reason: 'unhandled event type' };
     }
     const object = payload.data?.object;
+    const externalRef = object?.id;
     const invoiceId = object?.metadata?.invoiceId;
     const amount = object?.amount_received;
-    if (typeof invoiceId !== 'string' || invoiceId === '' || !Number.isInteger(amount) || (amount as number) <= 0) {
-      return { kind: 'ignored', reason: 'missing invoiceId or amount_received' };
+    if (
+      typeof externalRef !== 'string' ||
+      externalRef === '' ||
+      typeof invoiceId !== 'string' ||
+      invoiceId === '' ||
+      !Number.isInteger(amount) ||
+      (amount as number) <= 0
+    ) {
+      return { kind: 'ignored', reason: 'missing id, invoiceId, or amount_received' };
     }
     return {
       kind: 'payment_succeeded',
       invoiceId,
       amountCents: amount as number,
-      externalRef: typeof object?.id === 'string' ? object.id : undefined,
+      externalRef,
     };
   },
 };
 
 export const defaultPaymentProviders: PaymentProvider[] = [
   manualPaymentProvider,
-  stubPaymentProvider,
 ];

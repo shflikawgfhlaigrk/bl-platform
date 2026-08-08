@@ -63,7 +63,7 @@ export interface ExternalCalendarProvider {
   deleteEvent(ref: { tenantId: string; calendarId: string; appointmentId: string }): Promise<void>;
 }
 
-/** No-op stub — records calls in memory (handy in tests), talks to nobody. */
+/** Fail-closed stub — records calls in memory but never claims external delivery. */
 export class NoopExternalCalendarProvider implements ExternalCalendarProvider {
   readonly name = 'noop';
   readonly upserts: ExternalEventInput[] = [];
@@ -71,11 +71,12 @@ export class NoopExternalCalendarProvider implements ExternalCalendarProvider {
 
   async upsertEvent(event: ExternalEventInput): Promise<{ externalId: string | null }> {
     this.upserts.push(event);
-    return { externalId: null };
+    throw new Error('external calendar provider is not configured');
   }
 
   async deleteEvent(ref: { tenantId: string; calendarId: string; appointmentId: string }): Promise<void> {
     this.deletes.push(ref);
+    throw new Error('external calendar provider is not configured');
   }
 }
 
@@ -95,14 +96,14 @@ export interface ReminderDeliveryProvider {
   deliver(input: ReminderDeliveryInput): Promise<{ delivered: boolean; detail?: string }>;
 }
 
-/** Stub transport: records deliveries in memory and always succeeds. */
+/** Fail-closed stub transport: records attempts but never claims delivery. */
 export class StubReminderProvider implements ReminderDeliveryProvider {
   readonly name = 'stub';
   readonly deliveries: ReminderDeliveryInput[] = [];
 
-  async deliver(input: ReminderDeliveryInput): Promise<{ delivered: boolean }> {
+  async deliver(input: ReminderDeliveryInput): Promise<{ delivered: boolean; detail: string }> {
     this.deliveries.push(input);
-    return { delivered: true };
+    return { delivered: false, detail: 'reminder delivery provider is not configured' };
   }
 }
 
@@ -215,6 +216,40 @@ function overlaps(a: Interval, b: Interval): boolean {
 
 function dedupe(ids: readonly string[] | undefined): string[] {
   return [...new Set(ids ?? [])];
+}
+
+export interface SchedulingReadinessConfig {
+  expected_staff_count: number;
+}
+
+export interface SchedulingReadinessResult {
+  expected_staff_count: number;
+  active_staff_count: number;
+}
+
+/** Startup/readiness invariant for a configured tenant; never guesses staff identities. */
+export async function assertExpectedActiveStaffCount(
+  db: Kysely<SchedulingDatabase>,
+  tenantId: string,
+  config: SchedulingReadinessConfig,
+): Promise<SchedulingReadinessResult> {
+  if (!Number.isInteger(config.expected_staff_count) || config.expected_staff_count < 1) {
+    throw ApiError.badRequest('expected_staff_count must be a positive integer');
+  }
+  const count = await db
+    .selectFrom('scheduling_staff_members')
+    .select(db.fn.countAll<number>().as('n'))
+    .where('tenant_id', '=', tenantId)
+    .where('active', '=', 1)
+    .executeTakeFirstOrThrow();
+  const active_staff_count = Number(count.n);
+  if (active_staff_count !== config.expected_staff_count) {
+    throw ApiError.conflict('scheduling staff readiness check failed', {
+      expected_staff_count: config.expected_staff_count,
+      active_staff_count,
+    });
+  }
+  return { expected_staff_count: config.expected_staff_count, active_staff_count };
 }
 
 /* ------------------------------------------------------------------ *
@@ -685,9 +720,11 @@ export async function deleteAppointmentType(
 
 async function assertOwner(ctx: SchedulingCtx, tenantId: string, ownerType: OwnerType, ownerId: string): Promise<void> {
   if (ownerType === 'staff') {
-    await getStaffMember(ctx, tenantId, ownerId);
+    const staff = await getStaffMember(ctx, tenantId, ownerId);
+    if (staff.active !== 1) throw ApiError.conflict(`staff member is inactive: ${ownerId}`);
   } else {
-    await getResource(ctx, tenantId, ownerId);
+    const resource = await getResource(ctx, tenantId, ownerId);
+    if (resource.active !== 1) throw ApiError.conflict(`resource is inactive: ${ownerId}`);
   }
 }
 
@@ -1117,9 +1154,13 @@ async function attachAssignments(
   }));
 }
 
-async function bestEffortSync(ctx: SchedulingCtx, row: SchedulingAppointmentRow): Promise<void> {
+function providerErrorMessage(error: unknown): string {
+  return (error instanceof Error ? error.message : String(error)).slice(0, 500);
+}
+
+async function syncAppointment(ctx: SchedulingCtx, row: SchedulingAppointmentRow): Promise<void> {
   try {
-    await ctx.calendarSync.upsertEvent({
+    const result = await ctx.calendarSync.upsertEvent({
       tenantId: row.tenant_id,
       calendarId: row.calendar_id,
       appointmentId: row.id,
@@ -1128,8 +1169,59 @@ async function bestEffortSync(ctx: SchedulingCtx, row: SchedulingAppointmentRow)
       endsAt: row.ends_at,
       status: row.status,
     });
-  } catch {
-    /* integration layer is best-effort — never breaks the mutation */
+    if (!result.externalId) {
+      throw new Error(`calendar provider "${ctx.calendarSync.name}" returned no external event id`);
+    }
+    await ctx.db
+      .updateTable('scheduling_appointments')
+      .set({
+        calendar_sync_status: 'synced',
+        calendar_sync_error: null,
+        calendar_external_id: result.externalId,
+        calendar_synced_at: nowIso(),
+      })
+      .where('tenant_id', '=', row.tenant_id)
+      .where('id', '=', row.id)
+      .execute();
+  } catch (error) {
+    await ctx.db
+      .updateTable('scheduling_appointments')
+      .set({
+        calendar_sync_status: 'failed',
+        calendar_sync_error: providerErrorMessage(error),
+        calendar_synced_at: null,
+      })
+      .where('tenant_id', '=', row.tenant_id)
+      .where('id', '=', row.id)
+      .execute();
+  }
+}
+
+async function syncAppointmentDeletion(ctx: SchedulingCtx, row: SchedulingAppointmentRow): Promise<void> {
+  try {
+    await ctx.calendarSync.deleteEvent({
+      tenantId: row.tenant_id,
+      calendarId: row.calendar_id,
+      appointmentId: row.id,
+    });
+    await ctx.db
+      .updateTable('scheduling_appointments')
+      .set({
+        calendar_sync_status: 'synced',
+        calendar_sync_error: null,
+        calendar_external_id: null,
+        calendar_synced_at: nowIso(),
+      })
+      .where('tenant_id', '=', row.tenant_id)
+      .where('id', '=', row.id)
+      .execute();
+  } catch (error) {
+    await ctx.db
+      .updateTable('scheduling_appointments')
+      .set({ calendar_sync_status: 'failed', calendar_sync_error: providerErrorMessage(error) })
+      .where('tenant_id', '=', row.tenant_id)
+      .where('id', '=', row.id)
+      .execute();
   }
 }
 
@@ -1144,11 +1236,20 @@ export async function createAppointment(
   const type = input.appointmentTypeId
     ? await getAppointmentType(ctx, tenantId, input.appointmentTypeId)
     : null;
+  if (type && type.active !== 1) {
+    throw ApiError.conflict(`appointment type is inactive: ${type.id}`);
+  }
   if (input.locationId !== undefined) await getLocation(ctx, tenantId, input.locationId);
   const staffIds = dedupe(input.staffIds);
   const resourceIds = dedupe(input.resourceIds);
-  for (const staffId of staffIds) await getStaffMember(ctx, tenantId, staffId);
-  for (const resourceId of resourceIds) await getResource(ctx, tenantId, resourceId);
+  for (const staffId of staffIds) {
+    const staff = await getStaffMember(ctx, tenantId, staffId);
+    if (staff.active !== 1) throw ApiError.conflict(`staff member is inactive: ${staffId}`);
+  }
+  for (const resourceId of resourceIds) {
+    const resource = await getResource(ctx, tenantId, resourceId);
+    if (resource.active !== 1) throw ApiError.conflict(`resource is inactive: ${resourceId}`);
+  }
 
   const zone = input.timezone ?? calendar.timezone;
   const startsAt = toUtcIso(input.startsAt, zone);
@@ -1193,20 +1294,6 @@ export async function createAppointment(
     occurrences = [{ starts_at: startsAt, ends_at: endsAt }];
   }
 
-  // Conflict detection: every occurrence vs the DB, plus occurrences vs each
-  // other (all before any insert so a 409 leaves nothing half-created).
-  const allConflicts: ConflictDetail[] = [];
-  for (const occ of occurrences) {
-    const conflicts = await findConflicts(ctx, tenantId, {
-      startsAt: occ.starts_at,
-      endsAt: occ.ends_at,
-      bufferBeforeMinutes: bufferBefore,
-      bufferAfterMinutes: bufferAfter,
-      staffIds,
-      resourceIds,
-    });
-    allConflicts.push(...conflicts);
-  }
   if ((staffIds.length > 0 || resourceIds.length > 0) && occurrences.length > 1) {
     for (let i = 0; i < occurrences.length; i++) {
       for (let j = i + 1; j < occurrences.length; j++) {
@@ -1224,64 +1311,92 @@ export async function createAppointment(
       }
     }
   }
-  if (allConflicts.length > 0) {
-    throw ApiError.conflict('scheduling conflict: staff or resource is already booked', {
-      conflicts: allConflicts,
-    });
-  }
-
-  if (scheduleRule) {
-    await ctx.db.insertInto('scheduling_schedule_rules').values(scheduleRule).execute();
-  }
-
-  const created: SchedulingAppointmentRow[] = [];
-  for (const occ of occurrences) {
-    const now = nowIso();
-    const row: SchedulingAppointmentRow = {
-      id: id(),
-      tenant_id: tenantId,
-      calendar_id: calendar.id,
-      appointment_type_id: type?.id ?? null,
-      customer_id: input.customerId ?? null,
-      location_id: input.locationId ?? null,
-      title: input.title.trim(),
-      status: input.status ?? 'confirmed',
-      starts_at: occ.starts_at,
-      ends_at: occ.ends_at,
-      notes: input.notes ?? null,
-      canceled_reason: null,
-      schedule_rule_id: scheduleRule?.id ?? null,
-      created_at: now,
-      updated_at: now,
-    };
-    await ctx.db.insertInto('scheduling_appointments').values(row).execute();
-    for (const staffId of staffIds) {
-      await ctx.db
-        .insertInto('scheduling_appointment_staff')
-        .values({ id: id(), tenant_id: tenantId, appointment_id: row.id, staff_id: staffId, created_at: now })
-        .execute();
+  // SQLite is the single-process source of truth. Keep conflict detection,
+  // recurrence materialization, assignments, and audit rows in one serialized
+  // transaction so parallel requests cannot both reserve the same owner/time.
+  const created = await ctx.db.transaction().execute(async (trx) => {
+    const txCtx: SchedulingCtx = { ...ctx, db: trx };
+    const allConflicts: ConflictDetail[] = [];
+    for (const occ of occurrences) {
+      allConflicts.push(
+        ...(await findConflicts(txCtx, tenantId, {
+          startsAt: occ.starts_at,
+          endsAt: occ.ends_at,
+          bufferBeforeMinutes: bufferBefore,
+          bufferAfterMinutes: bufferAfter,
+          staffIds,
+          resourceIds,
+        })),
+      );
     }
-    for (const resourceId of resourceIds) {
-      await ctx.db
-        .insertInto('scheduling_appointment_resources')
-        .values({ id: id(), tenant_id: tenantId, appointment_id: row.id, resource_id: resourceId, created_at: now })
-        .execute();
+    if (allConflicts.length > 0) {
+      throw ApiError.conflict('scheduling conflict: staff or resource is already booked', {
+        conflicts: allConflicts,
+      });
     }
-    await audit(asCoreDb(ctx.db), tenantId, actor, 'scheduling.appointment.created', 'scheduling.appointment', row.id, {
-      startsAt: row.starts_at,
-      endsAt: row.ends_at,
-      status: row.status,
-    });
+
+    if (scheduleRule) {
+      await trx.insertInto('scheduling_schedule_rules').values(scheduleRule).execute();
+    }
+
+    const rows: SchedulingAppointmentRow[] = [];
+    for (const occ of occurrences) {
+      const now = nowIso();
+      const row: SchedulingAppointmentRow = {
+        id: id(),
+        tenant_id: tenantId,
+        calendar_id: calendar.id,
+        appointment_type_id: type?.id ?? null,
+        customer_id: input.customerId ?? null,
+        location_id: input.locationId ?? null,
+        title: input.title.trim(),
+        status: input.status ?? 'confirmed',
+        starts_at: occ.starts_at,
+        ends_at: occ.ends_at,
+        notes: input.notes ?? null,
+        canceled_reason: null,
+        schedule_rule_id: scheduleRule?.id ?? null,
+        calendar_sync_status: 'pending',
+        calendar_sync_error: null,
+        calendar_external_id: null,
+        calendar_synced_at: null,
+        created_at: now,
+        updated_at: now,
+      };
+      await trx.insertInto('scheduling_appointments').values(row).execute();
+      for (const staffId of staffIds) {
+        await trx
+          .insertInto('scheduling_appointment_staff')
+          .values({ id: id(), tenant_id: tenantId, appointment_id: row.id, staff_id: staffId, created_at: now })
+          .execute();
+      }
+      for (const resourceId of resourceIds) {
+        await trx
+          .insertInto('scheduling_appointment_resources')
+          .values({ id: id(), tenant_id: tenantId, appointment_id: row.id, resource_id: resourceId, created_at: now })
+          .execute();
+      }
+      await audit(asCoreDb(trx), tenantId, actor, 'scheduling.appointment.created', 'scheduling.appointment', row.id, {
+        startsAt: row.starts_at,
+        endsAt: row.ends_at,
+        status: row.status,
+      });
+      rows.push(row);
+    }
+    return rows;
+  });
+
+  for (const row of created) {
     await ctx.events.emit(tenantId, 'scheduling.appointment.scheduled', {
       appointmentId: row.id,
       customerId: row.customer_id,
       startsAt: row.starts_at,
     });
-    await bestEffortSync(ctx, row);
-    created.push(row);
+    await syncAppointment(ctx, row);
   }
 
-  return { appointments: await attachAssignments(ctx, tenantId, created), scheduleRule };
+  const refreshed = await Promise.all(created.map((row) => getAppointment(ctx, tenantId, row.id)));
+  return { appointments: refreshed, scheduleRule };
 }
 
 export async function getAppointment(
@@ -1363,7 +1478,11 @@ export async function updateAppointment(
   actor = 'system',
 ): Promise<AppointmentWithAssignments> {
   await getAppointment(ctx, tenantId, appointmentId);
-  const set: Partial<SchedulingAppointmentRow> = { updated_at: nowIso() };
+  const set: Partial<SchedulingAppointmentRow> = {
+    updated_at: nowIso(),
+    calendar_sync_status: 'pending',
+    calendar_sync_error: null,
+  };
   if (patch.title !== undefined) {
     if (!patch.title.trim()) throw ApiError.badRequest('title cannot be blank');
     set.title = patch.title.trim();
@@ -1381,6 +1500,8 @@ export async function updateAppointment(
     .where('id', '=', appointmentId)
     .execute();
   await audit(asCoreDb(ctx.db), tenantId, actor, 'scheduling.appointment.updated', 'scheduling.appointment', appointmentId, patch);
+  const updated = await getAppointment(ctx, tenantId, appointmentId);
+  await syncAppointment(ctx, updated);
   return getAppointment(ctx, tenantId, appointmentId);
 }
 
@@ -1407,28 +1528,47 @@ export async function rescheduleAppointment(
   const type = existing.appointment_type_id
     ? await getAppointmentType(ctx, tenantId, existing.appointment_type_id)
     : null;
-  const conflicts = await findConflicts(ctx, tenantId, {
-    startsAt,
-    endsAt,
-    bufferBeforeMinutes: type?.buffer_before_minutes ?? 0,
-    bufferAfterMinutes: type?.buffer_after_minutes ?? 0,
-    staffIds: existing.staff_ids,
-    resourceIds: existing.resource_ids,
-    excludeAppointmentId: appointmentId,
-  });
-  if (conflicts.length > 0) {
-    throw ApiError.conflict('scheduling conflict: staff or resource is already booked', { conflicts });
+  if (type && type.active !== 1) throw ApiError.conflict(`appointment type is inactive: ${type.id}`);
+  for (const staffId of existing.staff_ids) {
+    const staff = await getStaffMember(ctx, tenantId, staffId);
+    if (staff.active !== 1) throw ApiError.conflict(`staff member is inactive: ${staffId}`);
+  }
+  for (const resourceId of existing.resource_ids) {
+    const resource = await getResource(ctx, tenantId, resourceId);
+    if (resource.active !== 1) throw ApiError.conflict(`resource is inactive: ${resourceId}`);
   }
 
-  await ctx.db
-    .updateTable('scheduling_appointments')
-    .set({ starts_at: startsAt, ends_at: endsAt, updated_at: nowIso() })
-    .where('tenant_id', '=', tenantId)
-    .where('id', '=', appointmentId)
-    .execute();
-  await audit(asCoreDb(ctx.db), tenantId, actor, 'scheduling.appointment.rescheduled', 'scheduling.appointment', appointmentId, {
-    before: { startsAt: existing.starts_at, endsAt: existing.ends_at },
-    after: { startsAt, endsAt },
+  await ctx.db.transaction().execute(async (trx) => {
+    const txCtx: SchedulingCtx = { ...ctx, db: trx };
+    const conflicts = await findConflicts(txCtx, tenantId, {
+      startsAt,
+      endsAt,
+      bufferBeforeMinutes: type?.buffer_before_minutes ?? 0,
+      bufferAfterMinutes: type?.buffer_after_minutes ?? 0,
+      staffIds: existing.staff_ids,
+      resourceIds: existing.resource_ids,
+      excludeAppointmentId: appointmentId,
+    });
+    if (conflicts.length > 0) {
+      throw ApiError.conflict('scheduling conflict: staff or resource is already booked', { conflicts });
+    }
+
+    await trx
+      .updateTable('scheduling_appointments')
+      .set({
+        starts_at: startsAt,
+        ends_at: endsAt,
+        updated_at: nowIso(),
+        calendar_sync_status: 'pending',
+        calendar_sync_error: null,
+      })
+      .where('tenant_id', '=', tenantId)
+      .where('id', '=', appointmentId)
+      .execute();
+    await audit(asCoreDb(trx), tenantId, actor, 'scheduling.appointment.rescheduled', 'scheduling.appointment', appointmentId, {
+      before: { startsAt: existing.starts_at, endsAt: existing.ends_at },
+      after: { startsAt, endsAt },
+    });
   });
   await ctx.events.emit(tenantId, 'scheduling.appointment.rescheduled', {
     appointmentId,
@@ -1436,8 +1576,8 @@ export async function rescheduleAppointment(
     endsAt,
   });
   const updated = await getAppointment(ctx, tenantId, appointmentId);
-  await bestEffortSync(ctx, updated);
-  return updated;
+  await syncAppointment(ctx, updated);
+  return getAppointment(ctx, tenantId, appointmentId);
 }
 
 export async function changeAppointmentStatus(
@@ -1458,7 +1598,12 @@ export async function changeAppointmentStatus(
     });
   }
 
-  const set: Partial<SchedulingAppointmentRow> = { status: next, updated_at: nowIso() };
+  const set: Partial<SchedulingAppointmentRow> = {
+    status: next,
+    updated_at: nowIso(),
+    calendar_sync_status: 'pending',
+    calendar_sync_error: null,
+  };
   if (next === 'canceled') set.canceled_reason = opts.reason ?? null;
   await ctx.db
     .updateTable('scheduling_appointments')
@@ -1485,18 +1630,14 @@ export async function changeAppointmentStatus(
       appointmentId,
       reason: opts.reason,
     });
-    try {
-      await ctx.calendarSync.deleteEvent({ tenantId, calendarId: existing.calendar_id, appointmentId });
-    } catch {
-      /* best-effort */
-    }
+    await syncAppointmentDeletion(ctx, { ...existing, status: next });
   } else if (next === 'completed') {
     await ctx.events.emit(tenantId, 'scheduling.appointment.completed', { appointmentId });
   }
 
   const updated = await getAppointment(ctx, tenantId, appointmentId);
-  if (next !== 'canceled') await bestEffortSync(ctx, updated);
-  return updated;
+  if (next !== 'canceled') await syncAppointment(ctx, updated);
+  return getAppointment(ctx, tenantId, appointmentId);
 }
 
 export async function cancelAppointment(
@@ -1688,6 +1829,7 @@ export async function findNextAvailable(
   q: NextAvailableQuery,
 ): Promise<NextAvailableResult> {
   const type = await getAppointmentType(ctx, tenantId, q.appointmentTypeId);
+  if (type.active !== 1) throw ApiError.conflict(`appointment type is inactive: ${type.id}`);
   if (!DATE_RE.test(q.from)) throw ApiError.badRequest('from must be "YYYY-MM-DD"');
   const zone = q.timezone ?? 'UTC';
   assertZone(zone);
@@ -1712,7 +1854,13 @@ export async function findNextAvailable(
   const afterMs = q.after === undefined ? undefined : ms(toUtcIso(q.after, 'utc'));
 
   const staffList: string[] = q.staffId
-    ? [q.staffId]
+    ? [
+        await (async () => {
+          const staff = await getStaffMember(ctx, tenantId, q.staffId!);
+          if (staff.active !== 1) throw ApiError.conflict(`staff member is inactive: ${staff.id}`);
+          return staff.id;
+        })(),
+      ]
     : (await listStaffMembers(ctx, tenantId, { limit: 500, offset: 0 }))
         .filter((s) => s.active === 1)
         .map((s) => s.id);
@@ -1867,25 +2015,59 @@ export async function sendReminder(
   if (reminder.status !== 'pending') {
     throw ApiError.conflict(`reminder is ${reminder.status}, only pending reminders can be sent`);
   }
-  const result = await ctx.reminderDelivery.deliver({
-    tenantId,
-    reminderId: reminder.id,
-    appointmentId: reminder.appointment_id,
-    channel: reminder.channel,
-    recipient: reminder.recipient,
-    message: reminder.message,
-    sendAt: reminder.send_at,
-  });
+  const claim = await ctx.db
+    .updateTable('scheduling_reminders')
+    .set({ status: 'sending' })
+    .where('tenant_id', '=', tenantId)
+    .where('id', '=', reminderId)
+    .where('status', '=', 'pending')
+    .executeTakeFirst();
+  if (claim.numUpdatedRows === 0n) {
+    throw ApiError.conflict('reminder is already being sent or is no longer pending');
+  }
+
+  let result: { delivered: boolean; detail?: string };
+  try {
+    result = await ctx.reminderDelivery.deliver({
+      tenantId,
+      reminderId: reminder.id,
+      appointmentId: reminder.appointment_id,
+      channel: reminder.channel,
+      recipient: reminder.recipient,
+      message: reminder.message,
+      sendAt: reminder.send_at,
+    });
+  } catch (error) {
+    await ctx.db
+      .updateTable('scheduling_reminders')
+      .set({ status: 'pending' })
+      .where('tenant_id', '=', tenantId)
+      .where('id', '=', reminderId)
+      .where('status', '=', 'sending')
+      .execute();
+    throw ApiError.conflict(`reminder delivery failed: ${providerErrorMessage(error)}`);
+  }
   if (!result.delivered) {
+    await ctx.db
+      .updateTable('scheduling_reminders')
+      .set({ status: 'pending' })
+      .where('tenant_id', '=', tenantId)
+      .where('id', '=', reminderId)
+      .where('status', '=', 'sending')
+      .execute();
     throw ApiError.conflict(`reminder delivery failed: ${result.detail ?? 'provider error'}`);
   }
   const sentAt = nowIso();
-  await ctx.db
+  const finalize = await ctx.db
     .updateTable('scheduling_reminders')
     .set({ status: 'sent', sent_at: sentAt, provider: ctx.reminderDelivery.name })
     .where('tenant_id', '=', tenantId)
     .where('id', '=', reminderId)
-    .execute();
+    .where('status', '=', 'sending')
+    .executeTakeFirst();
+  if (finalize.numUpdatedRows === 0n) {
+    throw ApiError.conflict('reminder delivery state changed before it could be finalized');
+  }
   await audit(asCoreDb(ctx.db), tenantId, actor, 'scheduling.reminder.sent', 'scheduling.reminder', reminderId, {
     appointmentId: reminder.appointment_id,
     provider: ctx.reminderDelivery.name,
@@ -2014,6 +2196,7 @@ export function createSchedulingContract(deps: {
           .select('id')
           .where('tenant_id', '=', input.tenantId)
           .where('user_id', '=', input.assigneeUserId)
+          .where('active', '=', 1)
           .orderBy('created_at')
           .orderBy('id')
           .executeTakeFirst();

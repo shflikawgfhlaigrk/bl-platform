@@ -87,7 +87,21 @@ const SITE_CONFIG: Partial<SiteConfig> = {
   brandName: 'Mags Tack',
   tagline: 'Quality tack for every ride',
   logoFile: 'logo-mark.png',
+  // Live host for this store today. www.mags-tack.com still serves the shop's
+  // Square site (cutover pending, see STOREFRONT-LAUNCH-HANDOFF.md) — when that
+  // flips, this is the one line to change.
+  canonicalBase: 'https://magstackonline.com',
   announcement: 'Free shipping on U.S. orders over $100 — $9 flat rate under.',
+  // Mirrors the published Shipping & returns policy (infoPages below) — the
+  // announcement, the policy page, and these figures must stay in sync.
+  merchantListing: {
+    applicableCountry: 'US',
+    currency: 'USD',
+    freeShippingThresholdCents: 10000,
+    flatRateCents: 900,
+    handlingDaysMax: 2,
+    returnDays: 14,
+  },
   contact: {
     phone: '(678) 850-7910',
     email: 'info@magsmobiletack.com',
@@ -205,7 +219,7 @@ async function main(): Promise<void> {
     config: SITE_CONFIG,
     crossBrandTerms: CROSS_BRAND_TERMS,
     ownIdentity: OWN_IDENTITY,
-    extraAssets: ['logo-mark.png', 'favicon.png']
+    extraAssets: ['logo-mark.png', 'favicon.png', 'hero.jpg']
       .filter((n) => existsSync(path.join(assetDir, n)))
       .map((n) => ({ sourcePath: path.join(assetDir, n), destName: n })),
   });

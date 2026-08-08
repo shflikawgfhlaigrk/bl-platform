@@ -10,7 +10,7 @@ The Products dashboard is the single portfolio control surface for 30 top-level 
 - Black Label Assistance as the eighteenth new offering;
 - 12 existing products, including Marketing, whose Email Automation feature remains individually packageable.
 
-One dashboard does not mean one product archive. Each sellable product or packageable child feature has its own package request and evidence history. Lead Database remains visible as retired and merged into Marketing; Ace remains visible as a private reference and is not sellable.
+One dashboard does not mean one product archive. Each sellable product or packageable child feature has its own package request and evidence history. Lead Database remains visible as retired and merged into Marketing; Ace is the flagship and is sellable — priced and live at $50/month (`price_1TxP8e3oBFQ8gfJMEiv3aizs`), with `/ace` and `/pricing` both returning HTTP 200 (0 Ace customers to date). The `reference.ace` entry in `packages/client-ops/src/portfolio.ts` still carries `kind: 'private_reference'` / `sellable: false` and contradicts this; the registry is the stale side and needs the correction.
 
 The registry never infers `verified_working` from source files, a fleet packet, or a prior percentage. That state requires current tenant-scoped evidence for every required acceptance suite plus a verified individual package. A failed or blocked required gate remains visible. New production onboarding begins empty; demonstration installations and evidence are created only when demo mode is explicitly enabled.
 

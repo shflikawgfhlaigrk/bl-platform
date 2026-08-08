@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { ApiError, listAuditEntries, asCoreDb, type PlatformEvent } from '@blacklabel/core';
 import { createSchedulingContract, seedScheduling } from '@blacklabel/scheduling';
+import { sql } from '@blacklabel/db';
 import {
   buildCalendarIcs,
+  assertExpectedActiveStaffCount,
   cancelAppointment,
   changeAppointmentStatus,
   createAppointment,
@@ -13,11 +15,14 @@ import {
   createReminder,
   createResource,
   createStaffMember,
+  createSchedulingContext,
   getAppointment,
   getAvailability,
   listPendingReminders,
   rescheduleAppointment,
   sendReminder,
+  type ReminderDeliveryInput,
+  type ReminderDeliveryProvider,
 } from '../src/service';
 import { setup } from './helpers';
 
@@ -583,7 +588,7 @@ describe('reminders', () => {
     events.on('scheduling.reminder.sent', (e) => void (sentEvent = e));
     const sent = await sendReminder(ctx, tenantA.id, reminder.id);
     expect(sent.status).toBe('sent');
-    expect(sent.provider).toBe('stub');
+    expect(sent.provider).toBe('test');
     expect(reminderDelivery.deliveries).toHaveLength(1);
     expect(reminderDelivery.deliveries[0]).toMatchObject({
       reminderId: reminder.id,
@@ -693,6 +698,181 @@ describe('CreateAppointmentContract implementation', () => {
       .execute();
     expect(calendars).toHaveLength(1);
     expect(calendars[0].name).toBe('Default');
+  });
+});
+
+describe('launch-safety regressions', () => {
+  it('serializes simultaneous booking attempts for the same practitioner', async () => {
+    const { ctx, tenantA, db } = await setup();
+    const cal = await createCalendar(ctx, tenantA.id, { name: 'C', timezone: 'UTC' });
+    const staff = await createStaffMember(ctx, tenantA.id, { name: 'Sam' });
+    const attempts = await Promise.allSettled([
+      createAppointment(ctx, tenantA.id, {
+        calendarId: cal.id,
+        title: 'A',
+        startsAt: '2027-09-01T10:00:00Z',
+        endsAt: '2027-09-01T11:00:00Z',
+        staffIds: [staff.id],
+      }),
+      createAppointment(ctx, tenantA.id, {
+        calendarId: cal.id,
+        title: 'B',
+        startsAt: '2027-09-01T10:30:00Z',
+        endsAt: '2027-09-01T11:30:00Z',
+        staffIds: [staff.id],
+      }),
+    ]);
+    expect(attempts.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+    expect(attempts.filter((r) => r.status === 'rejected')).toHaveLength(1);
+    expect(await db.selectFrom('scheduling_appointments').selectAll().execute()).toHaveLength(1);
+  });
+
+  it('rolls back the entire recurrence when a later occurrence insert fails', async () => {
+    const { ctx, tenantA, db } = await setup();
+    const cal = await createCalendar(ctx, tenantA.id, { name: 'C', timezone: 'UTC' });
+    await sql.raw(`
+      CREATE TRIGGER fail_second_recurrence_insert
+      BEFORE INSERT ON scheduling_appointments
+      WHEN (SELECT COUNT(*) FROM scheduling_appointments) >= 1
+      BEGIN SELECT RAISE(ABORT, 'injected recurrence failure'); END
+    `).execute(db);
+    await expect(
+      createAppointment(ctx, tenantA.id, {
+        calendarId: cal.id,
+        title: 'Series',
+        startsAt: '2027-09-01T10:00:00Z',
+        endsAt: '2027-09-01T11:00:00Z',
+        recurrence: { frequency: 'daily', count: 3 },
+      }),
+    ).rejects.toThrow('injected recurrence failure');
+    expect(await db.selectFrom('scheduling_appointments').selectAll().execute()).toEqual([]);
+    expect(await db.selectFrom('scheduling_schedule_rules').selectAll().execute()).toEqual([]);
+  });
+
+  it('rejects inactive staff, resources, and appointment types', async () => {
+    const { ctx, tenantA } = await setup();
+    const cal = await createCalendar(ctx, tenantA.id, { name: 'C', timezone: 'UTC' });
+    const staff = await createStaffMember(ctx, tenantA.id, { name: 'Former', active: false });
+    const resource = await createResource(ctx, tenantA.id, { name: 'Closed room', active: false });
+    const type = await createAppointmentType(ctx, tenantA.id, {
+      name: 'Disabled service',
+      durationMinutes: 30,
+      active: false,
+    });
+    const base = {
+      calendarId: cal.id,
+      title: 'Blocked',
+      startsAt: '2027-09-01T10:00:00Z',
+      endsAt: '2027-09-01T11:00:00Z',
+    };
+    await expect(createAppointment(ctx, tenantA.id, { ...base, staffIds: [staff.id] })).rejects.toMatchObject({ status: 409 });
+    await expect(createAppointment(ctx, tenantA.id, { ...base, resourceIds: [resource.id] })).rejects.toMatchObject({ status: 409 });
+    await expect(createAppointment(ctx, tenantA.id, { ...base, appointmentTypeId: type.id })).rejects.toMatchObject({ status: 409 });
+  });
+
+  it('keeps reminders pending when no real provider is configured', async () => {
+    const { db, events, tenantA, ctx } = await setup();
+    const failClosedCtx = createSchedulingContext({ db, events });
+    const cal = await createCalendar(ctx, tenantA.id, { name: 'C', timezone: 'UTC' });
+    const { appointments } = await createAppointment(ctx, tenantA.id, {
+      calendarId: cal.id,
+      title: 'Reminder',
+      startsAt: '2027-09-01T10:00:00Z',
+      endsAt: '2027-09-01T11:00:00Z',
+    });
+    const reminder = await createReminder(ctx, tenantA.id, appointments[0].id, {
+      sendAt: '2027-08-31T10:00:00Z',
+      channel: 'sms',
+      recipient: '+15550001111',
+    });
+    await expect(sendReminder(failClosedCtx, tenantA.id, reminder.id)).rejects.toMatchObject({ status: 409 });
+    const row = await db.selectFrom('scheduling_reminders').selectAll().where('id', '=', reminder.id).executeTakeFirstOrThrow();
+    expect(row.status).toBe('pending');
+    expect(row.sent_at).toBeNull();
+  });
+
+  it('claims a reminder before delivery so concurrent sends deliver once', async () => {
+    const { db, events, tenantA, ctx } = await setup();
+    let release!: () => void;
+    let started!: () => void;
+    const startedPromise = new Promise<void>((resolve) => (started = resolve));
+    const releasePromise = new Promise<void>((resolve) => (release = resolve));
+    class BlockingProvider implements ReminderDeliveryProvider {
+      readonly name = 'blocking-test';
+      calls = 0;
+      async deliver(_input: ReminderDeliveryInput): Promise<{ delivered: boolean }> {
+        this.calls += 1;
+        started();
+        await releasePromise;
+        return { delivered: true };
+      }
+    }
+    const provider = new BlockingProvider();
+    const blockingCtx = createSchedulingContext({ db, events, reminderDelivery: provider });
+    const cal = await createCalendar(ctx, tenantA.id, { name: 'C', timezone: 'UTC' });
+    const { appointments } = await createAppointment(ctx, tenantA.id, {
+      calendarId: cal.id,
+      title: 'Reminder',
+      startsAt: '2027-09-01T10:00:00Z',
+      endsAt: '2027-09-01T11:00:00Z',
+    });
+    const reminder = await createReminder(ctx, tenantA.id, appointments[0].id, {
+      sendAt: '2027-08-31T10:00:00Z',
+      channel: 'email',
+      recipient: 'c@example.com',
+    });
+    const first = sendReminder(blockingCtx, tenantA.id, reminder.id);
+    await startedPromise;
+    await expect(sendReminder(blockingCtx, tenantA.id, reminder.id)).rejects.toMatchObject({ status: 409 });
+    release();
+    await expect(first).resolves.toMatchObject({ status: 'sent' });
+    expect(provider.calls).toBe(1);
+  });
+
+  it('reports calendar sync failure and enforces expected_staff_count=5', async () => {
+    const { ctx, db, tenantA } = await setup();
+    const cal = await createCalendar(ctx, tenantA.id, { name: 'C', timezone: 'UTC' });
+    const { appointments } = await createAppointment(ctx, tenantA.id, {
+      calendarId: cal.id,
+      title: 'Unsynced',
+      startsAt: '2027-09-01T10:00:00Z',
+      endsAt: '2027-09-01T11:00:00Z',
+    });
+    expect(appointments[0].calendar_sync_status).toBe('failed');
+    expect(appointments[0].calendar_sync_error).toContain('not configured');
+
+    const syncedCtx = createSchedulingContext({
+      db,
+      events: ctx.events,
+      calendarSync: {
+        name: 'real-test',
+        async upsertEvent(event) {
+          return { externalId: `external:${event.appointmentId}` };
+        },
+        async deleteEvent() {},
+      },
+    });
+    const synced = await createAppointment(syncedCtx, tenantA.id, {
+      calendarId: cal.id,
+      title: 'Synced',
+      startsAt: '2027-09-01T12:00:00Z',
+      endsAt: '2027-09-01T13:00:00Z',
+    });
+    expect(synced.appointments[0]).toMatchObject({
+      calendar_sync_status: 'synced',
+      calendar_sync_error: null,
+      calendar_external_id: `external:${synced.appointments[0].id}`,
+    });
+
+    for (let i = 0; i < 5; i++) await createStaffMember(ctx, tenantA.id, { name: `Staff ${i + 1}` });
+    await expect(assertExpectedActiveStaffCount(db, tenantA.id, { expected_staff_count: 4 })).rejects.toMatchObject({
+      status: 409,
+      details: { expected_staff_count: 4, active_staff_count: 5 },
+    });
+    await expect(assertExpectedActiveStaffCount(db, tenantA.id, { expected_staff_count: 5 })).resolves.toEqual({
+      expected_staff_count: 5,
+      active_staff_count: 5,
+    });
   });
 });
 

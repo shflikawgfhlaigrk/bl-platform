@@ -218,13 +218,45 @@ describe('execution history is recorded for every outcome', () => {
 });
 
 describe('approvals lifecycle', () => {
-  it('approve enqueues to the outbox; audit recorded', async () => {
+  it('hold persists and re-hold updates the reason, audit, and event', async () => {
+    const { db, events, tenantA } = await setup();
+    const rules = new RulesService(db, events);
+    await rules.create(tenantA.id, { ...reorderRule(), policy: 'approval_required', idempotencyWindowSeconds: 0 });
+    await rules.evaluate(tenantA.id, 'inventory.stock.below_reorder_point', reorderEvent());
+    const [approval] = await rules.listApprovals(tenantA.id, { status: 'pending' });
+    const heldEvents: Array<{ v: number; approvalId: string; reason: string }> = [];
+    events.on<{ v: number; approvalId: string; reason: string }>('automation.approval.held', (event) => {
+      heldEvents.push(event.payload);
+    });
+
+    const held = await rules.hold(tenantA.id, approval!.id, '  waiting on owner  ', 'operator_1');
+    expect(held.status).toBe('held');
+    expect(held.reason).toBe('waiting on owner');
+    expect(held.decided_by).toBeNull();
+    expect(held.decided_at).toBeNull();
+
+    const reheld = await rules.hold(tenantA.id, approval!.id, 'waiting on updated quote', 'operator_2');
+    expect(reheld.status).toBe('held');
+    expect(reheld.reason).toBe('waiting on updated quote');
+    expect(await rules.listApprovals(tenantA.id, { status: 'held' })).toHaveLength(1);
+
+    const audits = await listAuditEntries(asCoreDb(db), tenantA.id, 'automation.approval', approval!.id);
+    expect(audits.filter((entry) => entry.action === 'automation.approval.held')).toHaveLength(2);
+    expect(heldEvents).toEqual([
+      { v: 1, approvalId: approval!.id, reason: 'waiting on owner' },
+      { v: 1, approvalId: approval!.id, reason: 'waiting on updated quote' },
+    ]);
+    await expect(rules.hold(tenantA.id, approval!.id, '   ')).rejects.toMatchObject({ status: 400 });
+  });
+
+  it('approve from held enqueues to the outbox; audit recorded', async () => {
     const { db, events, tenantA } = await setup();
     const rules = new RulesService(db, events);
     await rules.create(tenantA.id, { ...reorderRule(), policy: 'approval_required', idempotencyWindowSeconds: 0 });
     await rules.evaluate(tenantA.id, 'inventory.stock.below_reorder_point', reorderEvent());
 
     const [approval] = await rules.listApprovals(tenantA.id, { status: 'pending' });
+    await rules.hold(tenantA.id, approval!.id, 'waiting on owner', 'operator_1');
     const approved = await rules.approve(tenantA.id, approval!.id, 'owner_1');
     expect(approved.status).toBe('approved');
     expect(approved.outbox_id).toBeTruthy();
@@ -235,15 +267,17 @@ describe('approvals lifecycle', () => {
 
     const audits = await listAuditEntries(asCoreDb(db), tenantA.id, 'automation.approval', approval!.id);
     expect(audits.map((a) => a.action)).toContain('automation.approval.approved');
+    await expect(rules.hold(tenantA.id, approval!.id, 'too late')).rejects.toMatchObject({ status: 409 });
   });
 
-  it('reject records the reason and enqueues nothing', async () => {
+  it('reject from held records the reason and enqueues nothing', async () => {
     const { db, events, tenantA } = await setup();
     const rules = new RulesService(db, events);
     await rules.create(tenantA.id, { ...reorderRule(), policy: 'approval_required', idempotencyWindowSeconds: 0 });
     await rules.evaluate(tenantA.id, 'inventory.stock.below_reorder_point', reorderEvent());
     const [approval] = await rules.listApprovals(tenantA.id, { status: 'pending' });
 
+    await rules.hold(tenantA.id, approval!.id, 'waiting on owner', 'operator_1');
     const rejected = await rules.reject(tenantA.id, approval!.id, 'not this quarter', 'owner_1');
     expect(rejected.status).toBe('rejected');
     expect(rejected.reason).toBe('not this quarter');
@@ -251,6 +285,7 @@ describe('approvals lifecycle', () => {
 
     // A second decision conflicts (409).
     await expect(rules.approve(tenantA.id, approval!.id)).rejects.toMatchObject({ status: 409 });
+    await expect(rules.hold(tenantA.id, approval!.id, 'too late')).rejects.toMatchObject({ status: 409 });
   });
 });
 

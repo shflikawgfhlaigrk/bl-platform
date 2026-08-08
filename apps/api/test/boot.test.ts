@@ -20,6 +20,7 @@ async function boot() {
   const db = createTestDb<PlatformDatabase>();
   const platform = await createApp({ db });
   const tenant = await createTenant(asCoreDb(db), { name: 'Boot Tenant' });
+  await platform.seedTenant(tenant.id);
   return { platform, tenantId: tenant.id };
 }
 

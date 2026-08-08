@@ -188,6 +188,9 @@ export function externalUrlGate(site: RenderedSite, ownIdentity?: OwnIdentity): 
     for (const m of p.body.matchAll(/https?:\/\/([^\s"'<>)]+)/gi)) {
       const host = m[1].split(/[/?#]/)[0].toLowerCase();
       if (IDENTIFIER_HOSTS.has(host)) continue;
+      // The site's own canonical host (absolute canonicals, sitemap locs,
+      // JSON-LD url/image) is a self-reference, not an external load.
+      if (site.selfHost && host === site.selfHost) continue;
       if (allowedHosts.has(host) && navUrls.has(m[0])) continue;
       failures.push(`${p.path}: external URL ${m[0]}`);
     }

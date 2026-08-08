@@ -90,6 +90,29 @@ describe('public router — isolation & shape', () => {
     expect(res.status).toBe(501);
   });
 
+  it('never exposes a double-opt-in confirmation token in the public consent response', async () => {
+    const db = await projectionOnlyDb();
+    const app = storefrontPublicRouter({
+      db,
+      tenantId: 'mags-tack',
+      submitConsent: () => ({
+        profileId: 'profile-1',
+        expiresAt: '2026-07-15T00:00:00.000Z',
+        token: 'must-not-leak',
+      }),
+    });
+    const res = await app.request('/api/consent', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email: 'shopper@example.com' }),
+    });
+
+    expect(res.status).toBe(202);
+    expect(await res.json()).toEqual({
+      data: { profileId: 'profile-1', expiresAt: '2026-07-15T00:00:00.000Z' },
+    });
+  });
+
   it('serves the live projection produced by a real publish (end to end)', async () => {
     const { db, tenantA } = await setup();
     await publishStorefront({ db, tenantId: tenantA.id, source: fixtureSource(), dataAsOf: '2026-07-11' });

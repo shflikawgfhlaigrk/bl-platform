@@ -23,7 +23,9 @@ export type OwnerType = 'staff' | 'resource';
 /** RRULE-lite frequencies. */
 export type RecurrenceFrequency = 'daily' | 'weekly' | 'monthly';
 
-export type ReminderStatus = 'pending' | 'sent' | 'canceled';
+export type ReminderStatus = 'pending' | 'sending' | 'sent' | 'canceled';
+
+export type CalendarSyncStatus = 'pending' | 'synced' | 'failed';
 
 export interface SchedulingCalendarRow {
   id: string;
@@ -145,6 +147,11 @@ export interface SchedulingAppointmentRow {
   canceled_reason: string | null;
   /** Set when this row is a materialized occurrence of a schedule rule. */
   schedule_rule_id: string | null;
+  /** Durable external-calendar synchronization state for operator visibility. */
+  calendar_sync_status: CalendarSyncStatus;
+  calendar_sync_error: string | null;
+  calendar_external_id: string | null;
+  calendar_synced_at: string | null;
   created_at: string;
   updated_at: string;
 }
