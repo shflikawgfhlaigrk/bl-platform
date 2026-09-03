@@ -120,7 +120,7 @@ export function bulkItems(n: number): PublishItemInput[] {
 }
 
 /** Wrap raw HTML pages into a RenderedSite for gate unit tests. */
-export function makeSite(pages: Array<Partial<RenderedPage> & { path: string; body: string }>, imageRefs: string[] = []): RenderedSite {
+export function makeSite(pages: Array<Partial<RenderedPage> & { path: string; body: string }>, imageRefs: string[] = [], selfHost = ''): RenderedSite {
   const full: RenderedPage[] = pages.map((p) => ({
     path: p.path,
     body: p.body,
@@ -129,7 +129,8 @@ export function makeSite(pages: Array<Partial<RenderedPage> & { path: string; bo
     description: p.description ?? 'D',
     kind: p.kind ?? 'info',
   }));
-  return { pages: full, byPath: new Map(full.map((p) => [p.path, p])), imageRefs: new Set(imageRefs), assetRefs: new Set<string>() };
+  // selfHost: '' = relative canonicals, the shape the gate fixtures render with.
+  return { pages: full, byPath: new Map(full.map((p) => [p.path, p])), imageRefs: new Set(imageRefs), assetRefs: new Set<string>(), selfHost };
 }
 
 /** Seed a live projection directly (no audit/gates) into a projection-only db. */
