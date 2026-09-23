@@ -1,3 +1,4 @@
+import { authenticatedFixture } from './authenticated-fixture';
 /**
  * seed-mags-tenant unit + integration tests.
  *
@@ -35,6 +36,7 @@ import { getConfig, CONFIG_KEYS } from '../src/config';
 async function boot() {
   const db = createTestDb<PlatformDatabase>();
   const platform = await createApp({ db });
+  authenticatedFixture(platform);
   const tenant = await createTenant(asCoreDb(db), { name: 'Mags Tack' });
   await platform.seedTenant(tenant.id, { actor: 'test' });
   return { db, platform, tenantId: tenant.id };

@@ -357,26 +357,28 @@ export function buildSearchIndex(items: RenderItem[]): SearchIndexResult {
 /* ------------------------------- app.js -------------------------------- */
 
 function appJs(): string {
-  // Cart via localStorage + keyboard-accessible client-side search. No external anything.
+  // Catalog text stays in text nodes and data attributes; it never becomes code.
   return `"use strict";
 var CART_KEY="magstack.cart.v1";
-function cartGet(){try{return JSON.parse(localStorage.getItem(CART_KEY)||"[]")}catch(e){return[]}}
+function cartGet(){try{var c=JSON.parse(localStorage.getItem(CART_KEY)||"[]");return Array.isArray(c)?c.filter(function(l){return l&&typeof l.vid==="string"&&typeof l.name==="string"&&Number.isFinite(l.qty)&&l.qty>0&&(l.price===null||Number.isFinite(l.price))}):[]}catch(e){return[]}}
 function cartSet(c){localStorage.setItem(CART_KEY,JSON.stringify(c))}
 function cartCount(){return cartGet().reduce(function(n,l){return n+l.qty},0)}
 function addToCart(vid,name,price){var c=cartGet();var f=c.filter(function(l){return l.vid===vid})[0];
- if(f){f.qty++}else{c.push({vid:vid,name:name,price:price,qty:1})}cartSet(c);renderCart();
+ if(f){f.qty++}else{c.push({vid:vid,name:name,price:price,qty:1})}cartSet(c);renderCart();updateCartBadges();
  var s=document.getElementById("cart-status");if(s){s.textContent=name+" added to cart. "+cartCount()+" item(s) in cart."}}
-function setQty(vid,qty){var c=cartGet().map(function(l){if(l.vid===vid)l.qty=Math.max(0,qty);return l}).filter(function(l){return l.qty>0});cartSet(c);renderCart()}
+function setQty(vid,qty){if(!Number.isFinite(qty))return;var c=cartGet().map(function(l){if(l.vid===vid)l.qty=Math.max(0,qty);return l}).filter(function(l){return l.qty>0});cartSet(c);renderCart();updateCartBadges()}
 function money(c){var s=c<0?"-":"";c=Math.abs(c);return s+"$"+Math.floor(c/100)+"."+String(c%100).padStart(2,"0")}
-function renderCart(){var el=document.getElementById("cart-lines");if(!el)return;var c=cartGet();
- if(!c.length){el.innerHTML='<p class="muted">Your cart is empty.</p>';var t=document.getElementById("cart-total");if(t)t.textContent="";return}
- var html="";var total=0;c.forEach(function(l){var line=(l.price!=null)?l.price*l.qty:null;if(line!=null)total+=line;
-  html+='<div class="cart-line"><span>'+l.name+' × <label class="visually-hidden" for="q_'+l.vid+'">quantity</label>'
-   +'<input id="q_'+l.vid+'" class="field" style="width:4rem;display:inline-block" type="number" min="0" value="'+l.qty+'" onchange="setQty(\\''+l.vid+'\\',parseInt(this.value||0))"></span>'
-   +'<span>'+(l.price!=null?money(line):"Price not listed")+'</span></div>'});
- el.innerHTML=html;var t=document.getElementById("cart-total");if(t)t.textContent="Subtotal: "+money(total)}
+function renderCart(){var el=document.getElementById("cart-lines");if(!el)return;var c=cartGet();el.replaceChildren();
+ if(!c.length){var p=document.createElement("p");p.className="muted";p.textContent="Your cart is empty.";el.appendChild(p);var t=document.getElementById("cart-total");if(t)t.textContent="";return}
+ var total=0;c.forEach(function(l,i){var line=(l.price!=null)?l.price*l.qty:null;if(line!=null)total+=line;
+  var row=document.createElement("div");row.className="cart-line";var description=document.createElement("span");description.appendChild(document.createTextNode(l.name+" × "));
+  var label=document.createElement("label");label.className="visually-hidden";label.htmlFor="cart-qty-"+i;label.textContent="quantity";description.appendChild(label);
+  var input=document.createElement("input");input.id=label.htmlFor;input.className="field";input.style.width="4rem";input.style.display="inline-block";input.type="number";input.min="0";input.value=l.qty;
+  input.addEventListener("change",function(){setQty(l.vid,parseInt(input.value||"0",10))});description.appendChild(input);
+  var price=document.createElement("span");price.textContent=l.price!=null?money(line):"Price not listed";row.appendChild(description);row.appendChild(price);el.appendChild(row)});
+ var t=document.getElementById("cart-total");if(t)t.textContent="Subtotal: "+money(total)}
 function updateCartBadges(){var n=cartCount();document.querySelectorAll("[data-cart-count]").forEach(function(e){e.textContent=n})}
-// search
+function initCartButtons(){document.querySelectorAll("[data-add-to-cart]").forEach(function(button){button.addEventListener("click",function(){var price=button.dataset.cartPrice;addToCart(button.dataset.variationId,button.dataset.cartName,price===""?null:Number(price))})})}
 function runSearch(entries,q){q=q.trim().toLowerCase();if(!q)return[];var pre=[],word=[],sub=[];
  entries.forEach(function(e){var n=e.n.toLowerCase();if(n.indexOf(q)===0)pre.push(e);
   else if(n.split(/[^a-z0-9]+/).indexOf(q)>=0)word.push(e);else if(n.indexOf(q)>=0)sub.push(e)});
@@ -386,11 +388,13 @@ function initSearch(){var box=document.getElementById("search-page-input");if(!b
  fetch("search-index/manifest.json").then(function(r){return r.json()}).then(function(m){
   return Promise.all(m.shards.map(function(k){return fetch("search-index/"+k+".json").then(function(r){return r.json()})}))
  }).then(function(parts){var all=[].concat.apply([],parts);
-  function go(){var res=runSearch(all,box.value);var ul=document.getElementById("search-results");
-   ul.innerHTML=res.map(function(e){return '<li><a href="item-'+e.s+'.html"><span class="t">'+e.n+'</span> <span class="muted">'+e.p+'</span></a></li>'}).join("");
+  function go(){var res=runSearch(all,box.value);var ul=document.getElementById("search-results");ul.replaceChildren();
+   res.forEach(function(e){var li=document.createElement("li");var a=document.createElement("a");a.setAttribute("href","item-"+encodeURIComponent(e.s)+".html");
+    var name=document.createElement("span");name.className="t";name.textContent=e.n;var price=document.createElement("span");price.className="muted";price.textContent=e.p;
+    a.appendChild(name);a.appendChild(document.createTextNode(" "));a.appendChild(price);li.appendChild(a);ul.appendChild(li)});
    var st=document.getElementById("search-status");if(st)st.textContent=res.length+" result(s)"}
   box.addEventListener("input",go);if(q0)go()})}
-document.addEventListener("DOMContentLoaded",function(){renderCart();updateCartBadges();initSearch()});
+document.addEventListener("DOMContentLoaded",function(){renderCart();updateCartBadges();initCartButtons();initSearch()});
 window.addToCart=addToCart;window.setQty=setQty;`;
 }
 
@@ -501,7 +505,7 @@ ${pager}`;
     // Note: SKUs are internal identifiers and are NEVER rendered publicly
     // (they leak internal codes and collide with phone-number detection).
     const rows = item.variations
-      .map((v) => `<tr><td>${escapeHtml(v.name)}</td><td>${v.priceCents != null ? escapeHtml(money(v.priceCents)) : '<span class="muted">Price not listed</span>'}</td><td>${availabilityBadge(v.state, cfg.lowStockLabel) || '<span class="muted">—</span>'}</td><td>${v.state === 'out' ? '<span class="muted">Unavailable</span>' : `<button class="btn" type="button" onclick="addToCart('${escapeHtml(v.id)}','${escapeHtml(item.name)} ${escapeHtml(v.name)}',${v.priceCents != null ? v.priceCents : 'null'})">Add to cart</button>`}</td></tr>`)
+      .map((v) => `<tr><td>${escapeHtml(v.name)}</td><td>${v.priceCents != null ? escapeHtml(money(v.priceCents)) : '<span class="muted">Price not listed</span>'}</td><td>${availabilityBadge(v.state, cfg.lowStockLabel) || '<span class="muted">—</span>'}</td><td>${v.state === 'out' ? '<span class="muted">Unavailable</span>' : `<button class="btn" type="button" data-add-to-cart data-variation-id="${escapeHtml(v.id)}" data-cart-name="${escapeHtml(item.name)} ${escapeHtml(v.name)}" data-cart-price="${v.priceCents != null ? escapeHtml(String(v.priceCents)) : ''}">Add to cart</button>`}</td></tr>`)
       .join('');
     const related = site.items
       .filter((o) => o.id !== item.id && o.categoryName && o.categoryName === item.categoryName)
@@ -536,7 +540,7 @@ ${pager}`;
                 ? 'https://schema.org/LimitedAvailability'
                 : 'https://schema.org/InStock',
         })),
-    });
+    }).replace(/</g, '\\u003c');
     const body = `<p class="crumbs"><a href="index.html">Home</a>${item.departmentSlug ? ` / <a href="department-${escapeHtml(item.departmentSlug)}.html">${escapeHtml(item.departmentName ?? '')}</a>` : ''}${item.brandSlug ? ` / <a href="brand-${escapeHtml(item.brandSlug)}.html">${escapeHtml(item.brandName ?? '')}</a>` : ''}</p>
 <div class="item-layout">
   <div>${gallery}</div>

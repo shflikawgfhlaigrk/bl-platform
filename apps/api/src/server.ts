@@ -14,7 +14,6 @@
  *   PLATFORM_DEFAULT_TENANT_NAME  single-tenant local mode (owner UI)
  *   UI_DIR                   serve a built UI at / (API stays under /api)
  *   DEFAULT_LOCATION_ID      default inventory location fallback
- *   OWNER_USER_ID            default acting owner id
  *   ADMIN_MASTER_KEY         base64 32 bytes (AES-256-GCM), OR
  *   ADMIN_MASTER_KEY_FILE    path to a key file; else auto-generated ONCE into
  *                            <storage>/admin.key (chmod 600)
@@ -76,7 +75,6 @@ const platform = await createApp({
   dbPath: DB_PATH,
   storageDir: STORAGE_DIR,
   envDefaultLocationId: process.env.DEFAULT_LOCATION_ID,
-  ownerUserIdEnv: process.env.OWNER_USER_ID,
   checkoutSimSecret: process.env.CHECKOUT_SIM_SECRET,
   logSink: (line) => console.log(line), // eslint-disable-line no-console
 });
@@ -117,31 +115,7 @@ if (UI_DIR) {
   entry = outer;
 }
 
-let cachedTenantId: string | undefined;
-async function defaultTenantId(): Promise<string | undefined> {
-  if (!DEFAULT_TENANT_NAME) return undefined;
-  if (cachedTenantId) return cachedTenantId;
-  const row = await asCoreDb(db)
-    .selectFrom('tenants')
-    .select('id')
-    .where('name', '=', DEFAULT_TENANT_NAME)
-    .orderBy('created_at')
-    .orderBy('id')
-    .executeTakeFirst();
-  cachedTenantId = row?.id;
-  return cachedTenantId;
-}
-
-async function fetchHandler(req: Request): Promise<Response> {
-  let request = req;
-  if (DEFAULT_TENANT_NAME && !request.headers.get('x-tenant-id')) {
-    const tenantId = await defaultTenantId();
-    if (tenantId) {
-      const headers = new Headers(request.headers);
-      headers.set('x-tenant-id', tenantId);
-      request = new Request(request, { headers });
-    }
-  }
+async function fetchHandler(request: Request): Promise<Response> {
   return entry.fetch(request);
 }
 

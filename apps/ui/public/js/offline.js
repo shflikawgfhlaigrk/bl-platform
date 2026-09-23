@@ -1,14 +1,14 @@
 /**
  * Offline mutation queue — browser side. Persists the pure queue reducer's
  * items in IndexedDB and replays them FIFO on reconnect. The decision logic
- * (what's queued/failed/conflict, sync status) lives in ../../src/queue.mjs so
+ * (what's queued/failed/conflict, sync status) lives in ../src/queue.mjs so
  * it is unit-tested; this file is just persistence + the fetch loop.
  *
  * Every queued mutation carries an idempotencyKey the APIs already honour, so
  * a replay is safe even if the first attempt actually reached the server. A
  * 409 on replay is a genuine conflict → kept in a review list, never dropped.
  */
-import * as Q from '../../src/queue.mjs';
+import * as Q from '../src/queue.mjs';
 
 const DB_NAME = 'mags-os';
 const STORE = 'mutation-queue';

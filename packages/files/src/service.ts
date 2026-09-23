@@ -27,6 +27,7 @@ import type {
   PermissionGranteeType,
 } from './schema';
 import { StorageError, newStorageKey, type StorageProvider } from './storage';
+import { assertFileSize } from './upload-limits';
 
 type Db = Kysely<FilesDatabase>;
 
@@ -125,7 +126,7 @@ export function actorLabel(actor: FilesActor): string {
 
 /**
  * Resolve the acting user from the `x-user-id` header value.
- * - absent header -> trusted system actor (integration/back-office calls)
+ * - absent verified user -> unauthorized; trusted internal calls pass SYSTEM_ACTOR directly
  * - unknown user id (in this tenant) -> 401
  */
 export async function resolveActor(
@@ -478,6 +479,7 @@ export async function completeUpload(
     throw ApiError.conflict(`upload session is ${session.status}, expected pending`);
   }
 
+  assertFileSize(content.byteLength);
   await storage.put(session.storage_key, content);
 
   const now = nowIso();

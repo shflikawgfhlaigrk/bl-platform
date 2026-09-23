@@ -143,7 +143,7 @@ describe('folders', () => {
 
 describe('upload sessions (init -> complete)', () => {
   it('runs the two-step flow: metadata, sha256, size, download, session state, event', async () => {
-    const { app, tenantA, emitted } = await setup();
+    const { app, tenantA, emitted, users } = await setup();
     const h = headers(tenantA.id);
     const content = 'hello vault world';
 
@@ -169,7 +169,7 @@ describe('upload sessions (init -> complete)', () => {
     expect(file.size_bytes).toBe(Buffer.byteLength(content));
     expect(file.sha256).toBe(createHash('sha256').update(content).digest('hex'));
     expect(file.tags).toEqual(['important']); // normalized lowercase
-    expect(file.uploaded_by).toBe('system'); // no x-user-id header
+    expect(file.uploaded_by).toBe(users.owner.id); // signed fixture user, never implicit system
 
     // session flipped to completed and points at the file
     const sessRes = await app.request(`/uploads/${session.id}`, { headers: h });
@@ -374,7 +374,7 @@ describe('files: metadata, search, tags', () => {
 
 describe('links: attach/detach + queries', () => {
   it('attaches, lists, queries by entity, rejects duplicates, detaches — with events', async () => {
-    const { app, tenantA, emitted } = await setup();
+    const { app, tenantA, emitted, users } = await setup();
     const h = headers(tenantA.id);
     const { file } = await uploadViaApi(app, tenantA.id, {
       name: 'signed-quote.pdf',

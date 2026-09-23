@@ -13,7 +13,7 @@
  *    a browser cannot forge a missing Origin cross-site.
  *  - Rate limit: a token bucket per (ip, route-group). General 300/min; the
  *    "auth-ish" groups (credentials, invitations, accept, session policy) 30/min.
- *  - Request-body size cap by Content-Length: 5MB, except import lanes 50MB.
+ *  - Streamed body caps: 64KiB auth, 5MiB general/files, 50MiB imports; 30s deadline.
  *  - Structured request log (admin.createLogger) with a correlation id — method,
  *    path, status, ms only. NEVER a body, never PII.
  */
@@ -148,18 +148,108 @@ export class RateLimiter {
 }
 
 /* ------------------------------------------------------------------ *
- * Body-size cap (by Content-Length; import lanes get the larger cap)
+ * Actual body-size admission (before downstream parsing or signature checks)
  * ------------------------------------------------------------------ */
 
-export function bodyLimit(): MiddlewareHandler {
+export interface BodyLimitOptions {
+  /** Absolute body-read deadline, not an idle timer reset by incoming bytes. */
+  timeoutMs?: number;
+}
+
+async function readBoundedBody(request: Request, cap: number, declared: number | undefined, timeoutMs: number): Promise<Buffer> {
+  const reader = request.body!.getReader();
+  const blocks: Buffer[] = [];
+  let size = 0;
+  let block: Buffer | undefined;
+  let used = 0;
+  let stopped = false;
+  const started = performance.now();
+  const timeoutError = () => new ApiError(408, 'request body read timed out', 'body_timeout');
+  let interrupt!: (error: Error) => void;
+  const interrupted = new Promise<never>((_, reject) => { interrupt = reject; });
+  const timer = setTimeout(() => interrupt(timeoutError()), timeoutMs);
+  const onAbort = () => interrupt(ApiError.badRequest('request body interrupted'));
+  request.signal.addEventListener('abort', onAbort, { once: true });
+
+  async function consume(): Promise<Buffer> {
+    if (request.signal.aborted) throw ApiError.badRequest('request body interrupted');
+    while (!stopped) {
+      // A stream of immediately resolved tiny chunks must not starve the timer.
+      if (performance.now() - started >= timeoutMs) throw timeoutError();
+      const { done, value } = await reader.read();
+      if (stopped) break;
+      if (done) {
+        if (declared !== undefined && declared !== size) throw ApiError.badRequest('content-length does not match body');
+        if (block && used) blocks.push(block.subarray(0, used));
+        return Buffer.concat(blocks, size);
+      }
+      if (value.byteLength > cap - size) throw new ApiError(413, 'request body too large', 'payload_too_large');
+      size += value.byteLength;
+      // Retain fixed slabs, not one object per attacker-controlled tiny chunk.
+      let offset = 0;
+      while (offset < value.byteLength) {
+        block ??= Buffer.allocUnsafe(64 * 1024);
+        const count = Math.min(block.length - used, value.byteLength - offset);
+        block.set(value.subarray(offset, offset + count), used);
+        used += count; offset += count;
+        if (used === block.length) { blocks.push(block); block = undefined; used = 0; }
+      }
+    }
+    throw ApiError.badRequest('request body interrupted');
+  }
+
+  try {
+    return await Promise.race([consume(), interrupted]);
+  } catch (error) {
+    stopped = true;
+    // Cancellation is best effort and cannot delay the error response.
+    void reader.cancel(error).catch(() => {});
+    throw error instanceof ApiError ? error : ApiError.badRequest('invalid request body stream');
+  } finally {
+    stopped = true;
+    clearTimeout(timer);
+    request.signal.removeEventListener('abort', onAbort);
+    reader.releaseLock();
+  }
+}
+
+export function bodyLimit(options: BodyLimitOptions = {}): MiddlewareHandler {
+  const timeoutMs = options.timeoutMs ?? 30_000;
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1) throw new Error('body timeout must be a positive integer');
   return async (c, next) => {
-    if (MUTATING.has(c.req.method)) {
-      const len = Number(c.req.header('content-length') ?? '0');
-      if (Number.isFinite(len) && len > 0) {
-        const cap = /\/import\b|\/imports\b|import/.test(c.req.path) ? FIFTY_MB : FIVE_MB;
-        if (len > cap) {
-          throw new ApiError(413, `request body too large (${len} > ${cap})`, 'payload_too_large');
+    const original = c.req.raw;
+    if (MUTATING.has(c.req.method) || original.body) {
+      const fileUpload = /^\/api\/(?:files\/uploads\/[^/]+\/complete|portal-customer\/me\/uploads)$/.test(c.req.path);
+      const auth = /\/(?:auth|login)(?:\/|$)/.test(c.req.path);
+      const cap = auth ? 64 * 1024 : fileUpload ? FIVE_MB : /import/.test(c.req.path) ? FIFTY_MB : FIVE_MB;
+      const rawLength = c.req.header('content-length');
+      let declared: number | undefined;
+      if (rawLength !== undefined) {
+        declared = Number(rawLength);
+        if (!/^\d+$/.test(rawLength) || !Number.isSafeInteger(declared)) {
+          void original.body?.cancel().catch(() => {});
+          throw ApiError.badRequest('invalid content-length');
         }
+        if (declared > cap) {
+          void original.body?.cancel().catch(() => {});
+          throw new ApiError(413, 'request body too large', 'payload_too_large');
+        }
+      }
+      if (original.body) {
+        const bytes = await readBoundedBody(original, cap, declared, timeoutMs);
+        // Keep byte-for-byte payloads and metadata for raw-body webhook checks
+        // and framework JSON/text parsers. No parser sees unadmitted bytes.
+        // The Node adapter supplies a lightweight Request, not a native Fetch
+        // object with internal slots. Reconstruct from its public fields.
+        c.req.raw = new Request(original.url, {
+          method: original.method, headers: original.headers, body: bytes,
+          signal: original.signal, redirect: original.redirect,
+          credentials: original.credentials, cache: original.cache,
+          integrity: original.integrity, keepalive: original.keepalive,
+          referrer: original.referrer, referrerPolicy: original.referrerPolicy,
+        });
+      } else if (declared !== undefined && declared !== 0) {
+        throw ApiError.badRequest('content-length does not match body');
       }
     }
     await next();

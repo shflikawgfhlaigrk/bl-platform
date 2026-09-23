@@ -1,3 +1,4 @@
+import { authenticatedFixture } from '../../api/test/authenticated-fixture';
 /**
  * Served-app smoke test. Boots the SAME `createApp` the real server binds,
  * wraps it in the SAME outer static-file server `server.ts` uses when UI_DIR is
@@ -25,6 +26,7 @@ async function boot() {
   const outer = new Hono();
   outer.use('/*', serveStatic({ root: uiPublic })); // UI_DIR = apps/ui/public
   outer.route('/', platform.app);
+  authenticatedFixture({...platform,app:outer});
   return { outer, platform, tenantId: tenant.id };
 }
 
@@ -74,6 +76,6 @@ describe('mags-ui served app smoke', () => {
   it('still enforces the tenant header contract behind the static server', async () => {
     const { outer } = await boot();
     const res = await outer.request('/api/inventory/locations');
-    expect(res.status).toBe(400); // tenant header missing
+    expect(res.status).toBe(401); // verified user credential missing
   });
 });

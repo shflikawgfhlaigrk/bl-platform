@@ -1,0 +1,20 @@
+import { afterEach, expect, it, vi } from 'vitest';
+import * as Q from '../public/src/queue.mjs';
+import {setCredential,clearCredential,sendRaw} from '../public/js/api.js';
+afterEach(()=>vi.unstubAllGlobals());
+it('queued identity survives persistence shape and another user cannot replay it',async()=>{
+ const saved=new Map<string,string>();
+ vi.stubGlobal('sessionStorage',{setItem:(k:string,v:string)=>saved.set(k,v),getItem:(k:string)=>saved.get(k)??null,removeItem:(k:string)=>saved.delete(k)});
+ const fetch=vi.fn(async(_input:any,_init:any)=>new Response(JSON.stringify({data:{ok:true}}),{headers:{'content-type':'application/json'}}));vi.stubGlobal('fetch',fetch);
+ const principal={userId:'one',tenantId:'a',expiresAt:Date.now()+3600000};
+ const m={id:'test',url:'/api/actions',method:'POST',body:{},idempotencyKey:'same',queuedAt:new Date().toISOString(),principal};
+ const queued=JSON.parse(JSON.stringify(Q.nextQueued(Q.enqueue(Q.initialState(),m))));
+ setCredential('synthetic-bearer',principal);
+ expect((await sendRaw(queued)).status).toBe(200);
+ expect(fetch.mock.calls[0][1].headers.authorization).toBe('Bearer synthetic-bearer');
+ fetch.mockClear();setCredential('other-bearer',{...principal,userId:'two'});
+ expect((await sendRaw(queued)).status).toBe(401);expect(fetch).not.toHaveBeenCalled();
+ setCredential('other-tenant',{...principal,tenantId:'b'});
+ expect((await sendRaw(queued)).status).toBe(401);expect(fetch).not.toHaveBeenCalled();
+ clearCredential();expect((await sendRaw(queued)).status).toBe(401);expect(fetch).not.toHaveBeenCalled();
+});

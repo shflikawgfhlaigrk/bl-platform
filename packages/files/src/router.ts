@@ -2,8 +2,8 @@
  * files module HTTP router. Mounted by apps/api at /api/files.
  *
  * Tenant comes ONLY from core's tenantMiddleware (`x-tenant-id` header).
- * The acting user (for permission checks + audit) comes from the optional
- * `x-user-id` header: absent = trusted system actor; unknown id = 401.
+ * The acting user is injected by verified credential middleware; caller headers
+ * and missing identities never grant system authority.
  *
  * SECRETS: storage keys never appear in any response body or URL. Downloads
  * are id-based: GET /files/:id/content.
@@ -30,6 +30,7 @@ import type {
   FilesUploadSessionRow,
 } from './schema';
 import { LocalDiskStorageProvider, type StorageProvider } from './storage';
+import { decodeUpload } from './upload-limits';
 import {
   abortUpload,
   assertFileAccess,
@@ -63,6 +64,8 @@ export interface FilesModuleDeps extends ModuleDeps<FilesDatabase> {
    * `.storage/files`. Tests and cloud deployments inject their own.
    */
   storage?: StorageProvider;
+  /** Verified caller identity from the transport authentication layer. */
+  authenticatedUserId?: (c: Context) => string | undefined;
 }
 
 /* ------------------------------------------------------------------ *
@@ -148,7 +151,7 @@ export function filesRouter(deps: FilesModuleDeps): Hono<TenantEnv> {
   app.use('*', tenantMiddleware(asCoreDb(db)));
 
   const actorOf = (c: Context<TenantEnv, string>) =>
-    resolveActor(db, c.get('tenantId'), c.req.header('x-user-id'));
+    resolveActor(db, c.get('tenantId'), deps.authenticatedUserId?.(c as Context));
 
   /**
    * Permission-check middleware for /files/:id routes: owner/admin/system and
@@ -220,7 +223,7 @@ export function filesRouter(deps: FilesModuleDeps): Hono<TenantEnv> {
   app.post('/uploads/:id/complete', async (c) => {
     const body = completeUploadSchema.parse(await jsonBody(c));
     const actor = await actorOf(c);
-    const content = Buffer.from(body.content_base64, 'base64');
+    const content = decodeUpload(body.content_base64);
     const file = await completeUpload(
       db,
       events,
@@ -228,7 +231,7 @@ export function filesRouter(deps: FilesModuleDeps): Hono<TenantEnv> {
       c.get('tenantId'),
       actor,
       c.req.param('id'),
-      new Uint8Array(content),
+      content,
     );
     return c.json({ data: filePublic(file) }, 201);
   });

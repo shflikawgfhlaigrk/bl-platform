@@ -1,9 +1,8 @@
 /**
  * Local-first single-owner RBAC, enforced at the composition root.
  *
- * Acting user: the `x-user-id` header. When absent (a loopback owner tool), we
- * resolve the tenant's seeded OWNER user — deterministic, documented, and the
- * reason journey 18 still passes for the owner without any header.
+ * Acting user: the tenant-bound, signed credential verified at the composition
+ * root. An absent user header never selects an owner.
  *
  * We centralize enforcement in ONE middleware (rather than wrapping each module
  * router) so the guard can resolve the tenant itself and match a small, explicit
@@ -13,8 +12,10 @@
  */
 import type { Context, MiddlewareHandler } from 'hono';
 import type { Kysely } from 'kysely';
-import { ApiError, asCoreDb, getTenant, listUsers, type CoreDatabase } from '@blacklabel/core';
+import privilegedRoutes from './privileged-routes.json';
+import { ApiError, asCoreDb, getTenant, type CoreDatabase } from '@blacklabel/core';
 import { can, type WorkforceDatabase, type WorkforcePermission } from '@blacklabel/workforce';
+import { independentIdentity } from './identity';
 
 export interface RbacRule {
   /** True when this rule governs the request. */
@@ -22,7 +23,11 @@ export interface RbacRule {
   permission: WorkforcePermission;
 }
 
-const has = (segment: string) => (_m: string, p: string) => p.includes(segment);
+const isRead = (m: string) => m === 'GET' || m === 'HEAD';
+const privileged = (p: string) => /^\/api\/(?:finance|admin)(?:\/|$)/.test(p);
+// This inventory is specific to this worktree; new privileged endpoints need review.
+const reviewed = privilegedRoutes.map(([method, path]) => ({ method, pattern: new RegExp('^' + path.split('/').map(s => s.startsWith(':') ? '[^/]+' : s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('/') + '$') }));
+const knownPrivileged = (method: string, path: string) => reviewed.some(r => r.method === (method === 'HEAD' ? 'GET' : method) && r.pattern.test(path));
 const endsWith = (suffix: string) => (_m: string, p: string) => p.endsWith(suffix);
 
 /**
@@ -47,49 +52,19 @@ export function defaultRbacRules(): RbacRule[] {
         (p.includes('/roles') || p.includes('/invitations') || p.includes('/users/') || p.includes('/session-policy')),
       permission: 'workforce.admin',
     },
-    // finance: the whole module is owner/accountant surface.
-    { test: has('/api/finance'), permission: 'finance.read' },
-    // admin: integrations/credentials/backup/restore/diagnostics.
-    { test: has('/api/admin'), permission: 'admin.read' },
+    { test: (m, p) => m === 'POST' && /^\/api\/finance\/cash-sessions\/[^/]+\/close$/.test(p), permission: 'finance.close' },
+    { test: (m, p) => m === 'POST' && p === '/api/finance/margin', permission: 'finance.read' },
+    { test: (m, p) => isRead(m) && /^\/api\/finance(?:\/|$)/.test(p), permission: 'finance.read' },
+    { test: (m, p) => !isRead(m) && /^\/api\/finance(?:\/|$)/.test(p), permission: 'finance.write' },
+    { test: (m, p) => isRead(m) && /^\/api\/admin(?:\/|$)/.test(p), permission: 'admin.read' },
+    { test: (m, p) => !isRead(m) && /^\/api\/admin(?:\/|$)/.test(p), permission: 'admin.admin' },
   ];
 }
 
-/** Resolves the acting user id, defaulting to the tenant's seeded owner. */
+/** Identity is supplied only by the preceding credential middleware. */
 export type GetActingUser = (c: Context, tenantId: string) => Promise<string | undefined>;
-
-export interface GetActingUserOptions {
-  /** Env override for the default owner user id (single-tenant dev). */
-  ownerUserIdEnv?: string;
-}
-
-/**
- * Build the acting-user resolver. Uses `x-user-id` when present; otherwise the
- * tenant's owner: the env override, else the first core user whose role is
- * 'owner' (created at seed). Cached per tenant for the default path only.
- */
-export function makeGetActingUser(
-  db: Kysely<CoreDatabase>,
-  opts: GetActingUserOptions = {},
-): GetActingUser {
-  const ownerCache = new Map<string, string>();
-  return async (c, tenantId) => {
-    const header = c.req.header('x-user-id');
-    if (header && header.trim() !== '') return header.trim();
-    if (opts.ownerUserIdEnv && opts.ownerUserIdEnv.trim() !== '') return opts.ownerUserIdEnv.trim();
-    const cached = ownerCache.get(tenantId);
-    if (cached) return cached;
-    // First 'owner'-role core user for this tenant (deterministic order).
-    for (let offset = 0; ; offset += 100) {
-      const page = await listUsers(db, tenantId, { limit: 100, offset });
-      const owner = page.find((u) => u.role === 'owner');
-      if (owner) {
-        ownerCache.set(tenantId, owner.id);
-        return owner.id;
-      }
-      if (page.length < 100) break;
-    }
-    return undefined;
-  };
+export function makeGetActingUser(_db: Kysely<CoreDatabase>): GetActingUser {
+  return async (c, _tenantId) => c.get('authenticatedUserId') as string | undefined;
 }
 
 /**
@@ -109,6 +84,8 @@ export function rbacGuard(
   return async (c, next) => {
     const method = c.req.method;
     const path = c.req.path;
+    if (independentIdentity(method, path)) return next();
+    if (privileged(path) && !knownPrivileged(method, path)) throw ApiError.forbidden('unreviewed privileged operation');
     const rule = rules.find((r) => {
       try {
         return r.test(method, path);
@@ -116,7 +93,10 @@ export function rbacGuard(
         return false;
       }
     });
-    if (!rule) return next();
+    if (!rule) {
+      if (privileged(path)) throw ApiError.forbidden('privileged operation has no permission disposition');
+      return next();
+    }
 
     const tenantId = c.req.header('x-tenant-id');
     if (!tenantId) return next();

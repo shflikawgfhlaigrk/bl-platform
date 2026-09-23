@@ -1,3 +1,6 @@
+import { identityCredentials } from '../../../apps/api/src/identity';
+const credentials = identityCredentials(Buffer.alloc(32, 9));
+const owners = new Map<string,string>();
 import type { Hono } from 'hono';
 import {
   EventBus,
@@ -62,6 +65,8 @@ export async function setup(): Promise<TestContext> {
     role: 'member',
   });
 
+  const ownerB = await createUser(core, tenantB.id, {name:'Owner B',email:'owner@b.test',role:'owner'});
+  owners.set(tenantA.id,owner.id); owners.set(tenantB.id,ownerB.id);
   const events = new EventBus();
   const emitted: PlatformEvent[] = [];
   events.on('*', (event) => {
@@ -69,7 +74,11 @@ export async function setup(): Promise<TestContext> {
   });
 
   const storage = new MemoryStorageProvider();
-  const app = filesRouter({ db, events, contracts: {}, storage });
+  const app = filesRouter({ db, events, contracts: {}, storage, authenticatedUserId: c => {
+    const raw = c.req.header('authorization') || '';
+    const p = raw.startsWith('Bearer ') ? credentials.verify(raw.slice(7)) : undefined;
+    return p && p.tenantId === c.req.header('x-tenant-id') ? p.userId : undefined;
+  } });
 
   return {
     db,
@@ -87,6 +96,7 @@ export function headers(tenantId: string, userId?: string): Record<string, strin
   return {
     'x-tenant-id': tenantId,
     'content-type': 'application/json',
+    authorization: 'Bearer ' + credentials.issue(tenantId,userId || owners.get(tenantId) || 'unknown'),
     ...(userId ? { 'x-user-id': userId } : {}),
   };
 }

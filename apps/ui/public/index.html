@@ -14,7 +14,14 @@
   <body>
     <a class="skip-link" href="#main">Skip to main content</a>
 
-    <div id="app-shell" class="shell">
+    <form id="identity-form">
+      <h1>Sign in to your workspace</h1>
+      <label>One-hour access credential <input id="identity-token" type="password" autocomplete="off" required></label>
+      <button type="submit">Sign in</button>
+      <p id="identity-status">Use the private credential file issued for your user and workspace.</p>
+    </form>
+    <button id="identity-logout" hidden>Sign out of this tab</button>
+    <div id="app-shell" class="shell" hidden>
       <!-- Header / banner -->
       <header class="app-header" role="banner">
         <button
@@ -71,6 +78,7 @@
       <p style="padding:1rem">Mags Commerce OS needs JavaScript enabled to run. It stays entirely on this computer.</p>
     </noscript>
 
+    <script type="module" src="./js/identity-ui.js"></script>
     <script type="module" src="./js/app.js"></script>
   </body>
 </html>

@@ -14,6 +14,18 @@ import { queueMutation } from './offline.js';
 
 const BASE = '/api';
 let TENANT_ID = null;
+export function setCredential(token, principal) {
+  sessionStorage.setItem('platformCredential',token);
+  sessionStorage.setItem('platformPrincipal',JSON.stringify(principal));
+}
+export function clearCredential() {
+  sessionStorage.removeItem('platformCredential');sessionStorage.removeItem('platformPrincipal');
+}
+function currentPrincipal() {
+  try {return JSON.parse(globalThis.sessionStorage?.getItem('platformPrincipal')||'null');} catch {return null;}
+}
+function samePrincipal(a,b){return a&&b&&a.userId===b.userId&&a.tenantId===b.tenantId;}
+
 
 export function setTenantId(id) {
   TENANT_ID = id || null;
@@ -47,6 +59,8 @@ function buildUrl(path, query) {
 
 function baseHeaders(mutating) {
   const h = { accept: 'application/json' };
+  const token=globalThis.sessionStorage?.getItem('platformCredential');
+  if(token) h.authorization=`Bearer ${token}`;
   if (TENANT_ID) h['x-tenant-id'] = TENANT_ID;
   if (mutating) h['x-mags-csrf'] = '1';
   return h;
@@ -94,6 +108,7 @@ function fromBody(body, status) {
  * offline queue can tell a 409 from being offline.
  */
 export async function sendRaw(m) {
+  if(!samePrincipal(m.principal,currentPrincipal())) return {ok:false,status:401,body:{error:{code:'identity_changed',message:'Queued action belongs to a different or expired sign-in'}}};
   const headers = baseHeaders(true);
   if (m.body !== null && m.body !== undefined) headers['content-type'] = 'application/json';
   if (m.idempotencyKey) headers['idempotency-key'] = m.idempotencyKey;
@@ -120,7 +135,10 @@ export async function mutate(path, method, body, opts = {}) {
     body = { ...body, [opts.bodyKeyField]: idempotencyKey };
   }
 
+  const principal=currentPrincipal();
+  if(!principal||principal.expiresAt<=Date.now()) throw new ApiError('Sign in before changing this workspace','unauthorized',401);
   const mutation = {
+    principal: {userId:principal.userId,tenantId:principal.tenantId},
     id: newIdempotencyKey(),
     url,
     method,

@@ -1,3 +1,4 @@
+import { authenticatedFixture } from './authenticated-fixture';
 /**
  * Security hardening + RBAC (journey 18) at the composition root.
  */
@@ -12,6 +13,7 @@ const KEY = Buffer.alloc(32, 7);
 async function boot(opts: Partial<CreateAppOptions> = {}) {
   const db = createTestDb<PlatformDatabase>();
   const platform = await createApp({ db, adminMasterKey: KEY, ...opts });
+  authenticatedFixture(platform);
   const tenant = await createTenant(asCoreDb(db), { name: 'Sec Tenant' });
   return { platform, db, tenantId: tenant.id };
 }
@@ -114,7 +116,7 @@ describe('RBAC (journey 18)', () => {
   const GUARDED: { method: string; path: string; body?: unknown }[] = [
     { method: 'POST', path: '/api/purchasing/purchase-orders/nope/approve', body: {} },
     { method: 'GET', path: '/api/customers/export' },
-    { method: 'GET', path: '/api/finance/payouts' },
+    { method: 'GET', path: '/api/finance/cash-sessions' },
     { method: 'GET', path: '/api/admin/credentials' },
   ];
 

@@ -14,7 +14,7 @@
  */
 
 // vvvv  BUMP THIS ON EVERY DEPLOY  vvvv
-const CACHE_NAME = 'mags-os-shell-v3';
+const CACHE_NAME = 'mags-os-shell-v4-identity';
 // ^^^^  BUMP THIS ON EVERY DEPLOY  ^^^^
 
 const SHELL_ASSETS = [
@@ -26,6 +26,7 @@ const SHELL_ASSETS = [
   './js/app.js',
   './js/dom.js',
   './js/api.js',
+  './js/identity-ui.js',
   './js/audio.js',
   './js/offline.js',
   './js/router.js',

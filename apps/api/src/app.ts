@@ -172,6 +172,7 @@ import {
   type RateLimitOptions,
 } from './security';
 import { defaultRbacRules, makeGetActingUser, rbacGuard } from './rbac';
+import { identityCredentials, identityGuard } from './identity';
 import { buildDispatcherRegistry, registerCrossModuleWiring } from './wiring';
 import { buildHealthProbes } from './admin-wiring';
 
@@ -303,8 +304,8 @@ export interface CreateAppOptions {
 
   /** Process-wide default inventory location fallback (single-tenant dev). */
   envDefaultLocationId?: string;
-  /** Env override for the default acting owner user id. */
-  ownerUserIdEnv?: string;
+  /** Dedicated request credential key; defaults to the private admin master key. */
+  identityKey?: Buffer | string;
 
   /** Rate-limit tuning + injectable clock (tests). */
   rateLimit?: RateLimitOptions;
@@ -349,6 +350,8 @@ export interface PlatformApp {
   /** Idempotently seed workforce built-in roles + an owner user for a tenant. */
   seedTenant: (tenantId: string, opts?: SeedTenantOptions) => Promise<SeedTenantResult>;
   modules: readonly string[];
+  /** Trusted process-local issuer; never exposed as an HTTP route. */
+  issueCredential: (tenantId: string, userId: string) => Promise<string>;
 }
 
 /** One shared db, narrowed per module. All tables coexist in the same file. */
@@ -559,14 +562,15 @@ export async function createApp(options: CreateAppOptions): Promise<PlatformApp>
 
   // Security + RBAC, in front of everything (order matters).
   const rateLimiter = new RateLimiter(options.rateLimit);
-  const getActingUser = makeGetActingUser(dbFor<CoreDatabase>(db), {
-    ownerUserIdEnv: options.ownerUserIdEnv,
-  });
+  const credentials = identityCredentials(options.identityKey ?? options.adminMasterKey);
+  const getActingUser = makeGetActingUser(dbFor<CoreDatabase>(db));
   app.use('*', requestLogger(logger));
   app.use('*', securityHeaders());
   app.use('*', bodyLimit());
   if (!options.disableRateLimit) app.use('*', rateLimiter.middleware());
   app.use('*', csrfGuard());
+  app.use('/api/*', identityGuard(db, credentials));
+  app.get('/api/identity', c => c.json({data:c.get('authenticatedPrincipal')}));
   app.use(
     '/api/*',
     rbacGuard(dbFor<WorkforceDatabase & CoreDatabase>(db), getActingUser, defaultRbacRules()),
@@ -593,7 +597,7 @@ export async function createApp(options: CreateAppOptions): Promise<PlatformApp>
   app.route('/api/reviews', reviewsRouter(deps<ReviewsDatabase>()));
   app.route('/api/workflows', workflowsRouter(deps<WorkflowsDatabase>()));
   app.route('/api/billing', billingRouter(deps<BillingDatabase>()));
-  app.route('/api/files', filesRouter({ ...deps<FilesDatabase>(), storage }));
+  app.route('/api/files', filesRouter({ ...deps<FilesDatabase>(), storage, authenticatedUserId: c => c.get('authenticatedUserId') }));
   app.route('/api/industries', industriesRouter(deps<IndustriesDatabase>()));
   app.route('/api/retail', retailRouter(deps<RetailDatabase>()));
 
@@ -708,5 +712,10 @@ export async function createApp(options: CreateAppOptions): Promise<PlatformApp>
     detachEngine: detachAll,
     seedTenant,
     modules: MODULE_KEYS,
+    issueCredential: async (tenantId, userId) => {
+      const user = await dbFor<CoreDatabase>(db).selectFrom('users').select('id').where('tenant_id','=',tenantId).where('id','=',userId).executeTakeFirst();
+      if (!user) throw ApiError.unauthorized('Unknown credential user');
+      return credentials.issue(tenantId,userId);
+    },
   };
 }

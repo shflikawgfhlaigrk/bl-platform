@@ -106,3 +106,12 @@ flow, path-traversal rejection on every adapter, secret-leak checks
 cycle safety, link attach/detach/query, metadata search, permission
 grant/deny/revoke, upload-session hijack denial, audit trail, seed, and
 tenant-isolation denial tests.
+
+## Upload limits
+
+This worktree enforces a 5 MiB total streamed JSON limit for upload completion,
+including base64 and metadata, and a 30-second body-read deadline. Declared
+lengths are validated but cannot bypass the actual byte count. Files require
+canonical base64 and an independent 5 MiB decoded service limit; HTTP uploads
+therefore fit fewer decoded bytes (roughly 3.75 MiB before metadata). Rejected
+completions leave the session pending and write no file content.

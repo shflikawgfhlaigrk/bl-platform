@@ -36,6 +36,7 @@ export function enqueue(state, m) {
     body: m.body ?? null,
     idempotencyKey: m.idempotencyKey,
     queuedAt: m.queuedAt,
+    principal: m.principal ? {userId:m.principal.userId, tenantId:m.principal.tenantId} : null,
     state: 'queued',
     attempts: 0,
     error: null,

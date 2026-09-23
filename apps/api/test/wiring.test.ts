@@ -1,3 +1,4 @@
+import { authenticatedFixture } from './authenticated-fixture';
 /**
  * Cross-module event wiring — integration-level proof that the composition
  * root's glue turns domain events into inventory movements + owner actions,
@@ -29,6 +30,7 @@ const KEY = Buffer.alloc(32, 7);
 async function boot() {
   const db = createTestDb<PlatformDatabase>();
   const platform = await createApp({ db, adminMasterKey: KEY });
+  authenticatedFixture(platform);
   const tenant = await createTenant(asCoreDb(db), { name: 'Wiring Tenant' });
   return { platform, db, tenantId: tenant.id };
 }

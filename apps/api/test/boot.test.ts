@@ -1,3 +1,4 @@
+import { authenticatedFixture } from './authenticated-fixture';
 /**
  * Composition-root boot test.
  *
@@ -19,6 +20,7 @@ import { allMigrations, createApp, MODULE_KEYS, type PlatformDatabase } from '..
 async function boot() {
   const db = createTestDb<PlatformDatabase>();
   const platform = await createApp({ db });
+  authenticatedFixture(platform);
   const tenant = await createTenant(asCoreDb(db), { name: 'Boot Tenant' });
   return { platform, tenantId: tenant.id };
 }
@@ -37,14 +39,14 @@ describe('api composition root (createApp)', () => {
     const { platform, tenantId } = await boot();
 
     const missing = await platform.app.request('/api/scheduling/calendars');
-    expect(missing.status).toBe(400);
-    expect(((await missing.json()) as any).error.code).toBe('tenant_header_missing');
+    expect(missing.status).toBe(401);
+    expect(((await missing.json()) as any).error.code).toBe('unauthorized');
 
     const unknown = await platform.app.request('/api/scheduling/calendars', {
       headers: { 'x-tenant-id': 'no-such-tenant' },
     });
-    expect(unknown.status).toBe(404);
-    expect(((await unknown.json()) as any).error.code).toBe('tenant_unknown');
+    expect(unknown.status).toBe(401);
+    expect(((await unknown.json()) as any).error.code).toBe('unauthorized');
 
     const ok = await platform.app.request('/api/scheduling/calendars', {
       headers: { 'x-tenant-id': tenantId },
