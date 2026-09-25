@@ -1,0 +1,98 @@
+{
+  "checkedAt": "2026-09-06T13:07:30.734040+00:00",
+  "device": {
+    "udid": "00008120-000C085E3CE00032",
+    "model": "iPad (A16)",
+    "os": "26.6.1",
+    "bundleIdentifier": "com.blacklabel.oneclub.pos",
+    "displayName": "Bar One",
+    "version": "1.0",
+    "build": "5",
+    "testedConfiguration": "Debug"
+  },
+  "connection": {
+    "origin": "https://bar-one-pos.michael-070.workers.dev",
+    "savedPreferenceVerified": true,
+    "transport": "Cloudflare Worker and dedicated Durable Object; authenticated outbound WebSocket from venue Mac",
+    "database": ".storage/bar-one-venue/platform.db",
+    "requiresMacAndInternet": true,
+    "automaticRelayRecovery": {
+      "checkedAt": "2026-09-06T13:03:20Z",
+      "beforePid": 82730,
+      "afterPid": 19461,
+      "automaticRestart": true,
+      "checks": [
+        {
+          "elapsedSeconds": 0.1,
+          "status": 503
+        },
+        {
+          "elapsedSeconds": 0.62,
+          "status": 200
+        }
+      ]
+    },
+    "oldQuickTunnelsRetired": 3,
+    "oldLANBridgeRetired": true,
+    "hqConfigurationRestored": true
+  },
+  "menu": {
+    "source": "docs/bar-one/photo-menu-2026-09-06.json",
+    "photoSourceReceipt": ".storage/one-club-menu-photos/2026-09-06/sources.json",
+    "total": 50,
+    "food": 15,
+    "identifiedDrinks": 35,
+    "confirmedPrices": 14,
+    "pendingPrices": 36,
+    "afterBackendRestart": 50,
+    "standardReferenceGuides": 50,
+    "guideSourceMatchesLive": true,
+    "unpricedSalesBlocked": true
+  },
+  "validation": {
+    "physicalMenuAndGuides": "passed",
+    "physicalResult": ".storage/one-club-device-acceptance/StableMenuVisible.xcresult",
+    "physicalSteps": [
+      "Club Manager four-digit sign-in",
+      "Breakfast: Biscuits and gravy at $8",
+      "Old Fashioned measured ingredients",
+      "Search pina colada; alcohol and virgin recipes found",
+      "Keyboard dismissed; 2 oz white rum visible",
+      "Return to Service"
+    ],
+    "rootTestFiles": 231,
+    "rootTests": 1608,
+    "typecheck": "passed",
+    "anonymousStateStatus": 401,
+    "publicBootstrapStatus": 403,
+    "configuredPaymentProviders": [],
+    "paymentSimulatorDisabled": true
+  },
+  "backup": {
+    "directory": ".storage/bar-one-venue/backups/2026-09-06T13-06-15-647Z",
+    "integrity": "ok",
+    "offDeviceScheduleConfigured": false
+  },
+  "remaining": [
+    "35 drink prices and the obscured Chicken Tenders price",
+    "Confirmed sales tax rate and approved house pours/recipes",
+    "Individual staff access configuration",
+    "Processor account and provisioned reader; real charge and refund",
+    "Exact printer transport and physical kitchen/receipt output",
+    "Always-on host, power/sleep recovery and off-device backups"
+  ],
+  "artifactSha256": {
+    "apps/api/src/bar-server.ts": "eb565789cc925562e98d99d5480d1879357dbfa013468121e493f46db563a67c",
+    "apps/api/src/bar-pos.ts": "c540eb3d1dd6aa72b5f688865e604396edc24870abdf5843f8021c18c93d055e",
+    "apps/api/src/app.ts": "a7cb58724989fb54955a91ea36494256a377039ba2dbfb0a897f8fe9518f6123",
+    "apps/ui/public/js/drink-recipes.js": "377824349038d2d7c6939df814df2206d46e562ffabecceaa9e99c58814d0736",
+    "apps/ui/public/js/views/bar.js": "8e25d998101f201e4d11ebe140af6f0e5be209ebe5574b37271b31da22155c17",
+    "apps/ui/public/sw.js": "7a835decbabced2c11c24fb351de6d006da835eaf3c3ece1b7d1d91ed45cbc46",
+    "deploy/one-club/worker.mjs": "7e4d6e4832bb313dc6b2ee6b65e0370085faa4f50c55b62cc5ca92275cbc7676",
+    "scripts/relay-bar-one.mjs": "47c788330a878fb317929f184a21eb29186b9585aab7b46466b507b6ff5b039b",
+    "apps/ipad/Sources/OneClubPOSApp.swift": "afeb701a75cbebe422cc86b278aaea6bb9e5a16068cc5fea65a815868b1a3afe",
+    "apps/ipad/UITests/PracticeRegisterTests.swift": "512d0d6ec5f636cdc96d495245172bee9e7d9c59cf76f701522476dde73b92e5",
+    "docs/bar-one/photo-menu-2026-09-06.json": "c5e87dff40c4561f8be0a244c990768863a5e2eb7461841ea7297201d1da6eb4",
+    "docs/bar-one/ipad-drink-guide-2026-09-06.png": "fc367f0325e51e949eb350f907ab37a5c02a2d98b210750316d470a5dd066cfc"
+  }
+}

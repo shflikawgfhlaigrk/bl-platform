@@ -18,6 +18,10 @@
  * Events emitted:
  *   - finance.payout.reconciliation_failed  { v:1, payoutId, deltaCents }   (canonical; drives payout_mismatch action)
  *   - finance.cash.variance                 { v:1, cashSessionId, varianceCents }  (internal; drives cash_close_variance action)
+ *
+ * POS drawer integration hooks:
+ *   - recordCashTender(...) for a captured orders cash tender
+ *   - recordCashRefund(...) for cash physically returned on a refund
  */
 
 export { financeMigrations } from './migrations';
@@ -41,6 +45,12 @@ export {
   closeCashSession,
   getCashSession,
   listCashSessions,
+  recordCashMovement,
+  recordCashTender,
+  recordCashRefund,
+  postCashDrawerMovement,
+  listCashMovements,
+  cashSessionReconciliation,
   addCashAdjustment,
   listCashAdjustments,
   // D. COGS / margin
@@ -63,6 +73,7 @@ export {
   exportRefundsCsvRows,
   exportPayoutsCsvRows,
   exportCashSessionsCsvRows,
+  exportCashMovementsCsvRows,
   exportTaxEvidenceCsvRows,
   exportItemCostsCsvRows,
 } from './service';
@@ -80,6 +91,12 @@ export type {
   PayoutReconciliationSummary,
   OpenCashSessionInput,
   CloseCashSessionInput,
+  RecordCashMovementInput,
+  RecordCashTenderInput,
+  RecordCashRefundInput,
+  PostCashDrawerMovementInput,
+  CashMovementRecordResult,
+  CashReconciliation,
   CashAdjustmentInput,
   AddItemCostInput,
   MarginLineInput,
@@ -102,6 +119,7 @@ export type {
   FinanceVendorBillRefRow,
   FinancePayoutMatchRow,
   FinanceCashSessionRow,
+  FinanceCashMovementRow,
   FinanceCashAdjustmentRow,
   FinanceItemCostRow,
   FinanceLiabilitySnapshotRow,
@@ -111,4 +129,6 @@ export type {
   FinanceCostMethod,
   FinanceJurisdictionSource,
   FinanceCashStatus,
+  FinanceCashExpectedMode,
+  FinanceCashMovementKind,
 } from './schema';

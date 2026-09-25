@@ -218,7 +218,7 @@ describe('invoices + pay placeholder (billing provider interface)', () => {
     return { ctx, session };
   }
 
-  it('lists own invoices and creates a payment-intent stub for the outstanding balance, to the cent', async () => {
+  it('lists own invoices and refuses a payment intent when payment collection is unconnected', async () => {
     const { ctx, session } = await invoiceSetup();
     const events = capture(ctx.events, 'portal_customer.payment_intent.created');
 
@@ -227,16 +227,8 @@ describe('invoices + pay placeholder (billing provider interface)', () => {
     expect(((await list.json()) as any).data.map((i: any) => i.id)).toEqual(['inv1', 'inv2']);
 
     const pay = await api(ctx.app, ctx.tenantA, 'POST', '/me/invoices/inv1/pay', undefined, session);
-    expect(pay.status).toBe(201);
-    const { data } = (await pay.json()) as any;
-    expect(data.amountCents).toBe(30000); // exact outstanding balance
-    expect(data.invoiceId).toBe('inv1');
-    expect(data.status).toBe('requires_payment_method');
-    expect(data.provider).toBe('stub');
-    expect(data.clientSecret).toBeTruthy();
-
-    expect(events).toHaveLength(1);
-    expect(events[0].payload).toMatchObject({ invoiceId: 'inv1', amountCents: 30000, customerId: 'cust_ada' });
+    expect(pay.status).toBe(501);
+    expect(events).toHaveLength(0);
   });
 
   it('rejects paying a settled invoice (400), a foreign invoice (404), and 501 without a provider', async () => {
@@ -349,6 +341,7 @@ describe('uploads (files provider)', () => {
       fileName: 'roof.jpg',
       contentType: 'image/jpeg',
       sizeBytes: 12345,
+      contentBase64: Buffer.alloc(12345, 1).toString('base64'),
       kind: 'photo',
       relatedEntityType: 'scheduling.appointment',
       relatedEntityId: 'appt1',
@@ -365,7 +358,7 @@ describe('uploads (files provider)', () => {
     expect(events[0].payload).toMatchObject({ uploadId: data.id, fileId: 'file_1', fileName: 'roof.jpg' });
   });
 
-  it('stores metadata with a null file id when no files provider is wired, and validates input', async () => {
+  it('refuses file uploads when storage is unconnected and validates input', async () => {
     const ctx = await setup();
     await createAccountViaApi(ctx.app, ctx.tenantA, { email: 'ada@example.com' });
     const session = await login(ctx, ctx.tenantA, 'ada@example.com');
@@ -375,10 +368,7 @@ describe('uploads (files provider)', () => {
       contentType: 'application/pdf',
       sizeBytes: 100,
     }, session);
-    expect(ok.status).toBe(201);
-    const { data } = (await ok.json()) as any;
-    expect(data.file_id).toBeNull();
-    expect(data.kind).toBe('document'); // default
+    expect(ok.status).toBe(501);
 
     const bad = await api(ctx.app, ctx.tenantA, 'POST', '/me/uploads', {
       fileName: 'x', contentType: 'text/plain', sizeBytes: -5,
@@ -386,7 +376,7 @@ describe('uploads (files provider)', () => {
     expect(bad.status).toBe(400);
 
     const list = await api(ctx.app, ctx.tenantA, 'GET', '/me/uploads', undefined, session);
-    expect(((await list.json()) as any).data).toHaveLength(1);
+    expect(((await list.json()) as any).data).toHaveLength(0);
   });
 });
 

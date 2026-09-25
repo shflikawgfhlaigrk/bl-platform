@@ -93,7 +93,7 @@ export type { ActionResult, RunnerArgs, RunnerDeps, RunnerOutcome } from './runn
 export { registerProductionFoundations, registerReadyFoundations, WorkflowExecutionAdapter } from './foundations';
 export type { ReadyFoundationDeps } from './foundations';
 export { ExecutiveOperationsHqAdapter } from './foundations/executive-operations-hq';
-export type { ExecutiveOperationsHqConfig } from './foundations/executive-operations-hq';
+export type { ExecutiveOperationsHqConfig, HqSourceBinding } from './foundations/executive-operations-hq';
 export {
   createDataOperationsAdapter,
   createNationalPropertyRecordsReader,

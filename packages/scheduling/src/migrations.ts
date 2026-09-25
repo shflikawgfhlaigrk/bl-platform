@@ -266,4 +266,14 @@ export const schedulingMigrations: Migration[] = [
         .execute();
     },
   },
+  {
+    name: 'scheduling.0006_reminder_delivery_recovery',
+    up: async (db) => {
+      await db.schema.alterTable('scheduling_reminders').addColumn('attempts', 'integer', c => c.notNull().defaultTo(0)).execute();
+      for (const name of ['last_attempt_at', 'next_attempt_at', 'lease_expires_at', 'delivery_reference', 'last_error']) {
+        await db.schema.alterTable('scheduling_reminders').addColumn(name, 'text').execute();
+      }
+      await db.schema.createIndex('scheduling_reminders_retry_idx').on('scheduling_reminders').columns(['tenant_id', 'status', 'next_attempt_at']).execute();
+    },
+  },
 ];

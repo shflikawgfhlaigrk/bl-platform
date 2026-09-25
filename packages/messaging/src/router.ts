@@ -60,6 +60,7 @@ const assignSchema = z.object({
 });
 
 const outboundSchema = z.object({
+  idempotencyKey: z.string().min(1).max(200).optional(),
   to: z.string().optional(),
   subject: z.string().optional(),
   body: z.string().optional(),
@@ -108,7 +109,7 @@ const CONVERSATION_SORT_COLUMNS = ['created_at', 'updated_at', 'last_message_at'
 
 /**
  * Messaging router factory. Mounted by apps/api at /api/messaging.
- * `options.providers` swaps the log-only channel stubs for real adapters;
+ * `options.providers` connects the deployment's channel adapters;
  * `options.timeline` wires the CRM timeline writer contract.
  */
 export function messagingRouter(
@@ -240,6 +241,12 @@ export function messagingRouter(
     const body = inboundSchema.parse(await c.req.json());
     const result = await service.recordInbound(c.get('tenantId'), actorOf(c), body);
     return c.json({ data: { message: result.message, conversation: result.conversation } }, 201);
+  });
+
+  app.get('/messages/:id', async (c) => c.json({ data: await service.getMessage(c.get('tenantId'), c.req.param('id')) }));
+  app.post('/messages/:id/reconcile', async (c) => {
+    const body = z.object({ providerMessageId: z.string().min(1).max(255).optional() }).parse(await c.req.json());
+    return c.json({ data: await service.reconcileMessage(c.get('tenantId'), actorOf(c), c.req.param('id'), body.providerMessageId) });
   });
 
   /* ------------------------------- templates ----------------------------- */

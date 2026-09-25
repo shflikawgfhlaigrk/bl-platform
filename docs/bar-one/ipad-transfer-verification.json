@@ -1,0 +1,25 @@
+{
+  "verifiedAt": "2026-09-06T17:00:31.932Z",
+  "physicalBackupRestores": true,
+  "integrity": "ok",
+  "foreignKeyErrors": 0,
+  "originalDocumentsPreserved": 89,
+  "openTabs": 3,
+  "orders": 0,
+  "tenders": 0,
+  "counts": [
+    {
+      "kind": "menu",
+      "n": 80
+    },
+    {
+      "kind": "setup",
+      "n": 1
+    },
+    {
+      "kind": "tab",
+      "n": 9
+    }
+  ],
+  "encryptedBackupSha256": "301e8d4c86dccbabd50c184c45075ec7a8b696699e1b0ca765e2714a23b56a30"
+}

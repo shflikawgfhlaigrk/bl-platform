@@ -114,6 +114,8 @@ export interface ReviewProviderSyncContext {
   targetUrl: string;
 }
 
+export interface ReviewDeliveryResult { delivered: boolean; submitted?: boolean; messageId?: string }
+
 /**
  * Outbound delivery + platform integration seam. A real implementation would
  * deliver the request/reminder (email/SMS via the messaging module or an
@@ -122,8 +124,8 @@ export interface ReviewProviderSyncContext {
  */
 export interface ReviewProvider {
   readonly key: string;
-  sendReviewRequest(ctx: ReviewProviderSendContext): Promise<{ delivered: boolean }>;
-  sendReminder(ctx: ReviewProviderReminderContext): Promise<{ delivered: boolean }>;
+  sendReviewRequest(ctx: ReviewProviderSendContext): Promise<ReviewDeliveryResult>;
+  sendReminder(ctx: ReviewProviderReminderContext): Promise<ReviewDeliveryResult>;
   syncExternalReviews(ctx: ReviewProviderSyncContext): Promise<{ imported: number }>;
 }
 
@@ -136,11 +138,11 @@ export class GoogleBusinessProvider implements ReviewProvider {
   readonly key = 'google_business';
 
   async sendReviewRequest(_ctx: ReviewProviderSendContext): Promise<{ delivered: boolean }> {
-    return { delivered: true }; // stub: nothing actually leaves the process
+    return { delivered: false };
   }
 
   async sendReminder(_ctx: ReviewProviderReminderContext): Promise<{ delivered: boolean }> {
-    return { delivered: true }; // stub: nothing actually leaves the process
+    return { delivered: false };
   }
 
   async syncExternalReviews(_ctx: ReviewProviderSyncContext): Promise<{ imported: number }> {
@@ -482,7 +484,7 @@ export async function dispatchCampaign(
     throw ApiError.conflict(`campaign is not active: ${campaign.status}`);
   }
   const now = options.now ?? nowIso();
-  const provider = options.provider ?? new GoogleBusinessProvider();
+  const provider: ReviewProvider = options.provider ?? new GoogleBusinessProvider();
 
   if (campaign.schedule_start_at && now < campaign.schedule_start_at) {
     return { dispatched: 0, reason: 'not_started' };
@@ -519,34 +521,16 @@ export async function dispatchCampaign(
   }
 
   for (const request of batch) {
-    await db
-      .updateTable('reviews_requests')
-      .set({ sent_at: now, updated_at: now })
-      .where('tenant_id', '=', tenantId)
-      .where('id', '=', request.id)
-      .execute();
     const link = reviewRequestPublicPath(request.token);
-    await provider.sendReviewRequest({
+    const result = await provider.sendReviewRequest({
       tenantId,
       requestId: request.id,
       customerId: request.customer_id,
       link,
     });
-    if (options.sendMessage) {
-      try {
-        await options.sendMessage.sendMessage({
-          tenantId,
-          channel: 'portal',
-          to: request.customer_id,
-          subject: 'We would love your feedback',
-          body: `Please share your honest feedback: ${link}`,
-          relatedEntityType: 'reviews.request',
-          relatedEntityId: request.id,
-        });
-      } catch {
-        // Messaging is best-effort; dispatch state is already recorded.
-      }
-    }
+    if (!result.delivered && !result.submitted) throw ApiError.conflict('Review delivery is not connected or has not been accepted.');
+    await db.updateTable('reviews_requests').set({ sent_at: now, updated_at: now })
+      .where('tenant_id', '=', tenantId).where('id', '=', request.id).execute();
   }
 
   await audit(asCoreDb(db), tenantId, actor, 'reviews.campaign.dispatched', 'reviews.campaign', campaignId, {
@@ -746,7 +730,7 @@ export async function processDueReminders(
   options: ProcessRemindersOptions = {},
 ): Promise<{ sent: number; canceled: number }> {
   const now = options.now ?? nowIso();
-  const provider = options.provider ?? new GoogleBusinessProvider();
+  const provider: ReviewProvider = options.provider ?? new GoogleBusinessProvider();
   const due = await db
     .selectFrom('reviews_reminders')
     .selectAll()
@@ -783,28 +767,14 @@ export async function processDueReminders(
     }
 
     const link = reviewRequestPublicPath(request.token);
-    await provider.sendReminder({
+    const result = await provider.sendReminder({
       tenantId,
       reminderId: reminder.id,
       requestId: request.id,
       customerId: request.customer_id,
       link,
     });
-    if (options.sendMessage) {
-      try {
-        await options.sendMessage.sendMessage({
-          tenantId,
-          channel: 'portal',
-          to: request.customer_id,
-          subject: 'A gentle reminder — we would love your feedback',
-          body: `Please share your honest feedback: ${link}`,
-          relatedEntityType: 'reviews.request',
-          relatedEntityId: request.id,
-        });
-      } catch {
-        // best-effort
-      }
-    }
+    if (!result.delivered && !result.submitted) throw ApiError.conflict('Review reminder delivery is not connected or has not been accepted.');
     await db
       .updateTable('reviews_reminders')
       .set({ status: 'sent', sent_at: now })

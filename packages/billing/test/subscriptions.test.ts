@@ -21,6 +21,19 @@ async function makeSubscription(
 }
 
 describe('subscriptions', () => {
+  it('generates a single invoice when due processors race or a recorded period is revisited', async () => {
+    const ctx = await setupBilling();
+    const sub = await makeSubscription(ctx, ctx.tenantA.id);
+    const first = await Promise.all([api(ctx.app, ctx.tenantA.id, 'POST', '/subscriptions/tick', {}), api(ctx.app, ctx.tenantA.id, 'POST', '/subscriptions/tick', {})]);
+    expect(first.map(r => r.status)).toEqual([200, 200]);
+    const receipts = await ctx.db.selectFrom('billing_subscription_periods').selectAll().where('tenant_id', '=', ctx.tenantA.id).execute();
+    expect(receipts).toHaveLength(1);
+    const invoices = await ctx.db.selectFrom('billing_invoices').selectAll().where('tenant_id', '=', ctx.tenantA.id).execute();
+    expect(invoices).toHaveLength(1); expect(receipts[0].invoice_id).toBe(invoices[0].id);
+    await ctx.db.updateTable('billing_subscriptions').set({ next_invoice_at: sub.next_invoice_at }).where('tenant_id', '=', ctx.tenantA.id).where('id', '=', sub.id).execute();
+    expect((await api(ctx.app, ctx.tenantA.id, 'POST', '/subscriptions/tick', {})).status).toBe(200);
+    expect(await ctx.db.selectFrom('billing_invoices').selectAll().where('tenant_id', '=', ctx.tenantA.id).execute()).toHaveLength(1);
+  });
   it('creates an active subscription and emits billing.subscription.created', async () => {
     const ctx = await setupBilling();
     const created: any[] = [];

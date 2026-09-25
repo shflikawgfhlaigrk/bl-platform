@@ -17,15 +17,19 @@ import {
   addTender,
   advanceFulfillment,
   buildProviderRegistry,
+  cancelPaymentAttempt,
   cancelOrder,
   createCheckoutSession,
   createFulfillment,
   createOrder,
+  createPaymentAttempt,
   createRefund,
   deleteOrder,
   getOrder,
+  getPaymentAttempt,
   listFulfillments,
   listOrders,
+  listPaymentAttempts,
   listRefunds,
   listTenders,
   listWebhookEvents,
@@ -56,28 +60,39 @@ const createOrderSchema = z.object({
   channel: z.enum(['pos', 'storefront', 'manual', 'phone', 'invoice', 'show']),
   customerId: z.string().min(1).optional(),
   showId: z.string().min(1).optional(),
+  registerId: z.string().min(1).optional(),
+  deviceId: z.string().min(1).optional(),
+  cashierId: z.string().min(1).optional(),
+  cashSessionId: z.string().min(1).optional(),
   source: z.enum(['mags', 'square']).optional(),
   sourceOrderId: z.string().min(1).optional(),
   lines: z.array(lineSchema).optional(),
   discountBps: bpsSchema.optional(),
   discountFixedCents: centsSchema.optional(),
   taxBps: bpsSchema.optional(),
+  tipCents: centsSchema.optional(),
   note: z.string().optional(),
 });
 
 const updateOrderSchema = z.object({
   customerId: z.string().min(1).nullable().optional(),
   showId: z.string().min(1).nullable().optional(),
+  registerId: z.string().min(1).nullable().optional(),
+  deviceId: z.string().min(1).nullable().optional(),
+  cashierId: z.string().min(1).nullable().optional(),
+  cashSessionId: z.string().min(1).nullable().optional(),
   note: z.string().nullable().optional(),
   discountBps: bpsSchema.nullable().optional(),
   discountFixedCents: centsSchema.nullable().optional(),
   taxBps: bpsSchema.nullable().optional(),
+  tipCents: centsSchema.optional(),
   lines: z.array(lineSchema).optional(),
 });
 
 const tenderSchema = z.object({
   kind: z.enum(['card', 'cash', 'external', 'gift_card', 'store_credit', 'provider']),
   amountCents: z.number().int().positive(),
+  cashReceivedCents: centsSchema.optional(),
   idempotencyKey: z.string().min(1),
   provider: z.string().min(1).optional(),
   providerRef: z.string().min(1).optional(),
@@ -90,10 +105,22 @@ const paySchema = z.object({
 const checkoutSchema = z.object({
   provider: z.string().min(1),
   returnUrl: z.string().min(1).optional(),
+  idempotencyKey: z.string().min(1).optional(),
+  readerId: z.string().min(1).optional(),
+});
+
+const paymentAttemptSchema = z.object({
+  amountCents: z.number().int().positive().optional(),
+  provider: z.string().min(1),
+  idempotencyKey: z.string().min(1),
+  returnUrl: z.string().min(1).optional(),
+  readerId: z.string().min(1).optional(),
 });
 
 const refundSchema = z.object({
   tenderId: z.string().min(1),
+  idempotencyKey: z.string().min(1),
+  cashSessionId: z.string().min(1).optional(),
   amountCents: z.number().int().positive(),
   reason: z.string().optional(),
   lines: z
@@ -248,16 +275,67 @@ export function ordersRouter(
       c.req.param('id'),
       body.provider,
       body.returnUrl,
+      { idempotencyKey: body.idempotencyKey, readerId: body.readerId },
     );
-    return c.json({ data: { session: result.session, redirectUrl: result.redirectUrl } }, 201);
+    return c.json({ data: result }, result.created ? 201 : 200);
+  });
+
+  /* ---------------- payment attempts ---------------- */
+
+  app.post('/orders/:id/payment-attempts', async (c) => {
+    const body = paymentAttemptSchema.parse(await c.req.json());
+    const result = await createPaymentAttempt(
+      ctx,
+      providers,
+      c.get('tenantId'),
+      actorOf(c),
+      c.req.param('id'),
+      body,
+    );
+    return c.json({ data: result }, result.created ? 201 : 200);
+  });
+
+  app.get('/orders/:id/payment-attempts', async (c) => {
+    const data = await listPaymentAttempts(deps.db, c.get('tenantId'), c.req.param('id'));
+    return c.json({ data });
+  });
+
+  app.get('/payment-attempts/:id', async (c) => {
+    const data = await getPaymentAttempt(deps.db, c.get('tenantId'), c.req.param('id'));
+    if (!data) throw ApiError.notFound(`payment attempt not found: ${c.req.param('id')}`);
+    return c.json({ data });
+  });
+
+  app.post('/payment-attempts/:id/cancel', async (c) => {
+    const data = await cancelPaymentAttempt(
+      ctx,
+      providers,
+      c.get('tenantId'),
+      actorOf(c),
+      c.req.param('id'),
+    );
+    return c.json({ data });
   });
 
   /* ---------------- refunds ---------------- */
 
   app.post('/orders/:id/refunds', async (c) => {
     const body = refundSchema.parse(await c.req.json());
-    const result = await createRefund(ctx, c.get('tenantId'), actorOf(c), c.req.param('id'), body);
-    return c.json({ data: { refund: result.refund, lines: result.lines, order: result.order } }, 201);
+    const result = await createRefund(
+      ctx,
+      c.get('tenantId'),
+      actorOf(c),
+      c.req.param('id'),
+      body,
+      providers,
+    );
+    return c.json(
+      {
+        data: { refund: result.refund, lines: result.lines, order: result.order },
+        created: result.created,
+      },
+      result.refund.status === 'pending' ? 202 : result.created ? 201 : 200,
+    );
   });
 
   app.get('/orders/:id/refunds', async (c) => {

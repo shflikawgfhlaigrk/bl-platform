@@ -107,8 +107,9 @@ describe('conversations & messages over HTTP', () => {
     expect(reply.status).toBe(201);
     expect(((await reply.json()) as any).data).toMatchObject({
       direction: 'out',
-      status: 'sent',
+      status: 'failed',
       to_address: 'pat@a.test',
+      failed_reason: 'No email provider is configured.',
     });
 
     const assign = await app.request(

@@ -10,7 +10,7 @@
  *   service-enforced here.
  */
 import { Hono } from 'hono';
-import type { MiddlewareHandler } from 'hono';
+import type { Context, MiddlewareHandler } from 'hono';
 import { z } from 'zod';
 import {
   ApiError,
@@ -24,7 +24,6 @@ import {
 } from '@blacklabel/core';
 import type { EmployeeRole, PortalEmployeeDatabase } from './schema';
 import {
-  addJobPhoto,
   addWorkLog,
   authenticateEmployeeToken,
   clockIn,
@@ -170,7 +169,6 @@ const clockInSchema = z.object({ shiftId: z.string().optional() });
 
 const checkSchema = z.object({ checked: z.boolean() });
 
-const photoSchema = z.object({ fileId: z.string().min(1), caption: z.string().optional() });
 
 async function jsonBody(c: { req: { json: () => Promise<unknown> } }): Promise<unknown> {
   return c.req.json().catch(() => ({}));
@@ -186,13 +184,13 @@ export function portalEmployeeRouter(deps: ModuleDeps<PortalEmployeeDatabase>): 
   app.onError(errorHandler);
   app.use('*', tenantMiddleware(asCoreDb(db)));
 
-  const BACK_OFFICE_ACTOR = 'system';
+  const backOfficeActor = (c: Context): string => c.get('actingUserId') ?? 'system';
 
   /* ---------------- back-office: employees ---------------- */
 
   app.post('/employees', async (c) => {
     const input = createEmployeeSchema.parse(await jsonBody(c));
-    const employee = await createEmployee(db, events, c.get('tenantId'), BACK_OFFICE_ACTOR, input);
+    const employee = await createEmployee(db, events, c.get('tenantId'), backOfficeActor(c), input);
     return c.json({ data: employee }, 201);
   });
 
@@ -214,7 +212,7 @@ export function portalEmployeeRouter(deps: ModuleDeps<PortalEmployeeDatabase>): 
     const employee = await updateEmployee(
       db,
       c.get('tenantId'),
-      BACK_OFFICE_ACTOR,
+      backOfficeActor(c),
       c.req.param('employeeId'),
       patch,
     );
@@ -222,7 +220,7 @@ export function portalEmployeeRouter(deps: ModuleDeps<PortalEmployeeDatabase>): 
   });
 
   app.delete('/employees/:employeeId', async (c) => {
-    await deleteEmployee(db, c.get('tenantId'), BACK_OFFICE_ACTOR, c.req.param('employeeId'));
+    await deleteEmployee(db, c.get('tenantId'), backOfficeActor(c), c.req.param('employeeId'));
     return c.json({ data: { deleted: true } });
   });
 
@@ -233,7 +231,7 @@ export function portalEmployeeRouter(deps: ModuleDeps<PortalEmployeeDatabase>): 
     const token = await issueEmployeeToken(
       db,
       c.get('tenantId'),
-      BACK_OFFICE_ACTOR,
+      backOfficeActor(c),
       c.req.param('employeeId'),
       input,
     );
@@ -241,7 +239,7 @@ export function portalEmployeeRouter(deps: ModuleDeps<PortalEmployeeDatabase>): 
   });
 
   app.delete('/tokens/:tokenId', async (c) => {
-    await revokeEmployeeToken(db, c.get('tenantId'), BACK_OFFICE_ACTOR, c.req.param('tokenId'));
+    await revokeEmployeeToken(db, c.get('tenantId'), backOfficeActor(c), c.req.param('tokenId'));
     return c.json({ data: { revoked: true } });
   });
 
@@ -249,7 +247,7 @@ export function portalEmployeeRouter(deps: ModuleDeps<PortalEmployeeDatabase>): 
 
   app.post('/assignments', async (c) => {
     const input = createAssignmentSchema.parse(await jsonBody(c));
-    const assignment = await createAssignment(db, events, c.get('tenantId'), BACK_OFFICE_ACTOR, input);
+    const assignment = await createAssignment(db, events, c.get('tenantId'), backOfficeActor(c), input);
     return c.json({ data: assignment }, 201);
   });
 
@@ -285,7 +283,7 @@ export function portalEmployeeRouter(deps: ModuleDeps<PortalEmployeeDatabase>): 
 
   app.post('/shifts', async (c) => {
     const input = createShiftSchema.parse(await jsonBody(c));
-    const shift = await createShift(db, c.get('tenantId'), BACK_OFFICE_ACTOR, input);
+    const shift = await createShift(db, c.get('tenantId'), backOfficeActor(c), input);
     return c.json({ data: shift }, 201);
   });
 
@@ -301,7 +299,7 @@ export function portalEmployeeRouter(deps: ModuleDeps<PortalEmployeeDatabase>): 
 
   app.post('/checklist-templates', async (c) => {
     const input = createTemplateSchema.parse(await jsonBody(c));
-    const template = await createChecklistTemplate(db, c.get('tenantId'), BACK_OFFICE_ACTOR, input);
+    const template = await createChecklistTemplate(db, c.get('tenantId'), backOfficeActor(c), input);
     return c.json({ data: template }, 201);
   });
 
@@ -315,7 +313,7 @@ export function portalEmployeeRouter(deps: ModuleDeps<PortalEmployeeDatabase>): 
     const checklist = await instantiateChecklist(
       db,
       c.get('tenantId'),
-      BACK_OFFICE_ACTOR,
+      backOfficeActor(c),
       c.req.param('assignmentId'),
       input,
     );
@@ -435,9 +433,11 @@ export function portalEmployeeRouter(deps: ModuleDeps<PortalEmployeeDatabase>): 
   });
 
   portal.post('/assignments/:assignmentId/photos', async (c) => {
-    const input = photoSchema.parse(await jsonBody(c));
-    const photo = await addJobPhoto(db, c.get('tenantId'), c.get('employee'), c.req.param('assignmentId'), input);
-    return c.json({ data: photo }, 201);
+    await getAssignmentForActor(db, c.get('tenantId'), c.get('employee'), c.req.param('assignmentId'));
+    // A caller-supplied vault ID is not authority to share that file. The
+    // authenticated business/team photo endpoint creates a fresh upload and
+    // its trusted vault link before recording the job-photo relation.
+    throw ApiError.badRequest('Upload a new photo to this assignment. Existing file IDs cannot be attached.');
   });
 
   portal.get('/assignments/:assignmentId/photos', async (c) => {
@@ -456,7 +456,7 @@ export function portalEmployeeRouter(deps: ModuleDeps<PortalEmployeeDatabase>): 
       await getEmployee(db, c.get('tenantId'), requested); // 404 if absent (tenant-scoped)
       employeeId = requested;
     }
-    const schedule = await getDailySchedule(db, c.get('tenantId'), employeeId, date);
+    const schedule = await getDailySchedule(db, c.get('tenantId'), employeeId, date, c.req.query('timezone') ?? 'UTC');
     return c.json({ data: schedule });
   });
 

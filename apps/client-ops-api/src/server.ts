@@ -11,6 +11,7 @@ import {
 } from '@blacklabel/client-ops';
 import { asCoreDb, coreMigrations, createTenant, EventBus } from '@blacklabel/core';
 import { createDb, runMigrations } from '@blacklabel/db';
+import { workflowsMigrations, type WorkflowsDatabase } from '@blacklabel/workflows';
 import { createClientOpsHttpApp, withBearerAuth, withTenantGuard } from './app';
 import { seedClientOpsProductStarter } from './demo';
 
@@ -37,8 +38,8 @@ const uiDir = path.resolve(process.env.CLIENT_OPS_UI_DIR ?? defaultUiDir);
 mkdirSync(storageDir, { recursive: true });
 if (!existsSync(uiDir)) throw new Error(`Client Operations UI not found: ${uiDir}`);
 
-const db = createDb<ClientOpsDatabase>(dbPath);
-await runMigrations(db, [...coreMigrations, ...clientOpsMigrations]);
+const db = createDb<ClientOpsDatabase & WorkflowsDatabase>(dbPath);
+await runMigrations(db, [...coreMigrations, ...clientOpsMigrations, ...workflowsMigrations]);
 let tenant = await asCoreDb(db).selectFrom('tenants').selectAll()
   .where('name', '=', tenantName).orderBy('created_at').orderBy('id').executeTakeFirst();
 tenant ??= await createTenant(asCoreDb(db), { name: tenantName });
@@ -54,7 +55,7 @@ if (demoMode) await seedClientOpsProductStarter(db, events, tenant.id);
 
 // Real own-infra execution adapters (Workflow OS, HQ, Data Operations, Sales
 // Operator). Capabilities without a connected adapter stay honest: 501 on invoke.
-const registry = registerProductionFoundations();
+const registry = registerProductionFoundations(undefined, { workflow: { db, events } });
 
 const api = createClientOpsHttpApp({
   db,

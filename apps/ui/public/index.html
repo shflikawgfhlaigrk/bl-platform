@@ -3,13 +3,14 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <meta name="theme-color" content="#1f6f54" />
-    <meta name="description" content="Mags Commerce OS — your whole business on this computer." />
+    <meta name="theme-color" content="#181845" />
+    <meta name="description" content="Bar One — Point of sale for ONE Club Gulf Shores." />
     <link rel="manifest" href="./manifest.webmanifest" />
     <link rel="icon" href="./icons/icon.svg" />
-    <link rel="apple-touch-icon" href="./icons/icon.svg" />
+    <link rel="apple-touch-icon" href="./brand/one-club-logo.png" />
+    <meta name="apple-mobile-web-app-title" content="Bar One" />
     <link rel="stylesheet" href="./app.css" />
-    <title>Mags Commerce OS</title>
+    <title>Bar One</title>
   </head>
   <body>
     <a class="skip-link" href="#main">Skip to main content</a>
@@ -27,8 +28,10 @@
           <span aria-hidden="true">☰</span>
         </button>
         <div class="brand">
-          <span class="brand-mark" aria-hidden="true">🐴</span>
-          <span class="brand-name" id="tenant-name">Mags Commerce OS</span>
+          <img class="club-crest" src="./brand/one-club-logo.png" alt="Bar One crest" width="64" height="64" />
+          <span class="club-wordmark"><strong>BAR ONE</strong><span>GULF SHORES</span></span>
+          <span class="brand-divider" aria-hidden="true"></span>
+          <span class="brand-product">Point of sale</span>
         </div>
         <div class="header-meta">
           <span id="data-as-of" class="data-as-of" title="The date of the newest data loaded">Data as of —</span>
@@ -42,7 +45,15 @@
             <span class="sync-dot" aria-hidden="true"></span>
             <span id="sync-text">Synced</span>
           </button>
-          <span id="current-user" class="current-user" title="Signed-in user">Owner</span>
+          <button
+            id="current-user"
+            class="current-user"
+            type="button"
+            title="Signed-in register operator"
+            hidden
+          >
+            Sign in
+          </button>
         </div>
       </header>
 
@@ -50,6 +61,8 @@
       <nav id="app-nav" class="app-nav" aria-label="Sections">
         <ul id="nav-list" class="nav-list"><!-- populated by app.js --></ul>
         <div class="nav-footer">
+          <span class="nav-signature">BAR ONE</span>
+          <span class="nav-account" id="tenant-name">Point of sale</span>
           <span class="nav-mode" id="offline-badge" hidden>● Offline — changes are being saved on this device</span>
         </div>
       </nav>
@@ -57,7 +70,7 @@
       <!-- Main content -->
       <main id="main" class="app-main" tabindex="-1">
         <div id="view-root" class="view-root" aria-live="polite">
-          <div class="loading">Loading…</div>
+          <div class="loading">Preparing your register…</div>
         </div>
       </main>
 
@@ -68,7 +81,7 @@
     </div>
 
     <noscript>
-      <p style="padding:1rem">Mags Commerce OS needs JavaScript enabled to run. It stays entirely on this computer.</p>
+      <p style="padding:1rem">Bar One needs JavaScript enabled to run. It stays entirely on this computer.</p>
     </noscript>
 
     <script type="module" src="./js/app.js"></script>

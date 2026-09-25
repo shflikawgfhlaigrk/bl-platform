@@ -1,0 +1,495 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		09DA1EA7B66AF8DF75010DB2 /* LocalRegisterStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 249FA5B985180FC1928668E5 /* LocalRegisterStore.swift */; };
+		0A5BF1F07412CF1EA537BDF4 /* ReceiptRasterizerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D2F435E5801706F4C2F784A /* ReceiptRasterizerTests.swift */; };
+		0EBA8721F77C99AC4EBA7952 /* PracticeRegisterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2CBE9A5DDE3DEF2FD3CFCE85 /* PracticeRegisterTests.swift */; };
+		1C57B2DA545893134BAA240C /* PrintJournal.swift in Sources */ = {isa = PBXBuildFile; fileRef = 23A8B8FFDDF2CC889C9BE1D4 /* PrintJournal.swift */; };
+		2E7C2D4A11CBD752C4D472A7 /* OnDeviceRegisterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE4DB778241E90D47FBC1313 /* OnDeviceRegisterTests.swift */; };
+		2EB6F2F7E2E0639ACFF05779 /* PrintJournal.swift in Sources */ = {isa = PBXBuildFile; fileRef = 23A8B8FFDDF2CC889C9BE1D4 /* PrintJournal.swift */; };
+		3DB112D6316B29E5471F6CB3 /* StarPrinterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EAC2E579981B0759D7288AAE /* StarPrinterTests.swift */; };
+		46F0E0DB56D66416A265F543 /* OneClubPOSApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 31C46F633909AB9DE0888420 /* OneClubPOSApp.swift */; };
+		6A93CE25DF80013ADDFC2199 /* StarReceiptPrinter.swift in Sources */ = {isa = PBXBuildFile; fileRef = E0382B8AB8AB174FB604409F /* StarReceiptPrinter.swift */; };
+		7D7E1D8B27F108E01749FED7 /* StarIO10 in Frameworks */ = {isa = PBXBuildFile; productRef = 6D7E2E3DD31FFDDCEBC16409 /* StarIO10 */; };
+		9658C3612B2678FD3D535AEB /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 2DE13246FB42648656CCF8AA /* Assets.xcassets */; };
+		ADA7C26BD8B4DA56FB763787 /* HardwareIdentificationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D77087A7C7162F8115BE120 /* HardwareIdentificationTests.swift */; };
+		B57FCBE786E75F60B06B483C /* PrintJournalTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A90CB9CC677B776E38A647C /* PrintJournalTests.swift */; };
+		B7D48CFDCD3BD49D3494E64C /* ReceiptRasterizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6CD0C0541E8BAA780B4D5539 /* ReceiptRasterizer.swift */; };
+		C65A910D6D3781EBFDB5F385 /* ReceiptRasterizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6CD0C0541E8BAA780B4D5539 /* ReceiptRasterizer.swift */; };
+		F1C35FA04D13376F38E0D8F0 /* Register in Resources */ = {isa = PBXBuildFile; fileRef = 2227DA58B40D194CC82148D0 /* Register */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		CA452F8AB69F064979974B19 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 970B1E0AADD0A97BE709452A /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 4A9D78D7156E7155F76D42D1;
+			remoteInfo = OneClubPOS;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		2227DA58B40D194CC82148D0 /* Register */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Register; path = Resources/Register; sourceTree = SOURCE_ROOT; };
+		23A8B8FFDDF2CC889C9BE1D4 /* PrintJournal.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrintJournal.swift; sourceTree = "<group>"; };
+		249FA5B985180FC1928668E5 /* LocalRegisterStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalRegisterStore.swift; sourceTree = "<group>"; };
+		2CBE9A5DDE3DEF2FD3CFCE85 /* PracticeRegisterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PracticeRegisterTests.swift; sourceTree = "<group>"; };
+		2DE13246FB42648656CCF8AA /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		31C46F633909AB9DE0888420 /* OneClubPOSApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OneClubPOSApp.swift; sourceTree = "<group>"; };
+		3A90CB9CC677B776E38A647C /* PrintJournalTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrintJournalTests.swift; sourceTree = "<group>"; };
+		5D77087A7C7162F8115BE120 /* HardwareIdentificationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HardwareIdentificationTests.swift; sourceTree = "<group>"; };
+		6CD0C0541E8BAA780B4D5539 /* ReceiptRasterizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReceiptRasterizer.swift; sourceTree = "<group>"; };
+		7D2F435E5801706F4C2F784A /* ReceiptRasterizerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReceiptRasterizerTests.swift; sourceTree = "<group>"; };
+		83BFBE0A78BB55A81E579EB8 /* OneClubPOS.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = OneClubPOS.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A75B9888087F5ECDAEFC6DA1 /* OneClubPOSUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = OneClubPOSUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		CE4DB778241E90D47FBC1313 /* OnDeviceRegisterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnDeviceRegisterTests.swift; sourceTree = "<group>"; };
+		E0382B8AB8AB174FB604409F /* StarReceiptPrinter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StarReceiptPrinter.swift; sourceTree = "<group>"; };
+		EAC2E579981B0759D7288AAE /* StarPrinterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StarPrinterTests.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		2E1BF4D80D9303147980E9D1 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				7D7E1D8B27F108E01749FED7 /* StarIO10 in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		5FDA6D8273AFC4280C821066 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				83BFBE0A78BB55A81E579EB8 /* OneClubPOS.app */,
+				A75B9888087F5ECDAEFC6DA1 /* OneClubPOSUITests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		B5EA69A9A335F256AFF0240C = {
+			isa = PBXGroup;
+			children = (
+				2DE13246FB42648656CCF8AA /* Assets.xcassets */,
+				2227DA58B40D194CC82148D0 /* Register */,
+				B930DEC8A1BEB7A2CAA7EB7A /* Sources */,
+				EFFC4159504C9ADA6E5B5E1C /* UITests */,
+				5FDA6D8273AFC4280C821066 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		B930DEC8A1BEB7A2CAA7EB7A /* Sources */ = {
+			isa = PBXGroup;
+			children = (
+				249FA5B985180FC1928668E5 /* LocalRegisterStore.swift */,
+				31C46F633909AB9DE0888420 /* OneClubPOSApp.swift */,
+				23A8B8FFDDF2CC889C9BE1D4 /* PrintJournal.swift */,
+				6CD0C0541E8BAA780B4D5539 /* ReceiptRasterizer.swift */,
+				E0382B8AB8AB174FB604409F /* StarReceiptPrinter.swift */,
+			);
+			path = Sources;
+			sourceTree = "<group>";
+		};
+		EFFC4159504C9ADA6E5B5E1C /* UITests */ = {
+			isa = PBXGroup;
+			children = (
+				5D77087A7C7162F8115BE120 /* HardwareIdentificationTests.swift */,
+				CE4DB778241E90D47FBC1313 /* OnDeviceRegisterTests.swift */,
+				2CBE9A5DDE3DEF2FD3CFCE85 /* PracticeRegisterTests.swift */,
+				3A90CB9CC677B776E38A647C /* PrintJournalTests.swift */,
+				7D2F435E5801706F4C2F784A /* ReceiptRasterizerTests.swift */,
+				EAC2E579981B0759D7288AAE /* StarPrinterTests.swift */,
+			);
+			path = UITests;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		299BB58FE31BA3EDC0D4C3BE /* OneClubPOSUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 438F02A25388D8735AE11425 /* Build configuration list for PBXNativeTarget "OneClubPOSUITests" */;
+			buildPhases = (
+				9D1F9FC7A16E0671A649E65C /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				2785B039363D7B7F5858014E /* PBXTargetDependency */,
+			);
+			name = OneClubPOSUITests;
+			packageProductDependencies = (
+			);
+			productName = OneClubPOSUITests;
+			productReference = A75B9888087F5ECDAEFC6DA1 /* OneClubPOSUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+		4A9D78D7156E7155F76D42D1 /* OneClubPOS */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A9E6B0DEF9E57CB60D68D3B3 /* Build configuration list for PBXNativeTarget "OneClubPOS" */;
+			buildPhases = (
+				8814EEA204CE2A1AB85CD1AA /* Sources */,
+				B454B47CEFA810F05C71D8B4 /* Resources */,
+				2E1BF4D80D9303147980E9D1 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = OneClubPOS;
+			packageProductDependencies = (
+				6D7E2E3DD31FFDDCEBC16409 /* StarIO10 */,
+			);
+			productName = OneClubPOS;
+			productReference = 83BFBE0A78BB55A81E579EB8 /* OneClubPOS.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		970B1E0AADD0A97BE709452A /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					299BB58FE31BA3EDC0D4C3BE = {
+						ProvisioningStyle = Automatic;
+						TestTargetID = 4A9D78D7156E7155F76D42D1;
+					};
+					4A9D78D7156E7155F76D42D1 = {
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = ED489373DF5F2D146251D882 /* Build configuration list for PBXProject "OneClubPOS" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = B5EA69A9A335F256AFF0240C;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				A75CDA40783462331159618C /* XCRemoteSwiftPackageReference "StarXpand-SDK-iOS" */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 5FDA6D8273AFC4280C821066 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				299BB58FE31BA3EDC0D4C3BE /* OneClubPOSUITests */,
+				4A9D78D7156E7155F76D42D1 /* OneClubPOS */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		B454B47CEFA810F05C71D8B4 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				9658C3612B2678FD3D535AEB /* Assets.xcassets in Resources */,
+				F1C35FA04D13376F38E0D8F0 /* Register in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		8814EEA204CE2A1AB85CD1AA /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				09DA1EA7B66AF8DF75010DB2 /* LocalRegisterStore.swift in Sources */,
+				46F0E0DB56D66416A265F543 /* OneClubPOSApp.swift in Sources */,
+				2EB6F2F7E2E0639ACFF05779 /* PrintJournal.swift in Sources */,
+				C65A910D6D3781EBFDB5F385 /* ReceiptRasterizer.swift in Sources */,
+				6A93CE25DF80013ADDFC2199 /* StarReceiptPrinter.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		9D1F9FC7A16E0671A649E65C /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				ADA7C26BD8B4DA56FB763787 /* HardwareIdentificationTests.swift in Sources */,
+				2E7C2D4A11CBD752C4D472A7 /* OnDeviceRegisterTests.swift in Sources */,
+				0EBA8721F77C99AC4EBA7952 /* PracticeRegisterTests.swift in Sources */,
+				1C57B2DA545893134BAA240C /* PrintJournal.swift in Sources */,
+				B57FCBE786E75F60B06B483C /* PrintJournalTests.swift in Sources */,
+				B7D48CFDCD3BD49D3494E64C /* ReceiptRasterizer.swift in Sources */,
+				0A5BF1F07412CF1EA537BDF4 /* ReceiptRasterizerTests.swift in Sources */,
+				3DB112D6316B29E5471F6CB3 /* StarPrinterTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		2785B039363D7B7F5858014E /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 4A9D78D7156E7155F76D42D1 /* OneClubPOS */;
+			targetProxy = CA452F8AB69F064979974B19 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		089D2F18177630CC1B137337 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				INFOPLIST_FILE = Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.blacklabel.oneclub.pos;
+				SDKROOT = iphoneos;
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		15FC02067816B846FC8C52C8 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.blacklabel.oneclub.pos.uitests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = OneClubPOS;
+			};
+			name = Debug;
+		};
+		80FB51CBA8C5F9B3A1480CA2 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 12;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 1.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 2;
+			};
+			name = Release;
+		};
+		8C98D659920D682DBFFDD5E5 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.blacklabel.oneclub.pos.uitests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = OneClubPOS;
+			};
+			name = Release;
+		};
+		C198A85C25A117E4636937C2 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				INFOPLIST_FILE = Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.blacklabel.oneclub.pos;
+				SDKROOT = iphoneos;
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		C98984CD9DCA9F40572FC790 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 12;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 1.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 2;
+			};
+			name = Debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		438F02A25388D8735AE11425 /* Build configuration list for PBXNativeTarget "OneClubPOSUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				15FC02067816B846FC8C52C8 /* Debug */,
+				8C98D659920D682DBFFDD5E5 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		A9E6B0DEF9E57CB60D68D3B3 /* Build configuration list for PBXNativeTarget "OneClubPOS" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				089D2F18177630CC1B137337 /* Debug */,
+				C198A85C25A117E4636937C2 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		ED489373DF5F2D146251D882 /* Build configuration list for PBXProject "OneClubPOS" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				C98984CD9DCA9F40572FC790 /* Debug */,
+				80FB51CBA8C5F9B3A1480CA2 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		A75CDA40783462331159618C /* XCRemoteSwiftPackageReference "StarXpand-SDK-iOS" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/star-micronics/StarXpand-SDK-iOS";
+			requirement = {
+				kind = exactVersion;
+				version = 2.13.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		6D7E2E3DD31FFDDCEBC16409 /* StarIO10 */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A75CDA40783462331159618C /* XCRemoteSwiftPackageReference "StarXpand-SDK-iOS" */;
+			productName = StarIO10;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = 970B1E0AADD0A97BE709452A /* Project object */;
+}

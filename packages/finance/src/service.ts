@@ -11,6 +11,9 @@ import {
 } from '@blacklabel/core';
 import type {
   FinanceCashAdjustmentRow,
+  FinanceCashExpectedMode,
+  FinanceCashMovementKind,
+  FinanceCashMovementRow,
   FinanceCashSessionRow,
   FinanceCostMethod,
   FinanceDatabase,
@@ -736,9 +739,49 @@ export async function payoutReconciliationSummary(
 export interface OpenCashSessionInput {
   locationRef?: string | null;
   showRef?: string | null;
+  drawerRef?: string | null;
+  registerRef?: string | null;
+  /** Defaults to ledger when a drawer/location/register scope is provided. */
+  expectedMode?: FinanceCashExpectedMode;
   openedBy: string;
   openingFloatCents: number;
   note?: string | null;
+}
+
+const CASH_MOVEMENT_KINDS: readonly FinanceCashMovementKind[] = [
+  'cash_sale',
+  'cash_refund',
+  'paid_in',
+  'paid_out',
+  'drop',
+];
+
+function optionalRef(value: string | null | undefined, label: string): string | null {
+  if (value == null) return null;
+  const ref = value.trim();
+  if (!ref) throw ApiError.badRequest(`${label} cannot be blank`);
+  return ref;
+}
+
+function expectedModeOf(session: FinanceCashSessionRow): FinanceCashExpectedMode {
+  return session.expected_mode ?? 'posted';
+}
+
+function openScopeKey(
+  drawerRef: string | null,
+  locationRef: string | null,
+  registerRef: string | null,
+): string | null {
+  if (drawerRef) return `drawer:${drawerRef}`;
+  if (locationRef) return `location:${locationRef}`;
+  if (registerRef) return `register:${registerRef}`;
+  return null;
+}
+
+function isUniqueConstraintError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const message = error.message.toLowerCase();
+  return message.includes('unique') || message.includes('duplicate key');
 }
 
 export async function openCashSession(
@@ -748,33 +791,85 @@ export async function openCashSession(
   input: OpenCashSessionInput,
 ): Promise<FinanceCashSessionRow> {
   assertIntCents(input.openingFloatCents, 'openingFloatCents');
-  if (!input.openedBy.trim()) throw ApiError.badRequest('openedBy is required');
+  if (input.openingFloatCents < 0) throw ApiError.badRequest('openingFloatCents cannot be negative');
+  const openedBy = input.openedBy.trim();
+  if (!openedBy) throw ApiError.badRequest('openedBy is required');
+  const locationRef = optionalRef(input.locationRef, 'locationRef');
+  const showRef = optionalRef(input.showRef, 'showRef');
+  const drawerRef = optionalRef(input.drawerRef, 'drawerRef');
+  const registerRef = optionalRef(input.registerRef, 'registerRef');
+  const scopeKey = openScopeKey(drawerRef, locationRef, registerRef);
+  const expectedMode = input.expectedMode ?? (scopeKey ? 'ledger' : 'posted');
+  if (expectedMode === 'ledger' && !scopeKey) {
+    throw ApiError.badRequest('ledger-mode cash sessions require a drawerRef, locationRef, or registerRef');
+  }
   const openedAt = nowIso();
   const row: FinanceCashSessionRow = {
     id: id(),
     tenant_id: tenantId,
-    location_ref: input.locationRef ?? null,
-    show_ref: input.showRef ?? null,
-    opened_by: input.openedBy,
+    location_ref: locationRef,
+    show_ref: showRef,
+    drawer_ref: drawerRef,
+    register_ref: registerRef,
+    expected_mode: expectedMode,
+    open_scope_key: scopeKey,
+    last_activity_at: openedAt,
+    opened_by: openedBy,
     opened_at: openedAt,
     opening_float_cents: input.openingFloatCents,
     closed_by: null,
     closed_at: null,
-    expected_cents: null,
+    expected_cents: expectedMode === 'ledger' ? input.openingFloatCents : null,
     counted_cents: null,
     variance_cents: null,
     status: 'open',
     note: input.note ?? null,
     created_at: openedAt,
   };
-  await db.insertInto('finance_cash_sessions').values(row).execute();
-  await audit(asCoreDb(db), tenantId, actor, 'finance.cash_session.opened', 'finance.cash_session', row.id, {
-    openingFloatCents: row.opening_float_cents,
-  });
-  return row;
+  try {
+    await db.transaction().execute(async (trx) => {
+      if (scopeKey) {
+        const existing = await trx
+          .selectFrom('finance_cash_sessions')
+          .select(['id'])
+          .where('tenant_id', '=', tenantId)
+          .where('open_scope_key', '=', scopeKey)
+          .executeTakeFirst();
+        if (existing) {
+          throw ApiError.conflict('this drawer or location already has an open cash session', {
+            cashSessionId: existing.id,
+          });
+        }
+      }
+      await trx.insertInto('finance_cash_sessions').values(row).execute();
+      await audit(asCoreDb(trx), tenantId, actor, 'finance.cash_session.opened', 'finance.cash_session', row.id, {
+        openingFloatCents: row.opening_float_cents,
+        drawerRef,
+        locationRef,
+        registerRef,
+        expectedMode,
+      });
+    });
+    return row;
+  } catch (error) {
+    if (scopeKey && isUniqueConstraintError(error)) {
+      const existing = await db
+        .selectFrom('finance_cash_sessions')
+        .select(['id'])
+        .where('tenant_id', '=', tenantId)
+        .where('open_scope_key', '=', scopeKey)
+        .executeTakeFirst();
+      if (existing) {
+        throw ApiError.conflict('this drawer or location already has an open cash session', {
+          cashSessionId: existing.id,
+        });
+      }
+    }
+    throw error;
+  }
 }
 
-async function getOpenSession(db: Db, tenantId: string, sessionId: string): Promise<FinanceCashSessionRow> {
+async function getCashSessionRow(db: Db, tenantId: string, sessionId: string): Promise<FinanceCashSessionRow> {
   const s = await db
     .selectFrom('finance_cash_sessions')
     .selectAll()
@@ -785,7 +880,7 @@ async function getOpenSession(db: Db, tenantId: string, sessionId: string): Prom
   return s;
 }
 
-/** Post the expected drawer amount (from real tender data) onto an OPEN session. */
+/** Compatibility lane: post an expected amount onto an OPEN posted-mode session. */
 export async function postExpectedCents(
   db: Db,
   tenantId: string,
@@ -794,20 +889,403 @@ export async function postExpectedCents(
   expectedCents: number,
 ): Promise<FinanceCashSessionRow> {
   assertIntCents(expectedCents, 'expectedCents');
-  const s = await getOpenSession(db, tenantId, sessionId);
+  if (expectedCents < 0) throw ApiError.badRequest('expectedCents cannot be negative');
+  const s = await getCashSessionRow(db, tenantId, sessionId);
   if (s.status === 'closed') {
     throw ApiError.conflict('cash session is closed and immutable (use an adjustment)');
   }
-  await db
+  if (expectedModeOf(s) === 'ledger') {
+    throw ApiError.conflict('expected cash is derived from the drawer ledger for this session');
+  }
+  const activityAt = nowIso();
+  const result = await db
     .updateTable('finance_cash_sessions')
-    .set({ expected_cents: expectedCents })
+    .set({ expected_cents: expectedCents, last_activity_at: activityAt })
     .where('tenant_id', '=', tenantId)
     .where('id', '=', sessionId)
+    .where('status', '=', 'open')
     .execute();
+  if (result[0]?.numUpdatedRows === 0n) {
+    throw ApiError.conflict('cash session closed before expected cash could be posted');
+  }
   await audit(asCoreDb(db), tenantId, actor, 'finance.cash_session.expected_posted', 'finance.cash_session', sessionId, {
     expectedCents,
   });
-  return { ...s, expected_cents: expectedCents };
+  return { ...s, expected_cents: expectedCents, last_activity_at: activityAt };
+}
+
+export interface RecordCashMovementInput {
+  kind: FinanceCashMovementKind;
+  /** Required stable source/idempotency reference. */
+  sourceRef: string;
+  amountCents: number;
+  orderRef?: string | null;
+  tenderRef?: string | null;
+  note?: string | null;
+  createdBy?: string;
+  occurredAt?: string;
+}
+
+export interface RecordCashTenderInput {
+  tenderRef: string;
+  amountCents: number;
+  orderRef?: string | null;
+  createdBy?: string;
+  occurredAt?: string;
+}
+
+export interface RecordCashRefundInput {
+  refundRef: string;
+  tenderRef?: string | null;
+  amountCents: number;
+  orderRef?: string | null;
+  createdBy?: string;
+  occurredAt?: string;
+}
+
+export interface PostCashDrawerMovementInput {
+  kind: 'paid_in' | 'paid_out' | 'drop';
+  idempotencyKey: string;
+  amountCents: number;
+  /** Operational reason; required for every manual drawer movement. */
+  note: string;
+  createdBy?: string;
+  occurredAt?: string;
+}
+
+export interface CashMovementRecordResult {
+  movement: FinanceCashMovementRow;
+  created: boolean;
+}
+
+function assertMovementReplayMatches(
+  existing: FinanceCashMovementRow,
+  sessionId: string,
+  input: RecordCashMovementInput,
+  orderRef: string | null,
+  tenderRef: string | null,
+): void {
+  const mismatched =
+    existing.kind !== input.kind ||
+    existing.session_ref !== sessionId ||
+    existing.amount_cents !== input.amountCents ||
+    existing.order_ref !== orderRef ||
+    existing.tender_ref !== tenderRef ||
+    (input.occurredAt !== undefined && existing.occurred_at !== input.occurredAt);
+  if (mismatched) {
+    throw ApiError.conflict('cash movement idempotency reference was reused with different facts', {
+      cashMovementId: existing.id,
+    });
+  }
+}
+
+function cashMovementIdempotencyKey(kind: FinanceCashMovementKind, sourceRef: string): string {
+  if (kind === 'cash_sale') return `tender:${sourceRef}`;
+  if (kind === 'cash_refund') return `refund:${sourceRef}`;
+  return `manual:${sourceRef}`;
+}
+
+function cashLedgerTotals(movements: FinanceCashMovementRow[]): {
+  cashSalesCents: number;
+  cashRefundsCents: number;
+  paidInCents: number;
+  paidOutCents: number;
+  dropsCents: number;
+} {
+  let cashSalesCents = 0;
+  let cashRefundsCents = 0;
+  let paidInCents = 0;
+  let paidOutCents = 0;
+  let dropsCents = 0;
+  for (const movement of movements) {
+    if (movement.kind === 'cash_sale') cashSalesCents += movement.amount_cents;
+    else if (movement.kind === 'cash_refund') cashRefundsCents += movement.amount_cents;
+    else if (movement.kind === 'paid_in') paidInCents += movement.amount_cents;
+    else if (movement.kind === 'paid_out') paidOutCents += movement.amount_cents;
+    else dropsCents += movement.amount_cents;
+  }
+  return { cashSalesCents, cashRefundsCents, paidInCents, paidOutCents, dropsCents };
+}
+
+function calculatedExpectedCents(
+  session: FinanceCashSessionRow,
+  totals: ReturnType<typeof cashLedgerTotals>,
+): number {
+  return (
+    session.opening_float_cents +
+    totals.cashSalesCents -
+    totals.cashRefundsCents +
+    totals.paidInCents -
+    totals.paidOutCents -
+    totals.dropsCents
+  );
+}
+
+/**
+ * Append a drawer fact. Replays return the original row, including after the
+ * session closes. New facts use a guarded session update so close and movement
+ * recording cannot both win the same row lock.
+ */
+export async function recordCashMovement(
+  db: Db,
+  tenantId: string,
+  actor: string,
+  sessionId: string,
+  input: RecordCashMovementInput,
+): Promise<CashMovementRecordResult> {
+  if (!CASH_MOVEMENT_KINDS.includes(input.kind)) {
+    throw ApiError.badRequest(`invalid cash movement kind "${input.kind}"`);
+  }
+  assertIntCents(input.amountCents, 'amountCents');
+  if (input.amountCents <= 0) throw ApiError.badRequest('amountCents must be positive');
+  const sourceRef = input.sourceRef.trim();
+  if (!sourceRef) throw ApiError.badRequest('sourceRef is required');
+  const idempotencyKey = cashMovementIdempotencyKey(input.kind, sourceRef);
+  const orderRef = optionalRef(input.orderRef, 'orderRef');
+  const tenderRef = optionalRef(input.tenderRef, 'tenderRef');
+  const createdBy = (input.createdBy ?? actor).trim();
+  if (!createdBy) throw ApiError.badRequest('createdBy is required');
+  const isManual = input.kind === 'paid_in' || input.kind === 'paid_out' || input.kind === 'drop';
+  const note = input.note?.trim() || null;
+  if (isManual && !note) throw ApiError.badRequest('note is required for a manual cash movement');
+
+  const execute = async (): Promise<CashMovementRecordResult> =>
+    db.transaction().execute(async (trx) => {
+      const existing = await trx
+        .selectFrom('finance_cash_movements')
+        .selectAll()
+        .where('tenant_id', '=', tenantId)
+        .where('idempotency_key', '=', idempotencyKey)
+        .executeTakeFirst();
+      if (existing) {
+        assertMovementReplayMatches(existing, sessionId, input, orderRef, tenderRef);
+        return { movement: existing, created: false };
+      }
+
+      const activityAt = nowIso();
+      const guard = await trx
+        .updateTable('finance_cash_sessions')
+        .set({ last_activity_at: activityAt })
+        .where('tenant_id', '=', tenantId)
+        .where('id', '=', sessionId)
+        .where('status', '=', 'open')
+        .executeTakeFirst();
+      if (guard.numUpdatedRows === 0n) {
+        const session = await trx
+          .selectFrom('finance_cash_sessions')
+          .select(['status'])
+          .where('tenant_id', '=', tenantId)
+          .where('id', '=', sessionId)
+          .executeTakeFirst();
+        if (!session) throw ApiError.notFound(`cash session "${sessionId}" not found`);
+        throw ApiError.conflict('cash session is closed and immutable');
+      }
+
+      const session = await getCashSessionRow(trx, tenantId, sessionId);
+      if (expectedModeOf(session) !== 'ledger') {
+        throw ApiError.conflict('cash movements require a ledger-mode cash session');
+      }
+      const occurredAt = input.occurredAt ?? activityAt;
+      const movement: FinanceCashMovementRow = {
+        id: id(),
+        tenant_id: tenantId,
+        session_ref: sessionId,
+        kind: input.kind,
+        source_ref: sourceRef,
+        idempotency_key: idempotencyKey,
+        order_ref: orderRef,
+        tender_ref: tenderRef,
+        amount_cents: input.amountCents,
+        note,
+        created_by: createdBy,
+        occurred_at: occurredAt,
+        created_at: activityAt,
+      };
+      await trx.insertInto('finance_cash_movements').values(movement).execute();
+
+      const movements = await trx
+        .selectFrom('finance_cash_movements')
+        .selectAll()
+        .where('tenant_id', '=', tenantId)
+        .where('session_ref', '=', sessionId)
+        .orderBy('occurred_at')
+        .orderBy('id')
+        .execute();
+      const expectedCents = calculatedExpectedCents(session, cashLedgerTotals(movements));
+      if (expectedCents < 0) {
+        throw ApiError.conflict('cash movement would make expected drawer cash negative', {
+          expectedCents,
+        });
+      }
+      await trx
+        .updateTable('finance_cash_sessions')
+        .set({ expected_cents: expectedCents })
+        .where('tenant_id', '=', tenantId)
+        .where('id', '=', sessionId)
+        .execute();
+      await audit(asCoreDb(trx), tenantId, actor, 'finance.cash_movement.recorded', 'finance.cash_movement', movement.id, {
+        cashSessionId: sessionId,
+        kind: movement.kind,
+        sourceRef,
+        amountCents: movement.amount_cents,
+        expectedCents,
+      });
+      return { movement, created: true };
+    });
+
+  try {
+    return await execute();
+  } catch (error) {
+    if (!isUniqueConstraintError(error)) throw error;
+    const existing = await db
+      .selectFrom('finance_cash_movements')
+      .selectAll()
+      .where('tenant_id', '=', tenantId)
+      .where('idempotency_key', '=', idempotencyKey)
+      .executeTakeFirst();
+    if (!existing) throw error;
+    assertMovementReplayMatches(existing, sessionId, input, orderRef, tenderRef);
+    return { movement: existing, created: false };
+  }
+}
+
+/** Integration hook for a captured cash tender from the orders module. */
+export async function recordCashTender(
+  db: Db,
+  tenantId: string,
+  actor: string,
+  cashSessionId: string,
+  input: RecordCashTenderInput,
+): Promise<CashMovementRecordResult> {
+  return recordCashMovement(db, tenantId, actor, cashSessionId, {
+    kind: 'cash_sale',
+    sourceRef: input.tenderRef,
+    tenderRef: input.tenderRef,
+    amountCents: input.amountCents,
+    orderRef: input.orderRef,
+    createdBy: input.createdBy,
+    occurredAt: input.occurredAt,
+  });
+}
+
+/** Integration hook for cash physically returned for an orders refund. */
+export async function recordCashRefund(
+  db: Db,
+  tenantId: string,
+  actor: string,
+  cashSessionId: string,
+  input: RecordCashRefundInput,
+): Promise<CashMovementRecordResult> {
+  return recordCashMovement(db, tenantId, actor, cashSessionId, {
+    kind: 'cash_refund',
+    sourceRef: input.refundRef,
+    tenderRef: input.tenderRef,
+    amountCents: input.amountCents,
+    orderRef: input.orderRef,
+    createdBy: input.createdBy,
+    occurredAt: input.occurredAt,
+  });
+}
+
+export async function postCashDrawerMovement(
+  db: Db,
+  tenantId: string,
+  actor: string,
+  cashSessionId: string,
+  input: PostCashDrawerMovementInput,
+): Promise<CashMovementRecordResult> {
+  return recordCashMovement(db, tenantId, actor, cashSessionId, {
+    kind: input.kind,
+    sourceRef: input.idempotencyKey,
+    amountCents: input.amountCents,
+    note: input.note,
+    createdBy: input.createdBy,
+    occurredAt: input.occurredAt,
+  });
+}
+
+export async function listCashMovements(
+  db: Db,
+  tenantId: string,
+  cashSessionId: string,
+  page: Pagination = { limit: 50, offset: 0 },
+): Promise<FinanceCashMovementRow[]> {
+  await getCashSessionRow(db, tenantId, cashSessionId);
+  return db
+    .selectFrom('finance_cash_movements')
+    .selectAll()
+    .where('tenant_id', '=', tenantId)
+    .where('session_ref', '=', cashSessionId)
+    .orderBy('occurred_at')
+    .orderBy('id')
+    .limit(page.limit)
+    .offset(page.offset)
+    .execute();
+}
+
+export interface CashReconciliation {
+  cashSessionId: string;
+  status: FinanceCashSessionRow['status'];
+  expectedMode: FinanceCashExpectedMode;
+  openingFloatCents: number;
+  cashSalesCents: number;
+  cashRefundsCents: number;
+  paidInCents: number;
+  paidOutCents: number;
+  dropsCents: number;
+  movementCount: number;
+  calculatedExpectedCents: number;
+  storedExpectedCents: number | null;
+  effectiveExpectedCents: number | null;
+  countedCents: number | null;
+  varianceCents: number | null;
+  adjustmentCents: number;
+  adjustedVarianceCents: number | null;
+}
+
+export async function cashSessionReconciliation(
+  db: Db,
+  tenantId: string,
+  cashSessionId: string,
+): Promise<CashReconciliation> {
+  const session = await getCashSessionRow(db, tenantId, cashSessionId);
+  const movements = await db
+    .selectFrom('finance_cash_movements')
+    .selectAll()
+    .where('tenant_id', '=', tenantId)
+    .where('session_ref', '=', cashSessionId)
+    .orderBy('occurred_at')
+    .orderBy('id')
+    .execute();
+  const adjustments = await db
+    .selectFrom('finance_cash_adjustments')
+    .select(['amount_cents'])
+    .where('tenant_id', '=', tenantId)
+    .where('session_ref', '=', cashSessionId)
+    .orderBy('created_at')
+    .orderBy('id')
+    .execute();
+  const totals = cashLedgerTotals(movements);
+  const calculated = calculatedExpectedCents(session, totals);
+  const mode = expectedModeOf(session);
+  const effective = mode === 'ledger' && session.status === 'open' ? calculated : session.expected_cents;
+  const variance = session.counted_cents == null || effective == null ? null : session.counted_cents - effective;
+  const adjustmentCents = adjustments.reduce((sum, row) => sum + row.amount_cents, 0);
+  return {
+    cashSessionId,
+    status: session.status,
+    expectedMode: mode,
+    openingFloatCents: session.opening_float_cents,
+    ...totals,
+    movementCount: movements.length,
+    calculatedExpectedCents: calculated,
+    storedExpectedCents: session.expected_cents,
+    effectiveExpectedCents: effective,
+    countedCents: session.counted_cents,
+    varianceCents: variance,
+    adjustmentCents,
+    adjustedVarianceCents: variance == null ? null : variance + adjustmentCents,
+  };
 }
 
 export interface CloseCashSessionInput {
@@ -819,9 +1297,10 @@ export interface CloseCashSessionInput {
 }
 
 /**
- * Close a cash session. Requires counted_cents AND a posted expected_cents.
- * variance = counted - expected. A non-zero variance emits the internal
- * `finance.cash.variance` event. Sessions are immutable after close.
+ * Close a cash session. Ledger-mode sessions derive expected cash from the
+ * immutable movement ledger; compatibility posted-mode sessions require a
+ * posted/supplied expected amount. Variance = counted - expected. A non-zero
+ * variance emits `finance.cash.variance`. Sessions are immutable after close.
  */
 export async function closeCashSession(
   db: Db,
@@ -833,58 +1312,98 @@ export async function closeCashSession(
 ): Promise<FinanceCashSessionRow> {
   assertIntCents(input.countedCents, 'countedCents');
   if (input.expectedCents !== undefined) assertIntCents(input.expectedCents, 'expectedCents');
-  const s = await getOpenSession(db, tenantId, sessionId);
-  if (s.status === 'closed') {
-    throw ApiError.conflict('cash session is already closed (corrections = adjustments)');
+  if (input.countedCents < 0) throw ApiError.badRequest('countedCents cannot be negative');
+  if (input.expectedCents !== undefined && input.expectedCents < 0) {
+    throw ApiError.badRequest('expectedCents cannot be negative');
   }
-  const expected = input.expectedCents ?? s.expected_cents;
-  if (expected == null) {
-    throw ApiError.badRequest('expected_cents must be posted before close (no zero assumption)');
-  }
-  const variance = input.countedCents - expected;
+  const closedBy = input.closedBy.trim();
+  if (!closedBy) throw ApiError.badRequest('closedBy is required');
   const closedAt = nowIso();
-
-  await db.transaction().execute(async (trx) => {
-    await trx
+  const closed = await db.transaction().execute(async (trx) => {
+    const claim = await trx
       .updateTable('finance_cash_sessions')
       .set({
-        closed_by: input.closedBy,
-        closed_at: closedAt,
-        expected_cents: expected,
-        counted_cents: input.countedCents,
-        variance_cents: variance,
         status: 'closed',
-        note: input.note ?? s.note,
+        open_scope_key: null,
+        last_activity_at: closedAt,
       })
       .where('tenant_id', '=', tenantId)
       .where('id', '=', sessionId)
       .where('status', '=', 'open')
+      .executeTakeFirst();
+    if (claim.numUpdatedRows === 0n) {
+      const existing = await trx
+        .selectFrom('finance_cash_sessions')
+        .select(['status'])
+        .where('tenant_id', '=', tenantId)
+        .where('id', '=', sessionId)
+        .executeTakeFirst();
+      if (!existing) throw ApiError.notFound(`cash session "${sessionId}" not found`);
+      throw ApiError.conflict('cash session is already closed (corrections = adjustments)');
+    }
+
+    const session = await getCashSessionRow(trx, tenantId, sessionId);
+    const movements = await trx
+      .selectFrom('finance_cash_movements')
+      .selectAll()
+      .where('tenant_id', '=', tenantId)
+      .where('session_ref', '=', sessionId)
+      .orderBy('occurred_at')
+      .orderBy('id')
+      .execute();
+    const ledgerExpected = calculatedExpectedCents(session, cashLedgerTotals(movements));
+    const mode = expectedModeOf(session);
+    if (mode === 'ledger' && input.expectedCents !== undefined && input.expectedCents !== ledgerExpected) {
+      throw ApiError.conflict('client expectedCents does not match the server drawer ledger', {
+        suppliedExpectedCents: input.expectedCents,
+        ledgerExpectedCents: ledgerExpected,
+      });
+    }
+    const expected = mode === 'ledger' ? ledgerExpected : input.expectedCents ?? session.expected_cents;
+    if (expected == null) {
+      throw ApiError.badRequest('expected_cents must be posted before close (no zero assumption)');
+    }
+    const variance = input.countedCents - expected;
+    await trx
+      .updateTable('finance_cash_sessions')
+      .set({
+        closed_by: closedBy,
+        closed_at: closedAt,
+        expected_cents: expected,
+        counted_cents: input.countedCents,
+        variance_cents: variance,
+        note: input.note ?? session.note,
+      })
+      .where('tenant_id', '=', tenantId)
+      .where('id', '=', sessionId)
+      .where('status', '=', 'closed')
       .execute();
     await audit(asCoreDb(trx), tenantId, actor, 'finance.cash_session.closed', 'finance.cash_session', sessionId, {
       expectedCents: expected,
       countedCents: input.countedCents,
       varianceCents: variance,
+      expectedMode: mode,
     });
+    return {
+      ...session,
+      closed_by: closedBy,
+      closed_at: closedAt,
+      expected_cents: expected,
+      counted_cents: input.countedCents,
+      variance_cents: variance,
+      note: input.note ?? session.note,
+      last_activity_at: closedAt,
+    };
   });
 
-  if (variance !== 0) {
+  if (closed.variance_cents !== 0) {
     await events.emit(tenantId, 'finance.cash.variance', {
       v: 1,
       cashSessionId: sessionId,
-      varianceCents: variance,
+      varianceCents: closed.variance_cents,
     });
   }
-
-  return {
-    ...s,
-    closed_by: input.closedBy,
-    closed_at: closedAt,
-    expected_cents: expected,
-    counted_cents: input.countedCents,
-    variance_cents: variance,
-    status: 'closed',
-    note: input.note ?? s.note,
-  };
+  return closed;
 }
 
 export async function getCashSession(
@@ -892,7 +1411,7 @@ export async function getCashSession(
   tenantId: string,
   sessionId: string,
 ): Promise<FinanceCashSessionRow> {
-  return getOpenSession(db, tenantId, sessionId);
+  return getCashSessionRow(db, tenantId, sessionId);
 }
 
 export async function listCashSessions(
@@ -927,7 +1446,7 @@ export async function addCashAdjustment(
 ): Promise<FinanceCashAdjustmentRow> {
   assertIntCents(input.amountCents, 'amountCents');
   if (!input.reason.trim()) throw ApiError.badRequest('reason is required');
-  const s = await getOpenSession(db, tenantId, sessionId);
+  const s = await getCashSessionRow(db, tenantId, sessionId);
   if (s.status !== 'closed') {
     throw ApiError.badRequest('adjustments only apply to closed sessions');
   }
@@ -1440,6 +1959,7 @@ export type CsvKind =
   | 'refunds'
   | 'payouts'
   | 'cash-sessions'
+  | 'cash-movements'
   | 'tax-evidence'
   | 'item-costs';
 
@@ -1527,6 +2047,9 @@ export async function exportCashSessionsCsvRows(db: Db, tenantId: string): Promi
     cash_session_id: r.id,
     location_ref: r.location_ref ?? '',
     show_ref: r.show_ref ?? '',
+    drawer_ref: r.drawer_ref ?? '',
+    register_ref: r.register_ref ?? '',
+    expected_mode: expectedModeOf(r),
     opened_at: r.opened_at,
     closed_at: r.closed_at ?? '',
     opening_float_cents: r.opening_float_cents,
@@ -1534,6 +2057,28 @@ export async function exportCashSessionsCsvRows(db: Db, tenantId: string): Promi
     counted_cents: r.counted_cents ?? '',
     variance_cents: r.variance_cents ?? '',
     status: r.status,
+  }));
+}
+
+export async function exportCashMovementsCsvRows(db: Db, tenantId: string): Promise<Record<string, unknown>[]> {
+  const rows = await db
+    .selectFrom('finance_cash_movements')
+    .selectAll()
+    .where('tenant_id', '=', tenantId)
+    .orderBy('occurred_at')
+    .orderBy('id')
+    .execute();
+  return rows.map((r) => ({
+    cash_movement_id: r.id,
+    cash_session_id: r.session_ref,
+    kind: r.kind,
+    source_ref: r.source_ref,
+    order_ref: r.order_ref ?? '',
+    tender_ref: r.tender_ref ?? '',
+    amount_cents: r.amount_cents,
+    note: r.note ?? '',
+    created_by: r.created_by,
+    occurred_at: r.occurred_at,
   }));
 }
 
@@ -1585,6 +2130,8 @@ export async function exportCsvRows(db: Db, tenantId: string, kind: CsvKind): Pr
       return exportPayoutsCsvRows(db, tenantId);
     case 'cash-sessions':
       return exportCashSessionsCsvRows(db, tenantId);
+    case 'cash-movements':
+      return exportCashMovementsCsvRows(db, tenantId);
     case 'tax-evidence':
       return exportTaxEvidenceCsvRows(db, tenantId);
     case 'item-costs':

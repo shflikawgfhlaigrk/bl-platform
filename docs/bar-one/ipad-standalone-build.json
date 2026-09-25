@@ -1,0 +1,11 @@
+{
+  "bundle": "com.blacklabel.oneclub.pos",
+  "version": "1.0",
+  "build": "12",
+  "sha256": {
+    "OneClubPOS": "2d76790130a2b24fa8906e3cff25f704fcb55a194f5ac8016a0fa38b326df3d3",
+    "Register/runtime.js": "d166c3ed4c0fa317acd2adc5caf302b6ad9a3ca721b077fa44a4d1c05bf81280",
+    "Register/ui.js": "a09cb126ce136a9655293a5500906663cd9ec33f0aa39995beb46b2ef9bb9628",
+    "Register/app.css": "66f181a154c36af79f78bf331a06d0d81bd7f4ba59bc9c545e5dcc47e86f8edd"
+  }
+}

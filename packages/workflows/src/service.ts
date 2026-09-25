@@ -31,6 +31,7 @@ const DEFAULT_PAGE: Pagination = { limit: 50, offset: 0 };
 
 /** Platform events a workflow may be triggered by. */
 export const TRIGGER_EVENTS = [
+  'crm.job.completed',
   'crm.lead.created',
   'quoting.quote.approved',
   'scheduling.appointment.scheduled',

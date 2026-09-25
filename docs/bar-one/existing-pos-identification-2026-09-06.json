@@ -1,0 +1,42 @@
+{
+  "checkedAt": "2026-09-06T13:56:21.784993+00:00",
+  "deviceUdid": "00008120-000C085E3CE00032",
+  "installedPOS": {
+    "name": "GN Pro",
+    "vendor": "GolfNow",
+    "bundleId": "g1.golfnow.one",
+    "version": "2.48.0",
+    "build": "62",
+    "source": ".storage/bar-one-processor-identification/ipad-installed-apps.json"
+  },
+  "venueBinding": {
+    "locationLabel": "ONE Club | 37359",
+    "register": "Bar 1",
+    "environment": "Production",
+    "source": ".storage/bar-one-processor-identification/live-attachments/EF33E141-5287-4634-BD08-7CC6C8374C85.png"
+  },
+  "deviceSettings": {
+    "configuredBluetoothTerminal": "Moby 5500",
+    "source": ".storage/bar-one-processor-identification/ipad-existing-cash-register.png"
+  },
+  "paymentRelationship": {
+    "publishedProvider": "GolfNow, LLC",
+    "publishedAcquirer": "WorldPay, LLC and its designated Member Bank",
+    "sourceUrl": "https://golfnowbusiness.com/about/terms-and-conditions/#golfnow-payments-merchant-agreement",
+    "sourceExcerpt": ".storage/bar-one-processor-identification/golfnow-acquirer-excerpt.txt",
+    "accountSpecificProcessorVerified": false,
+    "accountSpecificRateVerified": false,
+    "notes": "The public GolfNow sub-merchant terms identify Worldpay. The inspected ONE Club register does not display the executed merchant agreement, statement or negotiated fee schedule."
+  },
+  "inspection": {
+    "settingsCapture": "completed with screenshots",
+    "additionalPrinterInfoAttempt": "interrupted by XCTest runner error; not a passed inspection",
+    "paymentTransactionsSubmitted": false,
+    "settingsChangesSubmitted": false
+  },
+  "filesSha256": {
+    ".storage/bar-one-processor-identification/ipad-installed-apps.json": "f42156f8c119475113f23eb341c66bb4353af426e5f982f4264c95d8f7b5e874",
+    ".storage/bar-one-processor-identification/ipad-existing-cash-register.png": "cee8156b08ba2bbcdf20d18e322b6c026393ade479a610062f983cd2e458aa51",
+    ".storage/bar-one-processor-identification/golfnow-acquirer-excerpt.txt": "d2e9a515be06682d24724cdc76e7238af55992b0b0e5dd64d01289429a168882"
+  }
+}

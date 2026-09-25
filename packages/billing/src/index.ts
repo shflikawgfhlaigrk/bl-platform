@@ -17,6 +17,7 @@
  */
 
 export const MODULE_KEY = 'billing' as const;
+export { getInvoice, listInvoices, createPaymentIntent } from './service';
 
 // Migrations
 export { billingMigrations } from './migrations';

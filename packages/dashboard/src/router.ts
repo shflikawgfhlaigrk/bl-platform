@@ -17,6 +17,7 @@ import {
   METRIC_KEYS,
   WIDGET_CATALOG,
   appointmentsSummary,
+  jobsSummary,
   campaignPerformancePlaceholder,
   collectDashboardData,
   createAlertRule,
@@ -153,6 +154,8 @@ export function dashboardRouter(deps: ModuleDeps<DashboardDatabase>): Hono<Tenan
   });
 
   /* ---- aggregation widgets (all accept ?from=&to= ISO params) ---- */
+
+  app.get('/widgets/jobs', async (c) => c.json({ data: await jobsSummary(db, c.get('tenantId'), parseDateRange(c.req.query())) }));
   app.get('/widgets/revenue', async (c) => {
     const range = parseDateRange(c.req.query());
     const summary = await revenueSummary(db, c.get('tenantId'), range);

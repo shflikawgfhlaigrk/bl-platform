@@ -1,14 +1,10 @@
 import {
   ServiceFoundationRegistry,
-  type FoundationInvocationRequest,
-  type FoundationInvocationResult,
-  type FoundationVerificationRequest,
-  type FoundationVerificationResult,
-  type ServiceFoundationAdapter,
 } from './adapters';
-import { ExecutiveOperationsHqAdapter } from './foundations/executive-operations-hq';
+import { WorkflowExecutionAdapter, type WorkflowExecutionDeps } from './foundations/workflow-execution';
+export { WorkflowExecutionAdapter } from './foundations/workflow-execution';
+import { ExecutiveOperationsHqAdapter, type ExecutiveOperationsHqConfig } from './foundations/executive-operations-hq';
 import {
-  createNationalPropertyRecordsReader,
   DataOperationsAdapter,
   type DataSourceReader,
 } from './foundations/data-operations-service';
@@ -34,43 +30,12 @@ import {
  * it runs one installed workflow action and returns an evidence handle that the
  * runner persists as the run's completion receipt.
  */
-export class WorkflowExecutionAdapter implements ServiceFoundationAdapter {
-  readonly serviceId = 'workflow-operating-system';
-  readonly capabilityId = 'client_ops.workflow.execute';
-  readonly ownedSourceIdentifier = 'BlackLabelPlatform.workflows';
-
-  readiness(): 'ready' {
-    return 'ready';
-  }
-
-  async invoke(request: FoundationInvocationRequest): Promise<FoundationInvocationResult> {
-    // Deterministic, idempotent execution of one internal workflow action.
-    const invocationId = `wf-exec-${request.runId}-${request.actionType}`;
-    const evidenceRef = `client-ops://runs/${request.runId}/actions/${request.actionType}`;
-    return {
-      invocationId,
-      status: 'completed',
-      output: {
-        installationId: request.installationId,
-        workflowTemplateId: request.workflowTemplateId,
-        actionType: request.actionType,
-        acceptedInput: request.input ?? null,
-      },
-      externalReferences: [evidenceRef],
-    };
-  }
-
-  async verify(request: FoundationVerificationRequest): Promise<FoundationVerificationResult> {
-    return {
-      verified: true,
-      evidence: { runId: request.runId, invocationId: request.invocationId },
-      checkedAt: new Date().toISOString(),
-    };
-  }
-}
-
 export interface ReadyFoundationDeps {
-  /** Override the HQ handoff-packet dir for the Executive Operations HQ adapter. */
+  /** The buyer's tenant-scoped workflow tables and event bus. Required for execution. */
+  workflow?: WorkflowExecutionDeps;
+  /** Server-validated tenant/installation mappings for HQ packet sources. */
+  hq?: ExecutiveOperationsHqConfig;
+  /** @deprecated Ignored; an unbound directory cannot authorize a tenant. */
   hqHandoffsDir?: string;
   /** Real read-only source reader for Data Operations; without it that adapter is `declared`. */
   dataReader?: DataSourceReader;
@@ -89,9 +54,9 @@ export function registerReadyFoundations(
   registry: ServiceFoundationRegistry = new ServiceFoundationRegistry(),
   deps: ReadyFoundationDeps = {},
 ): ServiceFoundationRegistry {
-  registry.register(new WorkflowExecutionAdapter());
+  registry.register(new WorkflowExecutionAdapter(deps.workflow));
   registry.register(
-    new ExecutiveOperationsHqAdapter(deps.hqHandoffsDir ? { handoffsDir: deps.hqHandoffsDir } : {}),
+    new ExecutiveOperationsHqAdapter(deps.hq),
   );
   registry.register(new DataOperationsAdapter(deps.dataReader ? { reader: deps.dataReader } : {}));
   registry.register(new SalesOperatorAdapter(deps.leadReader ? { reader: deps.leadReader } : {}));
@@ -99,12 +64,12 @@ export function registerReadyFoundations(
 }
 
 /**
- * Production wiring: ready foundations with their real own-infra readers wired
- * (Data Operations → the live `national_property_records` psql source). Register
- * the result where the client-ops runner should actually execute.
+ * Production wiring takes explicit buyer dependencies. It never attaches the
+ * owner's property database or another tenant's process-wide data by default.
  */
 export function registerProductionFoundations(
   registry: ServiceFoundationRegistry = new ServiceFoundationRegistry(),
+  deps: ReadyFoundationDeps = {},
 ): ServiceFoundationRegistry {
-  return registerReadyFoundations(registry, { dataReader: createNationalPropertyRecordsReader() });
+  return registerReadyFoundations(registry, deps);
 }

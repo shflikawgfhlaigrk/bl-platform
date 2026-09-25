@@ -1,0 +1,17 @@
+[Unit]
+Description=ONE Club single-register server
+After=network.target
+
+[Service]
+Type=simple
+User=oneclub
+WorkingDirectory=/opt/oneclub
+EnvironmentFile=/etc/oneclub/server.env
+ExecStart=/usr/bin/node --import tsx apps/api/src/bar-server.ts
+Restart=on-failure
+RestartSec=3
+UMask=0077
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

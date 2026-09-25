@@ -14,6 +14,7 @@ async function paidOrder(app: any, tenant: any) {
       headers: headers(tenant),
       body: JSON.stringify({
         channel: 'storefront',
+        cashSessionId: 'sale-session',
         lines: [
           { variationId: 'v1', locationId: 'loc1', description: 'Belt', qty: 3, unitPriceCents: 1000 },
           { variationId: 'v2', locationId: 'loc1', description: 'Pad', qty: 1, unitPriceCents: 2000 },
@@ -167,6 +168,7 @@ describe('refunds with per-line restock dispositions', () => {
   it('records dispositions per line, updates tender, transitions order, and emits returned', async () => {
     const { app, events, tenantA } = await setup();
     const returned = collect(events, 'orders.order.returned');
+    const refundCreated = collect(events, 'orders.refund.created');
     const { id, lines } = await paidOrder(app, tenantA);
     const v1 = lines.find((l: any) => l.variation_id === 'v1');
     const v2 = lines.find((l: any) => l.variation_id === 'v2');
@@ -177,9 +179,36 @@ describe('refunds with per-line restock dispositions', () => {
     const r1 = await app.request(`/orders/${id}/refunds`, {
       method: 'POST',
       headers: headers(tenantA),
-      body: JSON.stringify({ tenderId, amountCents: 1000, reason: 'changed mind', lines: [{ lineId: v1.id, qty: 1, disposition: 'restock' }] }),
+      body: JSON.stringify({ tenderId, idempotencyKey: 'refund-1', cashSessionId: 'return-session-1', amountCents: 1000, reason: 'changed mind', lines: [{ lineId: v1.id, qty: 1, disposition: 'restock' }] }),
     });
     expect(r1.status).toBe(201);
+    const r1Body = await json(r1);
+    expect(r1Body.data.refund.cash_session_id).toBe('return-session-1');
+    expect(refundCreated).toHaveLength(1);
+    expect(refundCreated[0].payload).toMatchObject({
+      cashSessionId: 'return-session-1',
+      orderId: id,
+      refundId: r1Body.data.refund.id,
+      tenderId,
+      tenderKind: 'cash',
+      amountCents: 1000,
+    });
+    const replay = await app.request(`/orders/${id}/refunds`, {
+      method: 'POST',
+      headers: headers(tenantA),
+      body: JSON.stringify({ tenderId, idempotencyKey: 'refund-1', cashSessionId: 'return-session-1', amountCents: 1000, reason: 'changed mind', lines: [{ lineId: v1.id, qty: 1, disposition: 'restock' }] }),
+    });
+    expect(replay.status).toBe(200);
+    const replayBody = await json(replay);
+    expect(replayBody.created).toBe(false);
+    expect(replayBody.data.refund.id).toBe(r1Body.data.refund.id);
+    expect(refundCreated).toHaveLength(1);
+    const conflictingReplay = await app.request(`/orders/${id}/refunds`, {
+      method: 'POST',
+      headers: headers(tenantA),
+      body: JSON.stringify({ tenderId, idempotencyKey: 'refund-1', cashSessionId: 'return-session-1', amountCents: 999, reason: 'changed mind', lines: [{ lineId: v1.id, qty: 1, disposition: 'restock' }] }),
+    });
+    expect(conflictingReplay.status).toBe(409);
     let order = await json(await app.request(`/orders/${id}`, { headers: headers(tenantA) }));
     expect(order.data.status).toBe('partially_returned');
     expect(returned).toHaveLength(1);
@@ -197,6 +226,8 @@ describe('refunds with per-line restock dispositions', () => {
       headers: headers(tenantA),
       body: JSON.stringify({
         tenderId,
+        idempotencyKey: 'refund-2',
+        cashSessionId: 'return-session-2',
         amountCents: 4000,
         lines: [
           { lineId: v1.id, qty: 2, disposition: 'quarantine' },
@@ -220,9 +251,53 @@ describe('refunds with per-line restock dispositions', () => {
     const res = await app.request(`/orders/${id}/refunds`, {
       method: 'POST',
       headers: headers(tenantA),
-      body: JSON.stringify({ tenderId: tenders.data[0].id, amountCents: 2000, lines: [{ lineId: v2.id, qty: 9, disposition: 'restock' }] }),
+      body: JSON.stringify({ tenderId: tenders.data[0].id, idempotencyKey: 'refund-too-many', cashSessionId: 'return-session-3', amountCents: 2000, lines: [{ lineId: v2.id, qty: 9, disposition: 'restock' }] }),
     });
     expect(res.status).toBe(409);
+  });
+
+  it('requires the current drawer session for cash refunds', async () => {
+    const { app, tenantA } = await setup();
+    const { id, lines } = await paidOrder(app, tenantA);
+    const v1 = lines.find((line: any) => line.variation_id === 'v1');
+    const tenders = await json(await app.request(`/orders/${id}/tenders`, { headers: headers(tenantA) }));
+    const res = await app.request(`/orders/${id}/refunds`, {
+      method: 'POST',
+      headers: headers(tenantA),
+      body: JSON.stringify({
+        tenderId: tenders.data[0].id,
+        idempotencyKey: 'refund-no-session',
+        amountCents: 1000,
+        lines: [{ lineId: v1.id, qty: 1, disposition: 'restock' }],
+      }),
+    });
+    expect(res.status).toBe(400);
+    const refunds = await json(await app.request(`/orders/${id}/refunds`, { headers: headers(tenantA) }));
+    expect(refunds.data).toEqual([]);
+  });
+
+  it('rejects duplicate line ids before returned-quantity accounting', async () => {
+    const { app, tenantA } = await setup();
+    const { id, lines } = await paidOrder(app, tenantA);
+    const v1 = lines.find((line: any) => line.variation_id === 'v1');
+    const tenders = await json(await app.request(`/orders/${id}/tenders`, { headers: headers(tenantA) }));
+    const res = await app.request(`/orders/${id}/refunds`, {
+      method: 'POST',
+      headers: headers(tenantA),
+      body: JSON.stringify({
+        tenderId: tenders.data[0].id,
+        idempotencyKey: 'duplicate-lines',
+        cashSessionId: 'return-session-duplicate',
+        amountCents: 1000,
+        lines: [
+          { lineId: v1.id, qty: 2, disposition: 'restock' },
+          { lineId: v1.id, qty: 2, disposition: 'restock' },
+        ],
+      }),
+    });
+    expect(res.status).toBe(400);
+    const refunds = await json(await app.request(`/orders/${id}/refunds`, { headers: headers(tenantA) }));
+    expect(refunds.data).toEqual([]);
   });
 
   it('audits refund creation', async () => {
@@ -234,7 +309,7 @@ describe('refunds with per-line restock dispositions', () => {
       await app.request(`/orders/${id}/refunds`, {
         method: 'POST',
         headers: headers(tenantA),
-        body: JSON.stringify({ tenderId: tenders.data[0].id, amountCents: 2000, lines: [{ lineId: v2.id, qty: 1, disposition: 'restock' }] }),
+        body: JSON.stringify({ tenderId: tenders.data[0].id, idempotencyKey: 'refund-audit', cashSessionId: 'return-session-4', amountCents: 2000, lines: [{ lineId: v2.id, qty: 1, disposition: 'restock' }] }),
       }),
     );
     const entries = await listAuditEntries(asCoreDb(db), tenantA.id, 'orders.refund', refund.data.refund.id);

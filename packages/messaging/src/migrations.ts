@@ -196,4 +196,29 @@ export const messagingMigrations: Migration[] = [
         .execute();
     },
   },
+  {
+    name: 'messaging.0009_durable_submission',
+    up: async (db) => {
+      await db.schema.alterTable('messaging_messages').addColumn('idempotency_key', 'text').execute();
+      await db.schema.alterTable('messaging_messages').addColumn('request_hash', 'text').execute();
+      await db.schema.createIndex('messaging_messages_tenant_operation_unique').on('messaging_messages')
+        .columns(['tenant_id', 'idempotency_key']).unique().execute();
+    },
+  },
+  {
+    name: 'messaging.0010_delivery_reconciliation',
+    up: async (db) => {
+      await db.schema.alterTable('messaging_messages').addColumn('delivery_status', 'text').execute();
+      await db.schema.alterTable('messaging_messages').addColumn('reconciled_at', 'text').execute();
+      await db.schema.alterTable('messaging_messages').addColumn('reconciliation_json', 'text').execute();
+      await db.schema.createTable('messaging_operations')
+        .addColumn('id', 'text', (c) => c.notNull())
+        .addColumn('tenant_id', 'text', (c) => c.notNull())
+        .addColumn('request_hash', 'text', (c) => c.notNull())
+        .addColumn('conversation_id', 'text')
+        .addColumn('created_at', 'text', (c) => c.notNull())
+        .addPrimaryKeyConstraint('messaging_operations_pk', ['tenant_id', 'id']).execute();
+      await db.schema.createIndex('messaging_operations_tenant_idx').on('messaging_operations').column('tenant_id').execute();
+    },
+  },
 ];

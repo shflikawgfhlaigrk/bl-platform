@@ -10,10 +10,11 @@ import { SERVICE_EXECUTION_FOUNDATIONS } from '../src/adapters';
 import { clientOpsMigrations } from '../src/migrations';
 import { clientOpsRouter } from '../src/router';
 import type { ClientOpsDatabase } from '../src/schema';
+import { workflowsMigrations, type WorkflowsDatabase } from '@blacklabel/workflows';
 
 export async function setup() {
-  const db = createTestDb<ClientOpsDatabase>();
-  await runMigrations(db, [...coreMigrations, ...clientOpsMigrations]);
+  const db = createTestDb<ClientOpsDatabase & WorkflowsDatabase>();
+  await runMigrations(db, [...coreMigrations, ...clientOpsMigrations, ...workflowsMigrations]);
   const tenantA = await createTenant(asCoreDb(db), { name: 'Client Alpha' });
   const tenantB = await createTenant(asCoreDb(db), { name: 'Client Beta' });
   const events = new EventBus();
@@ -94,7 +95,7 @@ export async function createRun(
 ) {
   const response = await app.request('/runs', {
     method: 'POST', headers: headers(tenant),
-    body: JSON.stringify({ installationId: installation.id, workflowId: installation.workflows[0].id, idempotencyKey, input: { leadId: 'lead-1' } }),
+    body: JSON.stringify({ installationId: installation.id, workflowId: (installation.workflows.find((w: any) => w.templateId.endsWith('.scheduled_operation')) ?? installation.workflows[0]).id, idempotencyKey, input: { steps: [{ id: 'followup', type: 'create_task', config: { title: 'Follow up on estimate' } }] } }),
   });
   if (response.status !== 201) throw new Error(`create run failed: ${response.status} ${await response.text()}`);
   return ((await response.json()) as { data: any }).data;

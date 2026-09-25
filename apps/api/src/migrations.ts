@@ -11,6 +11,8 @@
  *     (inventory `reserve`, transfer ship/receive). Check-then-insert on the
  *     handler's derived key makes every handler replay-tolerant (a duplicated or
  *     replayed domain event never performs the effect twice).
+ *   - `api_pos_order_claims` — proof that a register order passed the POS
+ *     server-side catalog, tax, customer, location, and provenance checks.
  *
  * Both tables are tenant-scoped and follow every CONVENTIONS rule (text ids,
  * ISO timestamps, tenant_id index, portable SQL, no ON CONFLICT).
@@ -67,6 +69,31 @@ export const apiMigrations: Migration[] = [
         .execute();
     },
   },
+  {
+    name: 'api.0003_pos_order_claims',
+    up: async (db) => {
+      await db.schema
+        .createTable('api_pos_order_claims')
+        .addColumn('id', 'text', (c) => c.primaryKey())
+        .addColumn('tenant_id', 'text', (c) => c.notNull())
+        .addColumn('order_id', 'text', (c) => c.notNull())
+        .addColumn('cart_id', 'text', (c) => c.notNull())
+        .addColumn('created_at', 'text', (c) => c.notNull())
+        .execute();
+      await db.schema
+        .createIndex('api_pos_order_claims_tenant_order_idx')
+        .on('api_pos_order_claims')
+        .columns(['tenant_id', 'order_id'])
+        .unique()
+        .execute();
+      await db.schema
+        .createIndex('api_pos_order_claims_tenant_cart_idx')
+        .on('api_pos_order_claims')
+        .columns(['tenant_id', 'cart_id'])
+        .unique()
+        .execute();
+    },
+  },
 ];
 
 /** Row shapes for the api-owned tables (the composition root's private DB view). */
@@ -86,7 +113,16 @@ export interface ApiEventDedupeRow {
   created_at: string;
 }
 
+export interface ApiPosOrderClaimRow {
+  id: string;
+  tenant_id: string;
+  order_id: string;
+  cart_id: string;
+  created_at: string;
+}
+
 export interface ApiDatabase {
   api_config: ApiConfigRow;
   api_event_dedupe: ApiEventDedupeRow;
+  api_pos_order_claims: ApiPosOrderClaimRow;
 }

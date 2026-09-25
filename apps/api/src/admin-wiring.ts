@@ -15,10 +15,7 @@
  * Anything touching the filesystem lives here (server.ts wires it); the
  * in-memory boot path leaves the backup provider absent (routes 501).
  */
-import { copyFileSync, statfsSync, unlinkSync } from 'node:fs';
-import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
-import * as path from 'node:path';
+import { statfsSync } from 'node:fs';
 import Database from 'better-sqlite3';
 import type { Kysely } from 'kysely';
 import {
@@ -26,7 +23,6 @@ import {
   diskFree,
   importFreshness,
   outboxDepth,
-  type BackupProvider,
   type CountProbe,
   type HealthProbe,
 } from '@blacklabel/admin';
@@ -46,49 +42,7 @@ export const CRITICAL_TABLES = [
  * Backup provider (better-sqlite3)
  * ------------------------------------------------------------------ */
 
-export class SqliteBackupProvider implements BackupProvider {
-  constructor(private readonly livePath: string) {}
-
-  async create(destDir: string): Promise<{ path: string; bytes: number; sha256: string }> {
-    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const dest = path.join(destDir, `backup-${stamp}.sqlite`);
-    const db = new Database(this.livePath, { readonly: true, fileMustExist: true });
-    try {
-      // VACUUM INTO writes a clean, self-contained copy (checkpoints WAL).
-      db.prepare('VACUUM INTO ?').run(dest);
-    } finally {
-      db.close();
-    }
-    const bytes = readFileSync(dest);
-    const sha256 = createHash('sha256').update(bytes).digest('hex');
-    return { path: dest, bytes: bytes.length, sha256 };
-  }
-
-  async restoreToTemp(artifactPath: string): Promise<{ tempPath: string }> {
-    const tempPath = `${artifactPath}.verify-${process.pid}.tmp`;
-    copyFileSync(artifactPath, tempPath);
-    return { tempPath };
-  }
-
-  async integrityCheck(tempPath: string): Promise<{ ok: boolean; detail?: unknown }> {
-    const db = new Database(tempPath, { readonly: true, fileMustExist: true });
-    try {
-      const row = db.prepare('PRAGMA integrity_check').get() as { integrity_check?: string } | undefined;
-      const result = row?.integrity_check ?? 'unknown';
-      return { ok: result === 'ok', detail: { integrity_check: result } };
-    } finally {
-      db.close();
-    }
-  }
-
-  async cleanupTemp(tempPath: string): Promise<void> {
-    try {
-      unlinkSync(tempPath);
-    } catch {
-      /* best-effort */
-    }
-  }
-}
+export { SqliteBackupProvider } from './private-backups';
 
 /**
  * Count critical tables. `dbPath === null` → the LIVE shared db (Kysely);

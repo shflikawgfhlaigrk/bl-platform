@@ -166,6 +166,10 @@ export interface TemplateLineItem {
   discountFixedCents?: number;
 }
 
+export interface QuoteConversionRow {
+  id: string; tenant_id: string; quote_id: string; job_id: string; invoice_id: string; created_at: string;
+}
+
 export interface QuotingDatabase extends CoreDatabase {
   quoting_quotes: QuoteRow;
   quoting_quote_lines: QuoteLineRow;
@@ -174,4 +178,5 @@ export interface QuotingDatabase extends CoreDatabase {
   quoting_discounts: DiscountRow;
   quoting_taxes: TaxRow;
   quoting_approval_events: ApprovalEventRow;
+  quoting_conversions: QuoteConversionRow;
 }

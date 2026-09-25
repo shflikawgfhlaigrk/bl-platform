@@ -101,18 +101,18 @@ function normalizeIso(value: string, field: string): string {
   return dt.toUTC().toISO() as string;
 }
 
-/** UTC day window [start, end) for a YYYY-MM-DD date string. */
-function dayWindow(date: string): { start: string; end: string } {
+/** Local calendar day converted to UTC bounds, including daylight-saving changes. */
+function dayWindow(date: string, timezone = 'UTC'): { start: string; end: string } {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
     throw ApiError.badRequest('date must be YYYY-MM-DD');
   }
-  const start = DateTime.fromISO(date, { zone: 'utc' });
+  const start = DateTime.fromISO(date, { zone: timezone });
   if (!start.isValid) {
-    throw ApiError.badRequest('date must be a valid calendar date');
+    throw ApiError.badRequest('date and timezone must be valid');
   }
   return {
-    start: start.startOf('day').toISO() as string,
-    end: start.plus({ days: 1 }).startOf('day').toISO() as string,
+    start: start.startOf('day').toUTC().toISO() as string,
+    end: start.plus({ days: 1 }).startOf('day').toUTC().toISO() as string,
   };
 }
 
@@ -766,14 +766,15 @@ export async function listTimeEntries(
  * Daily schedule
  * ------------------------------------------------------------------ */
 
-/** Shifts overlapping the UTC day + assignments scheduled inside it + open clock state. */
+/** Shifts overlapping the requested local day, its assignments and open clock state. */
 export async function getDailySchedule(
   db: Db,
   tenantId: string,
   employeeId: string,
   date: string,
+  timezone = 'UTC',
 ): Promise<DailySchedule> {
-  const { start, end } = dayWindow(date);
+  const { start, end } = dayWindow(date, timezone);
   const shifts = await db
     .selectFrom('portal_employee_shifts')
     .selectAll()

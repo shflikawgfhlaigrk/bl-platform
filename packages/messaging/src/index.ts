@@ -16,6 +16,8 @@
  *   and conversation-closed timeline entries are written through it.
  */
 export const MODULE_KEY = 'messaging' as const;
+export { ResendEmailProvider } from './resend';
+export type { ResendConnection, ResendOptions } from './resend';
 
 // Schema / row types
 export type {
@@ -61,6 +63,9 @@ export type {
   ChannelProvider,
   ChannelProviders,
   ChannelSendResult,
+  ChannelDeliveryResult,
+  DurableSendMessageInput,
+  DurableSendMessageContract,
   OutboundPayload,
   LoggedSend,
   TimelineWriter,

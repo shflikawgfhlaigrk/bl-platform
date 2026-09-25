@@ -12,6 +12,7 @@
  */
 
 export const MODULE_KEY = 'quoting' as const;
+export { getQuote, listQuotes, approveQuote, declineQuote, convertQuote, getQuoteConversion, recordQuoteConversion } from './service';
 
 // Migrations
 export { quotingMigrations } from './migrations';

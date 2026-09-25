@@ -30,6 +30,11 @@ describe('offline queue reducer', () => {
     expect(() => Q.enqueue(s, { ...mk('x'), id: '' })).toThrow(/id/);
   });
 
+  it('preserves the initiating operator so a later session cannot replay it as someone else', () => {
+    const state = Q.enqueue(Q.initialState(), mk('owned', { actorId: 'cashier-7' }));
+    expect(Q.find(state, 'owned')!.actorId).toBe('cashier-7');
+  });
+
   it('marks success by removing the item', () => {
     let s = Q.enqueue(Q.initialState(), mk('a'));
     s = Q.markInflight(s, 'a');

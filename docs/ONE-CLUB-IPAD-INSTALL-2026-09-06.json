@@ -1,0 +1,104 @@
+{
+  "checkedAt": "2026-09-06T12:27:22.443622+00:00",
+  "environment": "Temporary HTTPS access to an isolated in-memory practice venue. Sample menu and tax; simulated payments.",
+  "device": {
+    "name": "iPad (2)",
+    "model": "iPad (A16)",
+    "productType": "iPad15,8",
+    "os": "26.6.1",
+    "osBuild": "23G83",
+    "udid": "00008120-000C085E3CE00032",
+    "paired": true,
+    "developerMode": "enabled"
+  },
+  "installedApp": {
+    "displayName": "Bar One",
+    "bundleIdentifier": "com.blacklabel.oneclub.pos",
+    "version": "1.0",
+    "build": "2",
+    "configuration": "Release",
+    "buildInstallExitCode": 0,
+    "launched": true,
+    "installationLog": "/tmp/one-club-ipad-oriented-release-install.log"
+  },
+  "signing": {
+    "team": "745ZPGFRA5",
+    "profileName": "iOS Team Provisioning Profile: *",
+    "expiresAt": "2027-09-06T12:11:48+00:00",
+    "containsTargetDevice": true
+  },
+  "connection": {
+    "savedOrigin": "https://plan-addresses-antiques-stunning.trycloudflare.com",
+    "preferencesCopiedFromDevice": true,
+    "server": "scripts/bar-ui-preview.ts",
+    "serverAddress": "10.1.50.112:8470",
+    "requiresMacServerAndTunnelRunning": true,
+    "persistentProductionServerDeployed": false,
+    "practicePin": "2468",
+    "anonymousStateHttpStatus": 401,
+    "bootstrapHttpStatus": 403,
+    "bootstrapCheckSource": "Earlier HTTPS check in this installation session",
+    "menuItems": 14
+  },
+  "physicalTests": [
+    {
+      "name": "Four-digit sign-in and register controls",
+      "configuration": "Debug",
+      "status": "passed",
+      "tests": 1,
+      "failures": 0,
+      "resultBundle": ".storage/one-club-device-acceptance/PracticeSignIn.xcresult"
+    },
+    {
+      "name": "Saved connection and practice round",
+      "configuration": "Release",
+      "status": "interrupted",
+      "details": "Saved HTTPS address and signed-in practice controls passed their assertions. Stopped after opening the tab dialog to correct user-reported upside-down orientation. No completed order, kitchen delivery or payment is claimed.",
+      "resultBundle": ".storage/one-club-device-acceptance/ReleaseRound.xcresult"
+    },
+    {
+      "name": "Explicit orientation correction",
+      "configuration": "Release",
+      "testedBuild": "1 before plist build-number correction",
+      "status": "passed",
+      "tests": 1,
+      "failures": 0,
+      "resultBundle": ".storage/one-club-device-acceptance/OrientationCorrection.xcresult",
+      "screenshot": ".storage/one-club-device-acceptance/orientation-attachments/BEBE14C8-40B4-4538-90F4-02DD2179DA90.png",
+      "details": "Rotated to the opposite landscape direction; full device screenshot shows signed-in Bar One register. Removed forced rotation from normal workflow. Final build 2 subsequently installed and launched; app source unchanged."
+    }
+  ],
+  "validation": {
+    "rootTestFiles": 229,
+    "rootTests": 1602,
+    "rootTestsLog": "/tmp/one-club-ipad-final-tests.log",
+    "typecheck": "passed",
+    "typecheckLog": "/tmp/one-club-ipad-final-typecheck.log",
+    "diffWhitespace": "passed"
+  },
+  "physicalAcceptance": {
+    "ipadInstalled": true,
+    "practiceSignIn": true,
+    "orientationCorrected": true,
+    "realPayment": false,
+    "physicalKitchenPrint": false,
+    "physicalReceiptPrint": false,
+    "drawerOpenCommand": false
+  },
+  "remaining": [
+    "Real food/drink menu, prices, tax, recipes and staff PINs",
+    "Permanent backend hosting, HTTPS origin and backup schedule",
+    "Venue processor account and compatible provisioned card reader",
+    "Kitchen/receipt printer model and transport; cash drawer interface",
+    "Physical service workflow, payment/refund, printer output, drawer and settlement acceptance"
+  ],
+  "artifactSha256": {
+    "apps/ipad/Sources/OneClubPOSApp.swift": "7781370db7bbbfd3c528b6bb92de119abd328c8a2d48d128fe2ab646127d9fda",
+    "apps/ipad/project.yml": "7315fb8f33846be16608d0273e8b0cc26b9b0c017aef995644ac993e018473e2",
+    "apps/ipad/UITests/PracticeRegisterTests.swift": "472526f50b9baf54cb00b7e33c937045f39597badee0b4726d75bc5c5fdefe87",
+    "scripts/install-one-club-ipad.sh": "249add7e4436bfe61deba79c59a130cde882bc1bbe45f05a67496b90c6b00258",
+    "scripts/bar-ui-preview.ts": "1ae6baedf04950ca866c625f1729e873ad0e3faf0b3fbf38d8fed9e4c909f635",
+    ".storage/one-club-ipad-install/Build/Products/Release-iphoneos/OneClubPOS.app/OneClubPOS": "be644cf3fb5b9f1a740ef498a052034e8f547186a5b6960e3fa9cb0e8626da49",
+    ".storage/one-club-device-acceptance/orientation-attachments/BEBE14C8-40B4-4538-90F4-02DD2179DA90.png": "1de0ff0b977a9f73354ee16e3b79141c4d7259a9d33daaf6a77c1ea7178c72be"
+  }
+}

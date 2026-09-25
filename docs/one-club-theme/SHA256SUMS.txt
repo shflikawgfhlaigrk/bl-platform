@@ -1,0 +1,17 @@
+a73915e53e16c1cb7bb6f3bf245c452226c6bcba8581e654684892662241d53e  apps/ui/public/index.html
+5b0c97a9b173b024e1fb26e12648d3f8e6336e50055d238ac6b47fdeebee1b00  apps/ui/public/app.css
+f9f34a7065deea6cc887ec7ee075474aa158ae8786a4281e8d97ba40695a2b13  apps/ui/public/manifest.webmanifest
+90d288b5849b9be311709edae2a0f0ea27d28eeeca52df9a2558f32fa5d410d5  apps/ui/public/icons/icon.svg
+5c94cfcabd11188af9ec2d498c8ba5409c39451dc60f4d2b5bbe9f2a62c0de3a  apps/ui/public/brand/one-club-logo.png
+3f237da2c088116310a96befc454fedac202f4f37f1b7f1e10d12b2027be4fb2  apps/ui/public/js/brand.js
+c3aef57b479aed2eb94b2e577ebb212edd219c26fa54fa3ca36d851bed347844  apps/ui/public/js/app.js
+dee6d819652909dc83922472603a17f74587a0e86e57f97fe9b01ea23b31bf4f  apps/ui/public/js/auth.js
+ee73974a18a2f9c49ca21d378816d0fba6b6946eed9f26a3c33ac37af0e57724  apps/ui/public/js/views/register.js
+e344e39e3ad541ccd8d822e95757dbb8c3e4d87a1c3fdb3586711b8adbd22715  apps/ui/public/js/views/orders.js
+3c37dd4c96a9f2a224cb2cf0095ebb9b035801c7342104b54692226b21920b5d  apps/ui/public/js/views/actions.js
+fb6a64eeadb6b5e28c255f9ddb31966761c68fb9ab12b7cbbd5c9ddf3865dd29  apps/ui/public/js/views/settings.js
+8900330cdc6d7511a32f0be9518f88dcda6d19cbe5d0cc3f47dddb81a71b567f  apps/ui/public/js/views/shows.js
+e0f98b570e0aa65b3a904adae883f241feca9a2742ff9b965c2ffa4dbc22fafe  apps/ui/public/js/views/customers.js
+9e6039d0bda1941da732222cbdd421f8cdd5ce01124cb214c76ab9f09ac2b215  apps/ui/public/src/routes.mjs
+60b2a327548b2424d828f9aca0b1e7f30160e35cd826a6a41baeab21bff3db18  apps/ui/public/sw.js
+cb5f9a32dff72f57d00c7f1f75f5b74194fba9023bbd4a0ed76d0e53985d0d2b  scripts/pos-ui-preview.ts

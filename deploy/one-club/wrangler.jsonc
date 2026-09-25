@@ -1,0 +1,10 @@
+{
+  "name": "bar-one-pos",
+  "main": "worker.mjs",
+  "account_id": "a0703c8cbbf2d56af47d05d5817b8c5b",
+  "compatibility_date": "2026-09-01",
+  "workers_dev": true,
+  "preview_urls": false,
+  "durable_objects": { "bindings": [{ "name": "VENUE_RELAY", "class_name": "VenueRelay" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["VenueRelay"] }]
+}

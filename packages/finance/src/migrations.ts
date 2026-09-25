@@ -293,4 +293,53 @@ export const financeMigrations: Migration[] = [
         .execute();
     },
   },
+  {
+    name: 'finance.0013_pos_cash_drawer_ledger',
+    up: async (db) => {
+      await db.schema.alterTable('finance_cash_sessions').addColumn('drawer_ref', 'text').execute();
+      await db.schema.alterTable('finance_cash_sessions').addColumn('register_ref', 'text').execute();
+      await db.schema.alterTable('finance_cash_sessions').addColumn('expected_mode', 'text').execute();
+      await db.schema.alterTable('finance_cash_sessions').addColumn('open_scope_key', 'text').execute();
+      await db.schema.alterTable('finance_cash_sessions').addColumn('last_activity_at', 'text').execute();
+      await db.schema
+        .createIndex('finance_cash_sessions_tenant_open_scope_unique_idx')
+        .on('finance_cash_sessions')
+        .columns(['tenant_id', 'open_scope_key'])
+        .unique()
+        .execute();
+
+      await db.schema
+        .createTable('finance_cash_movements')
+        .addColumn('id', 'text', (c) => c.primaryKey())
+        .addColumn('tenant_id', 'text', (c) => c.notNull())
+        .addColumn('session_ref', 'text', (c) => c.notNull())
+        .addColumn('kind', 'text', (c) => c.notNull())
+        .addColumn('source_ref', 'text', (c) => c.notNull())
+        .addColumn('idempotency_key', 'text', (c) => c.notNull())
+        .addColumn('order_ref', 'text')
+        .addColumn('tender_ref', 'text')
+        .addColumn('amount_cents', 'integer', (c) => c.notNull())
+        .addColumn('note', 'text')
+        .addColumn('created_by', 'text', (c) => c.notNull())
+        .addColumn('occurred_at', 'text', (c) => c.notNull())
+        .addColumn('created_at', 'text', (c) => c.notNull())
+        .execute();
+      await db.schema
+        .createIndex('finance_cash_movements_tenant_session_idx')
+        .on('finance_cash_movements')
+        .columns(['tenant_id', 'session_ref', 'occurred_at'])
+        .execute();
+      await db.schema
+        .createIndex('finance_cash_movements_tenant_idempotency_unique_idx')
+        .on('finance_cash_movements')
+        .columns(['tenant_id', 'idempotency_key'])
+        .unique()
+        .execute();
+      await db.schema
+        .createIndex('finance_cash_movements_tenant_tender_idx')
+        .on('finance_cash_movements')
+        .columns(['tenant_id', 'tender_ref'])
+        .execute();
+    },
+  },
 ];

@@ -17,6 +17,7 @@
  * - portal_customer.upload.created         { uploadId, accountId, customerId, fileId, fileName }
  */
 export const MODULE_KEY = 'portal-customer' as const;
+export { getAccount } from './service';
 
 // Migrations
 export { portalCustomerMigrations } from './migrations';

@@ -10,14 +10,14 @@ describe('client-ops runs', () => {
 
     const duplicate = await app.request('/runs', {
       method: 'POST', headers: headers(tenantA),
-      body: JSON.stringify({ installationId: installation.id, workflowId: installation.workflows[0].id, idempotencyKey: 'initial-key', input: { leadId: 'lead-1' } }),
+      body: JSON.stringify({ installationId: installation.id, workflowId: run.workflowId, idempotencyKey: 'initial-key', input: run.input }),
     });
     expect(duplicate.status).toBe(200);
     expect((await duplicate.json()) as any).toMatchObject({ created: false, data: { id: run.id } });
 
     const keyConflict = await app.request('/runs', {
       method: 'POST', headers: headers(tenantA),
-      body: JSON.stringify({ installationId: installation.id, workflowId: installation.workflows[0].id, idempotencyKey: 'initial-key', input: { leadId: 'other' } }),
+      body: JSON.stringify({ installationId: installation.id, workflowId: run.workflowId, idempotencyKey: 'initial-key', input: { leadId: 'other' } }),
     });
     expect(keyConflict.status).toBe(409);
 

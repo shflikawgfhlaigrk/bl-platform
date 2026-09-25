@@ -7,8 +7,10 @@
  * ── Events emitted (module.entity.verb; every payload carries `v: 1`) ────────
  *   orders.order.reserved   { v, orderId, lines[] }        (on reserve)
  *   orders.order.paid       { v, orderId, totalCents, lines[] }  (on pay/checkout)
+ *   orders.tender.captured  { v, cashSessionId, orderId, tenderId, kind, amountCents, cashReceivedCents, changeDueCents, occurredAt }
  *   orders.order.fulfilled  { v, orderId, lines[] }        (all lines fulfilled)
  *   orders.order.returned   { v, orderId, returnId, lines[] }    (on refund)
+ *   orders.refund.created   { v, cashSessionId, orderId, refundId, tenderId, tenderKind, amountCents, occurredAt }
  *   orders.payment.mismatched { v, orderId, sessionId, expectedCents, receivedCents }
  *   orders.order.canceled   { v, orderId }                 (internal)
  *   orders.order.partially_fulfilled — audited only (no event payload consumers yet)
@@ -32,8 +34,11 @@
  * ── Provider adapters (NO network in this package) ──────────────────────────
  * `CheckoutProvider` is the interface. `simulatorCheckoutProvider` is fully
  * implemented with REAL HMAC-SHA256 signature verification (node:crypto).
- * `squareHostedCheckoutProvider` is structurally complete with the injected
- * `transport` function — apps/api supplies real fetch behind admin credentials.
+ * `squareHostedCheckoutProvider` and `stripeTerminalCheckoutProvider` are
+ * structurally complete with injected `transport` functions — apps/api
+ * supplies real fetch behind admin credentials. Stripe Terminal creates a
+ * card_present PaymentIntent, starts the reader action, and captures no tender
+ * until a signed payment_intent.succeeded webhook is reconciled.
  * Webhook handling records every callback in orders_webhook_events FIRST
  * (replay-safe via unique event_ref), reconciles the amount against the
  * checkout session, and only then captures a tender + marks the order paid.
@@ -67,6 +72,7 @@ export type {
   FulfillmentRow,
   FulfillmentLineRow,
   CheckoutSessionRow,
+  PaymentAttemptRow,
   WebhookEventRow,
   OrderChannel,
   OrderStatus,
@@ -75,36 +81,51 @@ export type {
   TenderKind,
   TenderStatus,
   RefundStatus,
+  ProviderRefundStatus,
   RestockDisposition,
   FulfillmentKind,
   FulfillmentStatus,
   CheckoutProviderKey,
   CheckoutSessionStatus,
+  PaymentAttemptStatus,
 } from './schema';
 
 // Provider interface + adapters (no network — transport injected)
 export {
   simulatorCheckoutProvider,
   squareHostedCheckoutProvider,
+  stripeTerminalCheckoutProvider,
   simulatorSign,
   simulatorCompletionBody,
   squareSign,
+  stripeSign,
+  stripeSignatureHeader,
 } from './providers';
 export type {
   CheckoutProvider,
   CheckoutOrderSnapshot,
   CreateSessionResult,
+  PreparedSessionResult,
+  RedirectSessionResult,
+  TerminalSessionResult,
   ParsedProviderEvent,
   VerifyWebhookResult,
   ParsedCompletion,
+  ParsedPaymentUpdate,
+  ParsedRefundUpdate,
+  CancelSessionInput,
+  ProviderRefundInput,
+  ProviderRefundResult,
   HttpTransport,
   SimulatorProviderOptions,
   SquareProviderOptions,
+  StripeTerminalProviderOptions,
 } from './providers';
 
 // Public service surface (state machine + helpers for tests/integrators)
 export {
   ORDER_TRANSITIONS,
+  PAYMENT_ATTEMPT_TRANSITIONS,
   canTransition,
   buildProviderRegistry,
   createOrder,
@@ -115,10 +136,16 @@ export {
   markOrderSent,
   reserveOrder,
   cancelOrder,
+  cancelSplitPayment,
   addTender,
   listTenders,
   payOrder,
   createCheckoutSession,
+  createPaymentAttempt,
+  getPaymentAttempt,
+  getPaymentAttemptRow,
+  listPaymentAttempts,
+  cancelPaymentAttempt,
   processWebhook,
   listWebhookEvents,
   createFulfillment,
@@ -134,6 +161,7 @@ export type {
   OrderDto,
   LineDto,
   WebhookEventDto,
+  PaymentAttemptDto,
   OrderWithLines,
   LineInputSvc,
   CreateOrderInputSvc,
@@ -141,6 +169,7 @@ export type {
   AddTenderInputSvc,
   PayManualInputSvc,
   CreateCheckoutResult,
+  CreatePaymentAttemptInputSvc,
   WebhookOutcome,
   ProcessWebhookResult,
   CreateFulfillmentInputSvc,

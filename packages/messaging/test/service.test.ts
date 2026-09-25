@@ -199,7 +199,7 @@ describe('outbound sending via channel providers', () => {
     });
   });
 
-  it('marks a message failed when the provider throws, without throwing itself', async () => {
+  it('keeps submission unresolved when the provider throws after possible acceptance', async () => {
     const throwing: ChannelProvider = {
       type: 'sms',
       send: async () => {
@@ -216,7 +216,7 @@ describe('outbound sending via channel providers', () => {
       conversationId: conv.id,
       body: 'ping',
     });
-    expect(message.status).toBe('failed');
+    expect(message.status).toBe('queued');
     expect(message.failed_reason).toBe('carrier unreachable');
   });
 

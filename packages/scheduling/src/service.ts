@@ -24,6 +24,7 @@ import type {
   AppointmentStatus,
   OwnerType,
   RecurrenceFrequency,
+  ReminderStatus,
   SchedulingAppointmentRow,
   SchedulingAppointmentTypeRow,
   SchedulingAvailabilityExceptionRow,
@@ -88,12 +89,22 @@ export interface ReminderDeliveryInput {
   recipient: string;
   message: string | null;
   sendAt: string;
+  deliveryReference?: string | null;
+}
+
+export interface ReminderDeliveryResult {
+  delivered: boolean;
+  detail?: string;
+  state?: 'submitted' | 'failed' | 'review';
+  deliveryReference?: string;
 }
 
 /** Delivery transport for customer reminders (email/sms/...). */
 export interface ReminderDeliveryProvider {
   readonly name: string;
-  deliver(input: ReminderDeliveryInput): Promise<{ delivered: boolean; detail?: string }>;
+  /** A repeated reminder id only reconciles its existing operation. */
+  readonly durableOperations?: boolean;
+  deliver(input: ReminderDeliveryInput): Promise<ReminderDeliveryResult>;
 }
 
 /** Fail-closed stub transport: records attempts but never claims delivery. */
@@ -1230,6 +1241,8 @@ export async function createAppointment(
   tenantId: string,
   input: CreateAppointmentServiceInput,
   actor = 'system',
+  /** Internal composition hook; never parsed from a public appointment body. */
+  admission?: (transaction: SchedulingCtx) => Promise<{ customerId: string }>,
 ): Promise<{ appointments: AppointmentWithAssignments[]; scheduleRule: SchedulingScheduleRuleRow | null }> {
   if (!input.title.trim()) throw ApiError.badRequest('title is required');
   const calendar = await getCalendar(ctx, tenantId, input.calendarId);
@@ -1316,6 +1329,7 @@ export async function createAppointment(
   // transaction so parallel requests cannot both reserve the same owner/time.
   const created = await ctx.db.transaction().execute(async (trx) => {
     const txCtx: SchedulingCtx = { ...ctx, db: trx };
+    const admitted = await admission?.(txCtx);
     const allConflicts: ConflictDetail[] = [];
     for (const occ of occurrences) {
       allConflicts.push(
@@ -1347,7 +1361,7 @@ export async function createAppointment(
         tenant_id: tenantId,
         calendar_id: calendar.id,
         appointment_type_id: type?.id ?? null,
-        customer_id: input.customerId ?? null,
+        customer_id: admitted?.customerId ?? input.customerId ?? null,
         location_id: input.locationId ?? null,
         title: input.title.trim(),
         status: input.status ?? 'confirmed',
@@ -1948,6 +1962,12 @@ export async function createReminder(
     recipient: input.recipient.trim(),
     message: input.message ?? null,
     status: 'pending',
+    attempts: 0,
+    last_attempt_at: null,
+    next_attempt_at: null,
+    lease_expires_at: null,
+    delivery_reference: null,
+    last_error: null,
     sent_at: null,
     provider: null,
     created_at: nowIso(),
@@ -1998,86 +2018,70 @@ export async function listPendingReminders(
     .execute();
 }
 
-/** Deliver a pending reminder through the configured provider (stub by default). */
+/** Claim delivery once; durable adapters reconcile the same operation on recovery. */
 export async function sendReminder(
-  ctx: SchedulingCtx,
-  tenantId: string,
-  reminderId: string,
-  actor = 'system',
+  ctx: SchedulingCtx, tenantId: string, reminderId: string, actor = 'system',
 ): Promise<SchedulingReminderRow> {
-  const reminder = await ctx.db
-    .selectFrom('scheduling_reminders')
-    .selectAll()
-    .where('tenant_id', '=', tenantId)
-    .where('id', '=', reminderId)
-    .executeTakeFirst();
+  const reminder = await ctx.db.selectFrom('scheduling_reminders').selectAll()
+    .where('tenant_id', '=', tenantId).where('id', '=', reminderId).executeTakeFirst();
   if (!reminder) throw ApiError.notFound(`reminder not found: ${reminderId}`);
-  if (reminder.status !== 'pending') {
-    throw ApiError.conflict(`reminder is ${reminder.status}, only pending reminders can be sent`);
+  const at = nowIso();
+  const recovering = reminder.status === 'sending' && (!reminder.lease_expires_at || reminder.lease_expires_at <= at);
+  if (!['pending', 'submitted'].includes(reminder.status) && !recovering) throw ApiError.conflict(`reminder is ${reminder.status}; it is not ready for delivery`);
+  const appointment = await getAppointment(ctx, tenantId, reminder.appointment_id);
+  if (!ACTIVE_STATUSES.includes(appointment.status)) {
+    await ctx.db.updateTable('scheduling_reminders').set({ status: 'canceled', lease_expires_at: null, next_attempt_at: null })
+      .where('tenant_id', '=', tenantId).where('id', '=', reminderId).where('status', '=', reminder.status).execute();
+    return { ...reminder, status: 'canceled', lease_expires_at: null, next_attempt_at: null };
   }
-  const claim = await ctx.db
-    .updateTable('scheduling_reminders')
-    .set({ status: 'sending' })
-    .where('tenant_id', '=', tenantId)
-    .where('id', '=', reminderId)
-    .where('status', '=', 'pending')
-    .executeTakeFirst();
-  if (claim.numUpdatedRows === 0n) {
-    throw ApiError.conflict('reminder is already being sent or is no longer pending');
+  if (recovering && !ctx.reminderDelivery.durableOperations) {
+    await ctx.db.updateTable('scheduling_reminders').set({ status: 'review', lease_expires_at: null, last_error: 'Interrupted delivery requires provider reconciliation.' })
+      .where('tenant_id', '=', tenantId).where('id', '=', reminderId).where('status', '=', 'sending').execute();
+    await audit(asCoreDb(ctx.db), tenantId, actor, 'scheduling.reminder.review', 'scheduling.reminder', reminderId, {});
+    return { ...reminder, status: 'review', lease_expires_at: null, last_error: 'Interrupted delivery requires provider reconciliation.' };
   }
-
-  let result: { delivered: boolean; detail?: string };
+  const lease = DateTime.fromISO(at).plus({ minutes: 2 }).toUTC().toISO()!;
+  let claim = ctx.db.updateTable('scheduling_reminders').set({ status: 'sending', attempts: reminder.attempts + 1, last_attempt_at: at, lease_expires_at: lease })
+    .where('tenant_id', '=', tenantId).where('id', '=', reminderId).where('status', '=', reminder.status);
+  claim = reminder.lease_expires_at ? claim.where('lease_expires_at', '=', reminder.lease_expires_at) : claim.where('lease_expires_at', 'is', null);
+  if (!(await claim.executeTakeFirst()).numUpdatedRows) throw ApiError.conflict('reminder is already being processed');
+  let result: ReminderDeliveryResult;
   try {
-    result = await ctx.reminderDelivery.deliver({
-      tenantId,
-      reminderId: reminder.id,
-      appointmentId: reminder.appointment_id,
-      channel: reminder.channel,
-      recipient: reminder.recipient,
-      message: reminder.message,
-      sendAt: reminder.send_at,
-    });
+    result = await ctx.reminderDelivery.deliver({ tenantId, reminderId, appointmentId: reminder.appointment_id,
+      channel: reminder.channel, recipient: reminder.recipient, message: reminder.message, sendAt: reminder.send_at,
+      deliveryReference: reminder.delivery_reference });
   } catch (error) {
-    await ctx.db
-      .updateTable('scheduling_reminders')
-      .set({ status: 'pending' })
-      .where('tenant_id', '=', tenantId)
-      .where('id', '=', reminderId)
-      .where('status', '=', 'sending')
-      .execute();
-    throw ApiError.conflict(`reminder delivery failed: ${providerErrorMessage(error)}`);
+    result = { delivered: false, ...(ctx.reminderDelivery.durableOperations ? {} : { state: 'review' as const }), detail: providerErrorMessage(error) };
   }
-  if (!result.delivered) {
-    await ctx.db
-      .updateTable('scheduling_reminders')
-      .set({ status: 'pending' })
-      .where('tenant_id', '=', tenantId)
-      .where('id', '=', reminderId)
-      .where('status', '=', 'sending')
-      .execute();
-    throw ApiError.conflict(`reminder delivery failed: ${result.detail ?? 'provider error'}`);
+  const status: ReminderStatus = result.delivered ? 'sent' : result.state ?? 'pending';
+  const attempts = reminder.attempts + 1;
+  const nextAttempt = ['pending', 'submitted'].includes(status) ? DateTime.fromISO(at).plus({ seconds: Math.min(3600, 15 * 2 ** Math.min(attempts, 8)) }).toUTC().toISO()! : null;
+  const patch = { status, attempts, last_attempt_at: at, lease_expires_at: null, next_attempt_at: nextAttempt,
+    delivery_reference: result.deliveryReference ?? reminder.delivery_reference, last_error: result.detail?.slice(0, 500) ?? null,
+    provider: ctx.reminderDelivery.name, sent_at: result.delivered ? nowIso() : null };
+  const finalized = await ctx.db.updateTable('scheduling_reminders').set(patch)
+    .where('tenant_id', '=', tenantId).where('id', '=', reminderId).where('status', '=', 'sending').where('lease_expires_at', '=', lease).executeTakeFirst();
+  if (!finalized.numUpdatedRows) throw ApiError.conflict('reminder delivery state changed before finalization');
+  await audit(asCoreDb(ctx.db), tenantId, actor, `scheduling.reminder.${status}`, 'scheduling.reminder', reminderId,
+    { appointmentId: reminder.appointment_id, provider: ctx.reminderDelivery.name, deliveryReference: patch.delivery_reference, attempts });
+  if (status === 'sent') await ctx.events.emit(tenantId, 'scheduling.reminder.sent', { reminderId, appointmentId: reminder.appointment_id, channel: reminder.channel });
+  if (status === 'pending') throw ApiError.conflict(`reminder delivery failed: ${result.detail ?? 'provider error'}`);
+  return { ...reminder, ...patch };
+}
+
+/** A bounded queue pass; interrupted sends only resume through a durable adapter. */
+export async function runReminderQueue(ctx: SchedulingCtx, tenantId: string, before = nowIso()) {
+  const rows = await ctx.db.selectFrom('scheduling_reminders').selectAll().where('tenant_id', '=', tenantId)
+    .where('send_at', '<=', before).where('status', 'in', ['pending', 'submitted', 'sending'])
+    .where(eb => eb.or([eb('next_attempt_at', 'is', null), eb('next_attempt_at', '<=', before)]))
+    .where(eb => eb.or([eb('status', '!=', 'sending'), eb('lease_expires_at', 'is', null), eb('lease_expires_at', '<=', before)]))
+    .orderBy('send_at').orderBy('id').limit(50).execute();
+  const results: Array<{ id: string; status: string }> = [];
+  for (const row of rows) {
+    try { results.push({ id: row.id, status: (await sendReminder(ctx, tenantId, row.id)).status }); }
+    catch { results.push({ id: row.id, status: 'pending-or-review' }); }
   }
-  const sentAt = nowIso();
-  const finalize = await ctx.db
-    .updateTable('scheduling_reminders')
-    .set({ status: 'sent', sent_at: sentAt, provider: ctx.reminderDelivery.name })
-    .where('tenant_id', '=', tenantId)
-    .where('id', '=', reminderId)
-    .where('status', '=', 'sending')
-    .executeTakeFirst();
-  if (finalize.numUpdatedRows === 0n) {
-    throw ApiError.conflict('reminder delivery state changed before it could be finalized');
-  }
-  await audit(asCoreDb(ctx.db), tenantId, actor, 'scheduling.reminder.sent', 'scheduling.reminder', reminderId, {
-    appointmentId: reminder.appointment_id,
-    provider: ctx.reminderDelivery.name,
-  });
-  await ctx.events.emit(tenantId, 'scheduling.reminder.sent', {
-    reminderId,
-    appointmentId: reminder.appointment_id,
-    channel: reminder.channel,
-  });
-  return { ...reminder, status: 'sent', sent_at: sentAt, provider: ctx.reminderDelivery.name };
+  return results;
 }
 
 /* ------------------------------------------------------------------ *

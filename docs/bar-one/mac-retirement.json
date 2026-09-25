@@ -1,0 +1,24 @@
+{
+  "completedAt": "2026-09-06T17:01:36.689403+00:00",
+  "venueServicesRemoved": [
+    "com.blacklabel.bar-one-venue",
+    "com.blacklabel.bar-one-relay"
+  ],
+  "venuePort8480Closed": true,
+  "macVenueDataRemoved": true,
+  "temporaryVenueCopiesRemoved": true,
+  "removedPaths": [
+    ".storage/bar-one-venue",
+    ".storage/bar-one-ipad-transfer/BarOne-transfer",
+    ".storage/bar-one-native-acceptance/disposable-1788713733103.sqlite",
+    ".storage/bar-one-native-acceptance/disposable-1788713276630.sqlite",
+    ".storage/bar-one-native-acceptance/disposable-1788713321625.sqlite",
+    ".storage/bar-one-native-acceptance/disposable-1788713243348.sqlite",
+    ".storage/bar-one-native-acceptance/disposable-1788713190701.sqlite",
+    ".storage/bar-one-retirement-stage"
+  ],
+  "recoveryArchiveOnIpad": true,
+  "physicalMacOffAcceptance": ".storage/bar-one-native-mac-off12.xcresult",
+  "physicalBackupAcceptance": ".storage/bar-one-native-backup12b.xcresult",
+  "developerSourceRetained": true
+}

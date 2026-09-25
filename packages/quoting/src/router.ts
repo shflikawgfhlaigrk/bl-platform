@@ -1,6 +1,7 @@
 import { Hono, type Context } from 'hono';
 import { z } from 'zod';
 import {
+  ApiError,
   asCoreDb,
   errorHandler,
   getTenant,
@@ -159,6 +160,8 @@ const applyTaxSchema = z.object({ taxId: z.string().min(1) });
 export interface QuotingRouterOptions {
   /** Defaults to the HTML print-ready stub adapter. */
   documentProvider?: QuoteDocumentProvider;
+  /** Optional composition-owned atomic quote -> CRM job -> billing invoice operation. */
+  convert?: (tenantId: string, actor: string, quoteId: string) => Promise<unknown>;
 }
 
 export function quotingRouter(
@@ -298,8 +301,16 @@ export function quotingRouter(
 
   /* ---------------- convert to job ---------------- */
 
+  app.get('/quotes/:id/conversion', async (c) => {
+    const ctx = ctxOf(c); await svc.getQuote(ctx, c.req.param('id'));
+    const conversion = await svc.getQuoteConversion(ctx, c.req.param('id'));
+    if (!conversion) throw ApiError.notFound('Quote conversion not found.');
+    return c.json({ data: conversion });
+  });
+
   app.post('/quotes/:id/convert', async (c) => {
-    const data = await svc.convertQuote(ctxOf(c), c.req.param('id'));
+    const ctx = ctxOf(c);
+    const data = options.convert ? await options.convert(ctx.tenantId, ctx.actor, c.req.param('id')) : await svc.convertQuote(ctx, c.req.param('id'));
     return c.json({ data });
   });
 

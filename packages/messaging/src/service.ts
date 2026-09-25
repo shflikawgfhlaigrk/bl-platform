@@ -1,4 +1,5 @@
 import type { Kysely } from 'kysely';
+import { createHash } from 'node:crypto';
 import {
   ApiError,
   audit,
@@ -27,10 +28,12 @@ import type {
 import { CHANNEL_TYPES, CONVERSATION_STATUSES } from './schema';
 
 /* ------------------------------------------------------------------ *
- * Channel providers (stub adapters — NO real provider integration)
+ * Channel providers (explicitly injected for each deployment)
  * ------------------------------------------------------------------ */
 
 export interface OutboundPayload {
+  /** Stable operation id for provider-side idempotency. */
+  operationId?: string;
   tenantId: string;
   to: string;
   from: string | null;
@@ -41,7 +44,7 @@ export interface OutboundPayload {
 export interface ChannelSendResult {
   /** Provider-side message id (stubs return "stub-<nanoid>"). */
   providerMessageId: string;
-  status: 'sent' | 'failed';
+  status: 'sent' | 'failed' | 'queued';
   /** Human-readable failure reason when status = 'failed'. */
   detail?: string;
 }
@@ -54,6 +57,15 @@ export interface ChannelSendResult {
 export interface ChannelProvider {
   readonly type: ChannelType;
   send(payload: OutboundPayload): Promise<ChannelSendResult>;
+  /** Read the provider's existing record; must never submit another message. */
+  reconcile?(payload: OutboundPayload & { providerMessageId: string }): Promise<ChannelDeliveryResult>;
+}
+
+export interface ChannelDeliveryResult {
+  providerMessageId: string;
+  status: 'accepted' | 'delivered' | 'failed' | 'unknown';
+  detail?: string;
+  evidenceSha256: string;
 }
 
 export interface LoggedSend extends OutboundPayload {
@@ -87,12 +99,9 @@ export class LogOnlySmsProvider implements ChannelProvider {
 
 export type ChannelProviders = Partial<Record<ChannelType, ChannelProvider>>;
 
-/** Default provider set: log-only email + sms. Other channels store-only. */
+/** External channels require an explicitly configured provider. */
 export function defaultProviders(): ChannelProviders {
-  return {
-    email: new LogOnlyEmailProvider(),
-    sms: new LogOnlySmsProvider(),
-  };
+  return {};
 }
 
 /* ------------------------------------------------------------------ *
@@ -204,6 +213,7 @@ export interface InboundMessageInput {
 }
 
 export interface SendOutboundInput {
+  idempotencyKey?: string;
   conversationId: string;
   to?: string;
   subject?: string;
@@ -713,9 +723,8 @@ export class MessagingService {
 
   /**
    * Send an outbound message on a conversation, via the channel provider
-   * (log-only stubs by default). Body may come from a template
-   * ({{variable}} substitution). Channels with no provider (website/social/
-   * internal) are store-only and marked 'sent'.
+   * Body may come from a template ({{variable}} substitution). Only the
+   * internal channel can complete without an explicitly connected provider.
    */
   async sendOutbound(
     tenantId: string,
@@ -776,19 +785,17 @@ export class MessagingService {
     const from = fromChannel?.address ?? null;
 
     const provider = this.providers[conversation.channel];
-    let status: 'sent' | 'failed' = 'sent';
+    let status: 'queued' | 'sent' | 'failed' = provider ? 'queued' : conversation.channel === 'internal' ? 'sent' : 'failed';
     let providerMessageId: string | null = null;
-    let failedReason: string | null = null;
-    if (provider) {
-      try {
-        const result = await provider.send({ tenantId, to, from, subject, body });
-        status = result.status;
-        providerMessageId = result.providerMessageId;
-        failedReason = result.status === 'failed' ? result.detail ?? 'provider send failed' : null;
-      } catch (err) {
-        status = 'failed';
-        failedReason = err instanceof Error ? err.message : String(err);
-      }
+    let failedReason: string | null = status === 'failed' ? `No ${conversation.channel} provider is configured.` : null;
+    const idempotencyKey = input.idempotencyKey || id();
+    const requestHash = createHash('sha256').update(JSON.stringify({ conversationId: conversation.id, channel: conversation.channel, to, from, subject, body })).digest('hex');
+    const previous = await this.db.selectFrom('messaging_messages').selectAll()
+      .where('tenant_id', '=', tenantId).where('idempotency_key', '=', idempotencyKey).executeTakeFirst();
+    if (previous) {
+      if (previous.request_hash !== requestHash) throw ApiError.conflict('idempotency key belongs to different message content');
+      if (previous.status === 'queued') throw ApiError.conflict('message submission is unresolved; reconcile the provider outcome before another attempt');
+      return previous;
     }
 
     const now = nowIso();
@@ -810,8 +817,32 @@ export class MessagingService {
       duration_seconds: null,
       seq: await this.nextMessageSeq(tenantId, conversation.id),
       created_at: now,
+      idempotency_key: idempotencyKey,
+      request_hash: requestHash,
     };
-    await this.db.insertInto('messaging_messages').values(message).execute();
+    try {
+      await this.db.insertInto('messaging_messages').values(message).execute();
+    } catch (error) {
+      const duplicate = await this.db.selectFrom('messaging_messages').select('id')
+        .where('tenant_id', '=', tenantId).where('idempotency_key', '=', idempotencyKey).executeTakeFirst();
+      if (duplicate) throw ApiError.conflict('this message operation is already being processed');
+      throw error;
+    }
+    if (provider) {
+      try {
+        const result = await provider.send({ tenantId, to, from, subject, body, operationId: message.id });
+        status = result.status === 'failed' ? 'failed' : result.status === 'sent' && result.providerMessageId ? 'sent' : 'queued';
+        providerMessageId = result.providerMessageId || null;
+        failedReason = status !== 'sent' ? result.detail ?? 'provider did not return a confirmed message id' : null;
+      } catch (err) {
+        // A timeout may have happened after acceptance. Keep the submitted operation unresolved.
+        status = 'queued';
+        failedReason = err instanceof Error ? err.message : String(err);
+      }
+      await this.db.updateTable('messaging_messages').set({ status, provider_message_id: providerMessageId, failed_reason: failedReason })
+        .where('tenant_id', '=', tenantId).where('id', '=', message.id).execute();
+      Object.assign(message, { status, provider_message_id: providerMessageId, failed_reason: failedReason });
+    }
     await this.db
       .updateTable('messaging_conversations')
       .set({ last_message_at: now, updated_at: now })
@@ -820,7 +851,7 @@ export class MessagingService {
       .execute();
     await audit(
       asCoreDb(this.db), tenantId, actor,
-      'messaging.message.sent', 'messaging.message', message.id,
+      'messaging.message.submitted', 'messaging.message', message.id,
       { conversationId: conversation.id, channel: conversation.channel, to, status },
     );
     if (status === 'sent') {
@@ -831,6 +862,51 @@ export class MessagingService {
       });
     }
     return message;
+  }
+
+  async getOperationMessage(tenantId: string, operationId: string): Promise<MessagingMessageRow | undefined> {
+    return this.db.selectFrom('messaging_messages').selectAll()
+      .where('tenant_id', '=', tenantId).where('idempotency_key', '=', operationId).executeTakeFirst();
+  }
+
+  async getMessage(tenantId: string, messageId: string): Promise<MessagingMessageRow> {
+    const row = await this.db.selectFrom('messaging_messages').selectAll()
+      .where('tenant_id', '=', tenantId).where('id', '=', messageId).executeTakeFirst();
+    if (!row) throw ApiError.notFound('message not found');
+    return row;
+  }
+
+  async reconcileMessage(tenantId: string, actor: string, messageId: string, suppliedProviderId?: string): Promise<MessagingMessageRow> {
+    const message = await this.getMessage(tenantId, messageId);
+    if (message.direction !== 'out' || !message.to_address) throw ApiError.badRequest('only outbound messages can be reconciled');
+    const providerMessageId = message.provider_message_id ?? suppliedProviderId;
+    if (!providerMessageId) throw ApiError.conflict('locate the existing provider message before reconciliation; do not resubmit');
+    if (message.provider_message_id && suppliedProviderId && suppliedProviderId !== message.provider_message_id) {
+      throw ApiError.conflict('provider message id differs from the recorded submission');
+    }
+    const provider = this.providers[message.channel];
+    if (!provider?.reconcile) throw new ApiError(501, 'provider readback is not connected', 'not_connected');
+    const result = await provider.reconcile({ tenantId, operationId: message.id, providerMessageId,
+      to: message.to_address, from: message.from_address, subject: message.subject, body: message.body });
+    if (result.providerMessageId !== providerMessageId || !/^[a-f0-9]{64}$/.test(result.evidenceSha256)) {
+      throw ApiError.conflict('provider readback did not match the existing message');
+    }
+    const status = result.status === 'failed' ? 'failed' : ['accepted', 'delivered'].includes(result.status) ? 'sent' : message.status;
+    const reconciledAt = nowIso();
+    // The conditional write ensures concurrent readbacks cannot replace a newer decision.
+    let update = this.db.updateTable('messaging_messages').set({ status, provider_message_id: providerMessageId,
+      delivery_status: result.status, failed_reason: result.detail ?? null, reconciled_at: reconciledAt,
+      reconciliation_json: JSON.stringify({ ...result, checkedAt: reconciledAt }) })
+      .where('tenant_id', '=', tenantId).where('id', '=', message.id);
+    update = message.reconciled_at ? update.where('reconciled_at', '=', message.reconciled_at) : update.where('reconciled_at', 'is', null);
+    const changed = await update.executeTakeFirst();
+    if (!changed.numUpdatedRows) throw ApiError.conflict('message was reconciled concurrently; read its current state');
+    await audit(asCoreDb(this.db), tenantId, actor, 'messaging.message.reconciled', 'messaging.message', message.id,
+      { status, deliveryStatus: result.status, providerMessageId, evidenceSha256: result.evidenceSha256 });
+    await this.events.emit(tenantId, 'messaging.message.reconciled', { messageId: message.id, status, deliveryStatus: result.status });
+    if (status === 'sent' && message.status !== 'sent') await this.events.emit(tenantId, 'messaging.message.sent', {
+      messageId: message.id, channel: message.channel, to: message.to_address });
+    return this.getMessage(tenantId, message.id);
   }
 
   /* ------------------------------ templates ------------------------------ */
@@ -1032,27 +1108,58 @@ export function createMessagingSendContract(
   db: Kysely<MessagingDatabase>,
   events: EventBus,
   options: MessagingServiceOptions = {},
-): SendMessageContract {
+): DurableSendMessageContract {
   const service = new MessagingService(db, events, options);
   return {
-    async sendMessage(input: SendMessageInput): Promise<{ id: string }> {
+    async sendMessage(input: DurableSendMessageInput): Promise<{ id: string }> {
       const channel: ChannelType = input.channel === 'portal' ? 'internal' : input.channel;
-      const conversation = await service.createConversation(input.tenantId, 'system', {
+      const operationId = input.idempotencyKey ?? id();
+      const requestHash = createHash('sha256').update(JSON.stringify({ channel, to: input.to, subject: input.subject ?? null,
+        body: input.body, relatedEntityType: input.relatedEntityType ?? null, relatedEntityId: input.relatedEntityId ?? null })).digest('hex');
+      const previous = await db.selectFrom('messaging_operations').selectAll()
+        .where('tenant_id', '=', input.tenantId).where('id', '=', operationId).executeTakeFirst();
+      let conversationId = previous?.conversation_id;
+      if (previous) {
+        if (previous.request_hash !== requestHash) throw ApiError.conflict('message operation belongs to different content');
+        if (!conversationId) throw ApiError.conflict('message operation is unresolved; inspect the recorded operation');
+      } else {
+        try {
+          await db.insertInto('messaging_operations').values({ id: operationId, tenant_id: input.tenantId,
+            request_hash: requestHash, conversation_id: null, created_at: nowIso() }).execute();
+        } catch (error) {
+          const raced = await db.selectFrom('messaging_operations').select('id')
+            .where('tenant_id', '=', input.tenantId).where('id', '=', operationId).executeTakeFirst();
+          if (raced) throw ApiError.conflict('message operation is already being processed');
+          throw error;
+        }
+        const conversation = await service.createConversation(input.tenantId, 'system', {
         subject: input.subject?.trim() || `Message to ${input.to}`,
         channel,
         customerId: input.relatedEntityType === 'crm.customer' ? input.relatedEntityId : undefined,
         contactId: input.relatedEntityType === 'crm.contact' ? input.relatedEntityId : undefined,
         participants: [{ kind: 'external', address: input.to }],
-      });
+        });
+        conversationId = conversation.id;
+        await db.updateTable('messaging_operations').set({ conversation_id: conversationId })
+          .where('tenant_id', '=', input.tenantId).where('id', '=', operationId).execute();
+      }
       const message = await service.sendOutbound(input.tenantId, 'system', {
-        conversationId: conversation.id,
+        conversationId: conversationId!,
+        idempotencyKey: operationId,
         to: input.to,
         subject: input.subject,
         body: input.body,
       });
+      if (message.status !== 'sent') throw ApiError.conflict(message.failed_reason ?? 'message delivery is unresolved');
       return { id: message.id };
     },
   };
+}
+
+/** Backward-compatible extension; the shared core contract stays unchanged. */
+export interface DurableSendMessageInput extends SendMessageInput { idempotencyKey?: string }
+export interface DurableSendMessageContract extends SendMessageContract {
+  sendMessage(input: DurableSendMessageInput): Promise<{ id: string }>;
 }
 
 function toChannelDto(row: MessagingChannelRow): ChannelDto {

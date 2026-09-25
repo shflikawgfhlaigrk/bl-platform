@@ -53,6 +53,9 @@ export const WIDGET_CATALOG: readonly WidgetDefinition[] = [
     placeholder: false,
   },
   {
+    key: 'jobs', name: 'Jobs', description: 'CRM jobs by recorded status.', path: '/widgets/jobs', placeholder: false,
+  },
+  {
     key: 'quote_conversion',
     name: 'Quote conversion',
     description: 'Sent → approved conversion rate (from quoting).',
@@ -130,6 +133,8 @@ export interface KpiDefinition {
  * keys. "In range" always means `created_at` within [from, to].
  */
 export const KPI_DEFINITIONS: readonly KpiDefinition[] = [
+  { key: 'jobs_total', name: 'Jobs', description: 'CRM jobs created in the selected period.', formula: 'COUNT(crm_jobs) WHERE created_at IN range', unit: 'count', widget: 'jobs' },
+  { key: 'jobs_completed', name: 'Completed jobs', description: 'Completed CRM jobs created in the selected period.', formula: "COUNT(crm_jobs) WHERE status = 'completed' AND created_at IN range", unit: 'count', widget: 'jobs' },
   {
     key: 'revenue_cents',
     name: 'Paid revenue',
@@ -417,6 +422,17 @@ export interface AppointmentsSummary {
   completed: number;
   /** Sorted by status asc. */
   byStatus: StatusCount[];
+}
+
+export async function jobsSummary(db: Db, tenantId: string, range: DateRange = {}): Promise<AppointmentsSummary> {
+  const read = await safeRead(async () => {
+    let query = db.selectFrom('crm_jobs').select('status').select(eb => eb.fn.count<number>('id').as('count')).where('tenant_id', '=', tenantId);
+    if (range.from) query = query.where('created_at', '>=', range.from);
+    if (range.to) query = query.where('created_at', '<=', range.to);
+    return query.groupBy('status').orderBy('status').execute();
+  }, [] as { status: string; count: number }[]);
+  const byStatus = read.value.map(row => ({ status: row.status, count: toCount(row.count) }));
+  return { available: read.available, total: byStatus.reduce((total, row) => total + row.count, 0), completed: byStatus.find(row => row.status === 'completed')?.count ?? 0, byStatus };
 }
 
 export async function appointmentsSummary(
@@ -762,6 +778,11 @@ export async function computeMetric(
   range: DateRange = {},
 ): Promise<MetricValue> {
   switch (key) {
+    case 'jobs_total':
+    case 'jobs_completed': {
+      const result = await jobsSummary(db, tenantId, range);
+      return { key, value: key === 'jobs_total' ? result.total : result.completed, available: result.available };
+    }
     case 'revenue_cents': {
       const r = await revenueSummary(db, tenantId, range);
       return { key, value: r.paidCents, available: r.available };
@@ -1236,6 +1257,7 @@ export interface DashboardPageData {
   revenue: RevenueSummary;
   leadsBySource: LeadsBySource;
   appointments: AppointmentsSummary;
+  jobs?: AppointmentsSummary;
   quoteConversion: QuoteConversion;
   openTasks: OpenTasksSummary;
   employeeActivity: EmployeeActivity;
@@ -1264,6 +1286,7 @@ export async function collectDashboardData(
     revenue: await revenueSummary(db, tenantId, range),
     leadsBySource: await leadsBySource(db, tenantId, range),
     appointments: await appointmentsSummary(db, tenantId, range),
+    jobs: await jobsSummary(db, tenantId, range),
     quoteConversion: await quoteConversion(db, tenantId, range),
     openTasks: await openTasksSummary(db, tenantId, range),
     employeeActivity: await employeeActivity(db, tenantId, range),

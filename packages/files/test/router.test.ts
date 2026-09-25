@@ -500,10 +500,21 @@ describe('audit log', () => {
       body: JSON.stringify({ name: 'audited-2.txt' }),
     });
 
+    const linked = await app.request(`/files/${file.id}/links`, { method: 'POST', headers: h,
+      body: JSON.stringify({ entity_type: 'crm.customer', entity_id: 'fixture-customer' }) });
+    expect(linked.status).toBe(201);
+    const linkId = ((await linked.json()) as any).data.id;
+    const granted = await app.request(`/files/${file.id}/permissions`, { method: 'POST', headers: h,
+      body: JSON.stringify({ grantee_type: 'role', grantee: 'member', can_write: false }) });
+    expect(granted.status).toBe(201);
+    const permissionId = ((await granted.json()) as any).data.id;
+    expect((await app.request(`/files/${file.id}/permissions/${permissionId}`, { method: 'DELETE', headers: h })).status).toBe(200);
+    expect((await app.request(`/files/${file.id}/links/${linkId}`, { method: 'DELETE', headers: h })).status).toBe(200);
     const entries = await listAuditEntries(asCoreDb(db), tenantA.id, 'files.file', file.id);
     const actions = entries.map((e) => e.action);
     expect(actions).toContain('files.file.uploaded');
     expect(actions).toContain('files.file.updated');
+    expect(actions).toEqual(expect.arrayContaining(['files.file.linked', 'files.file.unlinked', 'files.permission.granted', 'files.permission.revoked']));
 
     const viaHttp = ((await (
       await app.request(`/files/${file.id}/audit`, { headers: h })

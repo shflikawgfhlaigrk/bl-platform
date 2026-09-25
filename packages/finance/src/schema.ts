@@ -18,6 +18,13 @@ export type FinanceSourceKind = 'card' | 'cash' | 'external' | 'wallet' | 'gift_
 export type FinanceCostMethod = 'vendor_invoice' | 'manual' | 'weighted_average';
 export type FinanceJurisdictionSource = 'show_venue' | 'ship_to' | 'pos_location' | 'unknown';
 export type FinanceCashStatus = 'open' | 'closed';
+export type FinanceCashExpectedMode = 'posted' | 'ledger';
+export type FinanceCashMovementKind =
+  | 'cash_sale'
+  | 'cash_refund'
+  | 'paid_in'
+  | 'paid_out'
+  | 'drop';
 
 /** One imported payment fact. `source_payment_id` is unique per tenant. */
 export interface FinancePaymentRow {
@@ -123,6 +130,16 @@ export interface FinanceCashSessionRow {
   tenant_id: string;
   location_ref: string | null;
   show_ref: string | null;
+  /** Physical drawer id. New POS sessions use this as their open-session scope. */
+  drawer_ref: string | null;
+  /** Register/device id for operational attribution. */
+  register_ref: string | null;
+  /** Null only on rows created before the POS drawer-ledger migration. */
+  expected_mode: FinanceCashExpectedMode | null;
+  /** Non-null only while open; unique per tenant to prevent two open sessions. */
+  open_scope_key: string | null;
+  /** Updated by every guarded drawer mutation; also acts as the row-lock write. */
+  last_activity_at: string | null;
   opened_by: string;
   opened_at: string;
   opening_float_cents: number;
@@ -135,6 +152,31 @@ export interface FinanceCashSessionRow {
   variance_cents: number | null;
   status: FinanceCashStatus;
   note: string | null;
+  created_at: string;
+}
+
+/**
+ * Append-only physical drawer ledger. Amounts are stored as positive cents;
+ * `kind` determines their effect on expected cash:
+ * sale/paid_in = +, refund/paid_out/drop = -.
+ */
+export interface FinanceCashMovementRow {
+  id: string;
+  tenant_id: string;
+  session_ref: string;
+  kind: FinanceCashMovementKind;
+  /** Original tender/refund/manual source reference for drill-through. */
+  source_ref: string;
+  /** Namespaced mutation identity, unique across all drawer mutation kinds. */
+  idempotency_key: string;
+  /** Orders-module id by string reference; null for manual drawer movements. */
+  order_ref: string | null;
+  /** Cash tender id; refund rows point back to the refunded tender when known. */
+  tender_ref: string | null;
+  amount_cents: number;
+  note: string | null;
+  created_by: string;
+  occurred_at: string;
   created_at: string;
 }
 
@@ -208,6 +250,7 @@ export interface FinanceDatabase extends CoreDatabase {
   finance_vendor_bill_refs: FinanceVendorBillRefRow;
   finance_payout_matches: FinancePayoutMatchRow;
   finance_cash_sessions: FinanceCashSessionRow;
+  finance_cash_movements: FinanceCashMovementRow;
   finance_cash_adjustments: FinanceCashAdjustmentRow;
   finance_item_costs: FinanceItemCostRow;
   finance_liability_snapshots: FinanceLiabilitySnapshotRow;
