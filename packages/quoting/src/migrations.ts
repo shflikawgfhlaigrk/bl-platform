@@ -152,4 +152,17 @@ export const quotingMigrations: Migration[] = [
         .execute();
     },
   },
+  {
+    name: 'quoting.0002_verified_conversions',
+    up: async (db) => {
+      await db.schema.createTable('quoting_conversions')
+        .addColumn('id', 'text', c => c.primaryKey())
+        .addColumn('tenant_id', 'text', c => c.notNull())
+        .addColumn('quote_id', 'text', c => c.notNull())
+        .addColumn('job_id', 'text', c => c.notNull())
+        .addColumn('invoice_id', 'text', c => c.notNull())
+        .addColumn('created_at', 'text', c => c.notNull()).execute();
+      await db.schema.createIndex('quoting_conversions_tenant_quote_idx').on('quoting_conversions').columns(['tenant_id', 'quote_id']).unique().execute();
+    },
+  },
 ];

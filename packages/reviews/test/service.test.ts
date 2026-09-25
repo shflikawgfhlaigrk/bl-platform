@@ -26,7 +26,7 @@ describe('campaign dispatch — schedule & throttle', () => {
     });
 
     const day1 = '2026-07-10T09:00:00.000Z';
-    const first = await dispatchCampaign(db, tenantA.id, 'system', campaign.id, { now: day1 });
+    const first = await dispatchCampaign(db, tenantA.id, 'system', campaign.id, { now: day1, provider: new SpyProvider() });
     expect(first).toEqual({ dispatched: 2, reason: null });
 
     const sameDay = await dispatchCampaign(db, tenantA.id, 'system', campaign.id, {
@@ -36,6 +36,7 @@ describe('campaign dispatch — schedule & throttle', () => {
 
     const nextDay = await dispatchCampaign(db, tenantA.id, 'system', campaign.id, {
       now: '2026-07-11T00:30:00.000Z',
+      provider: new SpyProvider(),
     });
     expect(nextDay).toEqual({ dispatched: 2, reason: null });
 
@@ -64,6 +65,7 @@ describe('campaign dispatch — schedule & throttle', () => {
 
     const onTime = await dispatchCampaign(db, tenantA.id, 'system', campaign.id, {
       now: '2026-08-01T00:00:01.000Z',
+      provider: new SpyProvider(),
     });
     expect(onTime).toEqual({ dispatched: 1, reason: null });
 
@@ -73,7 +75,7 @@ describe('campaign dispatch — schedule & throttle', () => {
     expect(done).toEqual({ dispatched: 0, reason: 'no_pending' });
   });
 
-  it('delivers through the provider stub and the messaging contract when wired', async () => {
+  it('uses one configured delivery path without a duplicate messaging send', async () => {
     const { db, events, tenantA } = await setup();
     const provider = new SpyProvider();
     const messages: SendMessageInput[] = [];
@@ -90,20 +92,20 @@ describe('campaign dispatch — schedule & throttle', () => {
 
     await dispatchCampaign(db, tenantA.id, 'system', campaign.id, { provider, sendMessage });
     expect(provider.requests).toHaveLength(1);
-    expect(messages).toHaveLength(1);
-    expect(messages[0].tenantId).toBe(tenantA.id);
-    expect(messages[0].body).toContain(requests[0].token); // the customer gets their tokenized link
-    expect(messages[0].relatedEntityId).toBe(requests[0].id);
+    expect(messages).toHaveLength(0);
+    expect(provider.requests[0]).toMatchObject({ tenantId: tenantA.id, requestId: requests[0].id });
+    expect((provider.requests[0] as any).link).toContain(requests[0].token);
   });
 
-  it('degrades gracefully when no messaging contract is wired', async () => {
+  it('keeps the request unsent when no delivery provider is connected', async () => {
     const { db, events, tenantA } = await setup();
     const { campaign } = await createCampaign(db, events, tenantA.id, 'system', {
       name: 'No contract',
       customerIds: ['c1'],
     });
-    const result = await dispatchCampaign(db, tenantA.id, 'system', campaign.id, {});
-    expect(result.dispatched).toBe(1);
+    await expect(dispatchCampaign(db, tenantA.id, 'system', campaign.id, {})).rejects.toThrow('not connected');
+    const row = await db.selectFrom('reviews_requests').selectAll().where('tenant_id', '=', tenantA.id).where('campaign_id', '=', campaign.id).executeTakeFirstOrThrow();
+    expect(row.sent_at).toBeNull();
   });
 });
 
@@ -246,7 +248,7 @@ describe('testimonials & dashboard (service level)', () => {
       name: 'Audited',
       customerIds: ['c1'],
     });
-    await dispatchCampaign(db, tenantA.id, 'user_42', campaign.id, {});
+    await dispatchCampaign(db, tenantA.id, 'user_42', campaign.id, { provider: new SpyProvider() });
     const entries = await db
       .selectFrom('audit_log')
       .select(['actor', 'action', 'entity_id'])

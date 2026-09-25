@@ -1,0 +1,175 @@
+{
+  "checkedAt": "2026-09-06T14:03:11.289660+00:00",
+  "device": {
+    "udid": "00008120-000C085E3CE00032",
+    "model": "iPad (A16)",
+    "os": "26.6.1",
+    "bundleIdentifier": "com.blacklabel.oneclub.pos",
+    "displayName": "Bar One",
+    "version": "1.0",
+    "build": "9",
+    "configuration": "Release",
+    "installationVerified": true,
+    "finalLaunchRequested": true
+  },
+  "origin": "https://bar-one-pos.michael-070.workers.dev",
+  "backend": {
+    "database": ".storage/bar-one-venue/platform.db",
+    "transport": "Cloudflare Worker and authenticated relay to this Mac",
+    "requiresMacAndInternet": true
+  },
+  "menu": {
+    "total": 80,
+    "verifiedPrices": 63,
+    "remainingPrices": [
+      "Banfi Chianti Riserva",
+      "Brancatelli Valle delle Stelle Cabernet Sauvignon",
+      "Gavi",
+      "Ch\u00e2teau Prieur\u00e9 de Blaignan M\u00e9doc",
+      "Beautiful Monster Big Bold Red",
+      "Truly Wild Berry",
+      "E&J VSOP Brandy",
+      "Korbel Brandy",
+      "The Glenlivet 12",
+      "High West Bourbon",
+      "Elijah Craig Small Batch",
+      "Basil Hayden Dark Rye",
+      "Romana Sambuca",
+      "Di Amore Amaretto",
+      "Noilly Prat Extra Dry",
+      "Amaro Montenegro",
+      "Bols Cr\u00e8me de Banana"
+    ],
+    "importReceipt": ".storage/bar-one-gn-price-import.json",
+    "physicalUI": ".storage/bar-one-final-menu9.xcresult"
+  },
+  "printer": {
+    "photo": "IMG_5960.HEIC",
+    "manufacturer": "Star Micronics",
+    "series": "TSP100",
+    "model": "TSP143IIILAN",
+    "interface": "Ethernet LAN",
+    "ip": null,
+    "connected": false,
+    "requiredPrintCommand": "StarXpand actionPrintImage; graphics-only model",
+    "configuredIP": "10.1.10.71",
+    "configurationSource": "GN Pro Main Printer and Cold Station settings",
+    "lastNativeResult": "Device not found.",
+    "nativeResult": ".storage/bar-one-native-final9.xcresult"
+  },
+  "reader": {
+    "photo": "IMG_5959.HEIC",
+    "manufacturer": "Ingenico",
+    "model": "Lane/3600",
+    "product": "Lane3600 CL /Eth",
+    "mac": "10:1e:da:0e:ef:4a",
+    "previouslyObservedIP": "10.1.10.248",
+    "currentIPVerified": true,
+    "connected": false,
+    "processorVerified": false,
+    "currentIP": "10.1.10.248",
+    "networkReachable": true,
+    "currentIPSource": "ARP 10:1e:da:0e:ef:4a matches hardware label; TCP connection refusal establishes responding host, not processor access."
+  },
+  "livePaymentProviders": [],
+  "taxConfigured": false,
+  "livePaymentsOrRefundsSent": false,
+  "physicalPrintSent": false,
+  "practiceService": {
+    "checkedAt": "2026-09-06T13:53:42.494Z",
+    "environment": "Disposable practice; simulated payments and printer bridge only",
+    "stages": [
+      "Practice identity and cash shift verified",
+      "Food and drink round routed to separate test printers",
+      "Equal checks, partial card plus cash, tip review, refund and receipt reprint verified",
+      "Lost response recovered with one tab; no duplicate business action"
+    ],
+    "actualPaymentOrPrintSent": false,
+    "orderIDs": [
+      "17zOxGZcIVmllaERKp27X",
+      "d4ISvJJDxx0k8gd_E0TXr"
+    ],
+    "capturedCents": 2640,
+    "refundedCents": 100,
+    "cashCollectedCents": 820,
+    "printedRequests": [
+      {
+        "id": "ticket:rQ95HYg5BGAOZnnOHWzW3:1",
+        "documentId": "ticket:rQ95HYg5BGAOZnnOHWzW3",
+        "role": "bar",
+        "automatic": true,
+        "reprint": false
+      },
+      {
+        "id": "ticket:rQ95HYg5BGAOZnnOHWzW3:kitchen:1",
+        "documentId": "ticket:rQ95HYg5BGAOZnnOHWzW3:kitchen",
+        "role": "kitchen",
+        "automatic": true,
+        "reprint": false
+      },
+      {
+        "id": "e2438029-0b55-4d07-95cb-f90fd7c6012a",
+        "documentId": "receipt:17zOxGZcIVmllaERKp27X",
+        "role": "receipt",
+        "automatic": false,
+        "reprint": false
+      },
+      {
+        "id": "fbc63990-aad1-4eda-a02d-29ad251bc759",
+        "documentId": "receipt:17zOxGZcIVmllaERKp27X",
+        "role": "receipt",
+        "automatic": false,
+        "reprint": true
+      },
+      {
+        "id": "bc220a57-cb80-4521-b349-afa00cec417f",
+        "documentId": "receipt:d4ISvJJDxx0k8gd_E0TXr",
+        "role": "receipt",
+        "automatic": false,
+        "reprint": false
+      }
+    ],
+    "pageErrors": []
+  },
+  "validation": {
+    "earlierFullSuite": "231 files / 1608 tests passed before subsequent printing changes",
+    "finalPrintingAndServiceWorker": "10 tests passed",
+    "nativeRasterAndJournal": "5 tests passed; .storage/bar-one-print-journal-build9.xcresult",
+    "finalNativeRoles": ".storage/bar-one-native-final9.xcresult; controls passed, printer connection failed",
+    "finalMenuUI": ".storage/bar-one-final-menu9.xcresult; passed"
+  },
+  "backup": ".storage/bar-one-venue/backups/2026-09-06T14-02-02-709Z",
+  "fullyOperational": false,
+  "sourceSHA256": {
+    "apps/ipad/Sources/StarReceiptPrinter.swift": "53bf23695928b742f70b97876872f2d9637b93cc80cbf566a6016affea092ee3",
+    "apps/ipad/Sources/ReceiptRasterizer.swift": "f6f4fb7c57f1749541af66b707e951bd285a79e593926932a23aba6a1d2fea3f",
+    "apps/ipad/Sources/PrintJournal.swift": "7550c45e08a1ded4287004a49c2276636f325c14fbd9488afd5dfaf29dfc5da8",
+    "apps/ipad/Sources/OneClubPOSApp.swift": "a9b2c0b6b67660d791d2049cd6dbcf24a92d3fae67b4a126feb305a498e8d264",
+    "apps/ui/public/js/printing.js": "7d7f345b741004760023fba4aae729b3a586fed22f2dc081adf09cacb059d848",
+    "apps/ui/public/js/views/bar.js": "46dc8540e33a524048220f42207415aaa8b79b439ad3bea6eeb559c1527cf1fc",
+    "apps/ui/public/sw.js": "31cee5653799d29990207ab3c1a33c6a21105b79f4f7f38e8b39f4c8f3046540",
+    "docs/bar-one/gn-pro-prices-2026-09-06.json": "5640ffb4258954c654ec3a26729b2bdbf10046faa8ece0c3544e2f75e0f3f154",
+    "docs/bar-one/gn-pro-menu-plan-2026-09-06.json": "009b4db27d74f0c3c3593f36363aa35e51cedb307a3563d940ffc9d9c2861315"
+  },
+  "publicArtifacts": {
+    "checkedAt": "2026-09-06T14:03:33.592Z",
+    "origin": "https://bar-one-pos.michael-070.workers.dev",
+    "checks": [
+      {
+        "path": "/js/printing.js",
+        "status": 200,
+        "sha256": "7d7f345b741004760023fba4aae729b3a586fed22f2dc081adf09cacb059d848"
+      },
+      {
+        "path": "/js/views/bar.js",
+        "status": 200,
+        "sha256": "46dc8540e33a524048220f42207415aaa8b79b439ad3bea6eeb559c1527cf1fc"
+      },
+      {
+        "path": "/sw.js",
+        "status": 200,
+        "sha256": "31cee5653799d29990207ab3c1a33c6a21105b79f4f7f38e8b39f4c8f3046540"
+      }
+    ]
+  }
+}

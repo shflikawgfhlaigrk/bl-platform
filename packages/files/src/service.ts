@@ -27,6 +27,7 @@ import type {
   PermissionGranteeType,
 } from './schema';
 import { StorageError, newStorageKey, type StorageProvider } from './storage';
+import { assertFileSize } from './upload-limits';
 
 type Db = Kysely<FilesDatabase>;
 
@@ -478,6 +479,7 @@ export async function completeUpload(
     throw ApiError.conflict(`upload session is ${session.status}, expected pending`);
   }
 
+  assertFileSize(content.byteLength);
   await storage.put(session.storage_key, content);
 
   const now = nowIso();
@@ -775,6 +777,9 @@ export async function attachLink(
     entity_type: entityType,
     entity_id: entityId,
   });
+  await audit(asCoreDb(db), tenantId, actorLabel(actor), 'files.file.linked', 'files.file', fileId, {
+    link_id: row.id, entity_type: entityType, entity_id: entityId,
+  });
   await events.emit(tenantId, 'files.file.linked', { fileId, entityType, entityId });
   return row;
 }
@@ -800,6 +805,9 @@ export async function detachLink(
     file_id: fileId,
     entity_type: link.entity_type,
     entity_id: link.entity_id,
+  });
+  await audit(asCoreDb(db), tenantId, actorLabel(actor), 'files.file.unlinked', 'files.file', fileId, {
+    link_id: linkId, entity_type: link.entity_type, entity_id: link.entity_id,
   });
   await events.emit(tenantId, 'files.file.unlinked', {
     fileId,
@@ -884,6 +892,9 @@ export async function grantPermission(
     grantee: row.grantee,
     can_write: row.can_write,
   });
+  await audit(asCoreDb(db), tenantId, actorLabel(actor), 'files.permission.granted', 'files.file', fileId, {
+    permission_id: row.id, grantee_type: row.grantee_type, grantee: row.grantee, can_write: row.can_write,
+  });
   await events.emit(tenantId, 'files.permission.granted', {
     fileId,
     permissionId: row.id,
@@ -924,6 +935,9 @@ export async function revokePermission(
     permissionId,
     { file_id: fileId, grantee_type: perm.grantee_type, grantee: perm.grantee },
   );
+  await audit(asCoreDb(db), tenantId, actorLabel(actor), 'files.permission.revoked', 'files.file', fileId, {
+    permission_id: permissionId, grantee_type: perm.grantee_type, grantee: perm.grantee,
+  });
   await events.emit(tenantId, 'files.permission.revoked', { fileId, permissionId });
 }
 

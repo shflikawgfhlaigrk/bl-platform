@@ -1,0 +1,841 @@
+{
+  "venue": "Bar One · ONE Club · Gulf Shores",
+  "source": "Seven photos texted by Michael; Messages attachment batch 2026-09-06 12:23:21 UTC.",
+  "sources": [
+    {
+      "filename": "IMG_5952.HEIC",
+      "sha256": "b215dede0c47c0e3b71673d752b606a9fcf8a107580ff8447f2e22d844343b8a"
+    },
+    {
+      "filename": "IMG_5953.HEIC",
+      "sha256": "c7f198d2bd246cd39858b1c81aa715bb27fc4dabd733d9c51a3af46a45342633"
+    },
+    {
+      "filename": "IMG_5954.HEIC",
+      "sha256": "8c217366c6c45f94bd2b41905939f7789a9457ff8309e66a86444e4f869a4265"
+    },
+    {
+      "filename": "IMG_5955.HEIC",
+      "sha256": "17fa0a02e66adeaf0b8ae7b95faca2e4b4fb9d0e930e4582bd2fd8f018927d4c"
+    },
+    {
+      "filename": "IMG_5956.HEIC",
+      "sha256": "767c1363501c60458b2d1c61ae00486bb5cecb932c65fc3d49dd89cb2447837f"
+    },
+    {
+      "filename": "IMG_5957.HEIC",
+      "sha256": "ac7160d5ae7c8695f6f88398bdf52cee4b5225568d5d7db51d1a8bad1ee8b098"
+    },
+    {
+      "filename": "IMG_5958.HEIC",
+      "sha256": "f373bb4989e23443f1d16a4d653a9199f363a9871f9f8ae8e081cb41c89b7ecd"
+    }
+  ],
+  "items": [
+    {
+      "sourcePhoto": "IMG_5952",
+      "menu": {
+        "name": "Biscuits and gravy",
+        "category": "Breakfast",
+        "priceCents": 800,
+        "prepStation": "kitchen",
+        "description": "Breakfast served 7–10 am.",
+        "instructions": "Breakfast 7–10 am. Breakfast served 7–10 am. Honor the selected options and preparation note.",
+        "modifiers": []
+      }
+    },
+    {
+      "sourcePhoto": "IMG_5952",
+      "menu": {
+        "name": "2 Eggs",
+        "category": "Breakfast",
+        "priceCents": 1200,
+        "prepStation": "kitchen",
+        "description": "Choice of sausage or bacon, with grits.",
+        "instructions": "Breakfast 7–10 am. Choice of sausage or bacon, with grits. Honor the selected options and preparation note.",
+        "modifiers": [
+          {
+            "id": "breakfast-meat",
+            "name": "Breakfast meat",
+            "required": true,
+            "choices": [
+              {
+                "id": "sausage",
+                "name": "Sausage",
+                "priceCents": 0
+              },
+              {
+                "id": "bacon",
+                "name": "Bacon",
+                "priceCents": 0
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "sourcePhoto": "IMG_5952",
+      "menu": {
+        "name": "Sausage Egg & Cheese Biscuit",
+        "category": "Breakfast",
+        "priceCents": 800,
+        "prepStation": "kitchen",
+        "description": "Breakfast served 7–10 am.",
+        "instructions": "Breakfast 7–10 am. Breakfast served 7–10 am. Honor the selected options and preparation note.",
+        "modifiers": []
+      }
+    },
+    {
+      "sourcePhoto": "IMG_5952",
+      "menu": {
+        "name": "Bacon Egg & Cheese Biscuit",
+        "category": "Breakfast",
+        "priceCents": 800,
+        "prepStation": "kitchen",
+        "description": "Breakfast served 7–10 am.",
+        "instructions": "Breakfast 7–10 am. Breakfast served 7–10 am. Honor the selected options and preparation note.",
+        "modifiers": []
+      }
+    },
+    {
+      "sourcePhoto": "IMG_5952",
+      "menu": {
+        "name": "Pancakes",
+        "category": "Breakfast",
+        "priceCents": 1000,
+        "prepStation": "kitchen",
+        "description": "With sausage or bacon.",
+        "instructions": "Breakfast 7–10 am. With sausage or bacon. Honor the selected options and preparation note.",
+        "modifiers": [
+          {
+            "id": "breakfast-meat",
+            "name": "Breakfast meat",
+            "required": true,
+            "choices": [
+              {
+                "id": "sausage",
+                "name": "Sausage",
+                "priceCents": 0
+              },
+              {
+                "id": "bacon",
+                "name": "Bacon",
+                "priceCents": 0
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "sourcePhoto": "IMG_5952",
+      "menu": {
+        "name": "Double Smash Burger",
+        "category": "Lunch / dinner",
+        "priceCents": 1400,
+        "prepStation": "kitchen",
+        "description": "With fries.",
+        "instructions": "Serve with the selected side. Fries included; tots or onion rings +$2.",
+        "modifiers": [
+          {
+            "id": "side",
+            "name": "Side",
+            "required": true,
+            "choices": [
+              {
+                "id": "included",
+                "name": "Fries",
+                "priceCents": 0
+              },
+              {
+                "id": "tots",
+                "name": "Tots",
+                "priceCents": 200
+              },
+              {
+                "id": "onion-rings",
+                "name": "Onion rings",
+                "priceCents": 200
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "sourcePhoto": "IMG_5952",
+      "menu": {
+        "name": "Mushroom Swiss Burger",
+        "category": "Lunch / dinner",
+        "priceCents": 1700,
+        "prepStation": "kitchen",
+        "description": "With fries.",
+        "instructions": "Serve with the selected side. Fries included; tots or onion rings +$2.",
+        "modifiers": [
+          {
+            "id": "side",
+            "name": "Side",
+            "required": true,
+            "choices": [
+              {
+                "id": "included",
+                "name": "Fries",
+                "priceCents": 0
+              },
+              {
+                "id": "tots",
+                "name": "Tots",
+                "priceCents": 200
+              },
+              {
+                "id": "onion-rings",
+                "name": "Onion rings",
+                "priceCents": 200
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "sourcePhoto": "IMG_5952",
+      "menu": {
+        "name": "Chicken Bacon Ranch Quesadilla",
+        "category": "Lunch / dinner",
+        "priceCents": 1500,
+        "prepStation": "kitchen",
+        "description": "With fries.",
+        "instructions": "Serve with the selected side. Fries included; tots or onion rings +$2.",
+        "modifiers": [
+          {
+            "id": "side",
+            "name": "Side",
+            "required": true,
+            "choices": [
+              {
+                "id": "included",
+                "name": "Fries",
+                "priceCents": 0
+              },
+              {
+                "id": "tots",
+                "name": "Tots",
+                "priceCents": 200
+              },
+              {
+                "id": "onion-rings",
+                "name": "Onion rings",
+                "priceCents": 200
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "sourcePhoto": "IMG_5952",
+      "menu": {
+        "name": "Philly Cheese Steak",
+        "category": "Lunch / dinner",
+        "priceCents": 1600,
+        "prepStation": "kitchen",
+        "description": "With fries.",
+        "instructions": "Serve with the selected side. Fries included; tots or onion rings +$2.",
+        "modifiers": [
+          {
+            "id": "side",
+            "name": "Side",
+            "required": true,
+            "choices": [
+              {
+                "id": "included",
+                "name": "Fries",
+                "priceCents": 0
+              },
+              {
+                "id": "tots",
+                "name": "Tots",
+                "priceCents": 200
+              },
+              {
+                "id": "onion-rings",
+                "name": "Onion rings",
+                "priceCents": 200
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "sourcePhoto": "IMG_5952",
+      "menu": {
+        "name": "Spinach & Artichoke Dip",
+        "category": "Lunch / dinner",
+        "priceCents": 1400,
+        "prepStation": "kitchen",
+        "description": "With tortilla chips (appetizer).",
+        "instructions": "With tortilla chips (appetizer).",
+        "modifiers": []
+      }
+    },
+    {
+      "sourcePhoto": "IMG_5952",
+      "menu": {
+        "name": "Blackened Chicken Caesar Salad",
+        "category": "Lunch / dinner",
+        "priceCents": 1400,
+        "prepStation": "kitchen",
+        "description": "",
+        "instructions": "",
+        "modifiers": []
+      }
+    },
+    {
+      "sourcePhoto": "IMG_5952",
+      "menu": {
+        "name": "Cranberry Chicken Salad",
+        "category": "Lunch / dinner",
+        "priceCents": 1400,
+        "prepStation": "kitchen",
+        "description": "With candied pecans, feta cheese and honey vinaigrette.",
+        "instructions": "With candied pecans, feta cheese and honey vinaigrette.",
+        "modifiers": []
+      }
+    },
+    {
+      "sourcePhoto": "IMG_5952",
+      "menu": {
+        "name": "Chicken Tenders",
+        "category": "Lunch / dinner",
+        "priceCents": null,
+        "prepStation": "kitchen",
+        "description": "With fries. Price obscured in the menu photo.",
+        "instructions": "Serve with the selected side. Fries included; tots or onion rings +$2.",
+        "modifiers": [
+          {
+            "id": "side",
+            "name": "Side",
+            "required": true,
+            "choices": [
+              {
+                "id": "included",
+                "name": "Fries",
+                "priceCents": 0
+              },
+              {
+                "id": "tots",
+                "name": "Tots",
+                "priceCents": 200
+              },
+              {
+                "id": "onion-rings",
+                "name": "Onion rings",
+                "priceCents": 200
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "sourcePhoto": "IMG_5952",
+      "menu": {
+        "name": "Hot Honey Chicken Sandwich",
+        "category": "Lunch / dinner",
+        "priceCents": 1500,
+        "prepStation": "kitchen",
+        "description": "With fries.",
+        "instructions": "Serve with the selected side. Fries included; tots or onion rings +$2.",
+        "modifiers": [
+          {
+            "id": "side",
+            "name": "Side",
+            "required": true,
+            "choices": [
+              {
+                "id": "included",
+                "name": "Fries",
+                "priceCents": 0
+              },
+              {
+                "id": "tots",
+                "name": "Tots",
+                "priceCents": 200
+              },
+              {
+                "id": "onion-rings",
+                "name": "Onion rings",
+                "priceCents": 200
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "sourcePhoto": "IMG_5952",
+      "menu": {
+        "name": "Meatball Marinara",
+        "category": "Lunch / dinner",
+        "priceCents": 1200,
+        "prepStation": "kitchen",
+        "description": "With chips.",
+        "instructions": "Serve with the selected side. Chips included; tots or onion rings +$2.",
+        "modifiers": [
+          {
+            "id": "side",
+            "name": "Side",
+            "required": true,
+            "choices": [
+              {
+                "id": "included",
+                "name": "Chips",
+                "priceCents": 0
+              },
+              {
+                "id": "tots",
+                "name": "Tots",
+                "priceCents": 200
+              },
+              {
+                "id": "onion-rings",
+                "name": "Onion rings",
+                "priceCents": 200
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "sourcePhoto": "IMG_5953",
+      "menu": {
+        "name": "Bols Crème de Banana",
+        "category": "Liqueurs",
+        "priceCents": null,
+        "prepStation": "bar",
+        "description": "Bottle identified in the bar photo. House pour and price need confirmation.",
+        "instructions": "For a straight serve: confirm neat, on the rocks or the guest's mixer. Use a jigger for the approved house pour. For a mixed drink, open Drink guide or the saved house recipe. Confirm the pour size and selling price before service.",
+        "modifiers": []
+      }
+    },
+    {
+      "sourcePhoto": "IMG_5953",
+      "menu": {
+        "name": "Amaro Montenegro",
+        "category": "Liqueurs",
+        "priceCents": null,
+        "prepStation": "bar",
+        "description": "Bottle identified in the bar photo. House pour and price need confirmation.",
+        "instructions": "For a straight serve: confirm neat, on the rocks or the guest's mixer. Use a jigger for the approved house pour. For a mixed drink, open Drink guide or the saved house recipe. Confirm the pour size and selling price before service.",
+        "modifiers": []
+      }
+    },
+    {
+      "sourcePhoto": "IMG_5953",
+      "menu": {
+        "name": "Noilly Prat Extra Dry",
+        "category": "Vermouth",
+        "priceCents": null,
+        "prepStation": "bar",
+        "description": "Bottle identified in the bar photo. House pour and price need confirmation.",
+        "instructions": "For a straight serve: confirm neat, on the rocks or the guest's mixer. Use a jigger for the approved house pour. For a mixed drink, open Drink guide or the saved house recipe. Confirm the pour size and selling price before service.",
+        "modifiers": []
+      }
+    },
+    {
+      "sourcePhoto": "IMG_5953",
+      "menu": {
+        "name": "Tanqueray London Dry Gin",
+        "category": "Gin",
+        "priceCents": null,
+        "prepStation": "bar",
+        "description": "Bottle identified in the bar photo. House pour and price need confirmation.",
+        "instructions": "For a straight serve: confirm neat, on the rocks or the guest's mixer. Use a jigger for the approved house pour. For a mixed drink, open Drink guide or the saved house recipe. Confirm the pour size and selling price before service.",
+        "modifiers": []
+      }
+    },
+    {
+      "sourcePhoto": "IMG_5953",
+      "menu": {
+        "name": "Grey Goose Vodka",
+        "category": "Vodka",
+        "priceCents": null,
+        "prepStation": "bar",
+        "description": "Bottle identified in the bar photo. House pour and price need confirmation.",
+        "instructions": "For a straight serve: confirm neat, on the rocks or the guest's mixer. Use a jigger for the approved house pour. For a mixed drink, open Drink guide or the saved house recipe. Confirm the pour size and selling price before service.",
+        "modifiers": []
+      }
+    },
+    {
+      "sourcePhoto": "IMG_5953",
+      "menu": {
+        "name": "Absolut Vodka",
+        "category": "Vodka",
+        "priceCents": null,
+        "prepStation": "bar",
+        "description": "Bottle identified in the bar photo. House pour and price need confirmation.",
+        "instructions": "For a straight serve: confirm neat, on the rocks or the guest's mixer. Use a jigger for the approved house pour. For a mixed drink, open Drink guide or the saved house recipe. Confirm the pour size and selling price before service.",
+        "modifiers": []
+      }
+    },
+    {
+      "sourcePhoto": "IMG_5953",
+      "menu": {
+        "name": "Aperol",
+        "category": "Aperitifs",
+        "priceCents": null,
+        "prepStation": "bar",
+        "description": "Bottle identified in the bar photo. House pour and price need confirmation.",
+        "instructions": "For a straight serve: confirm neat, on the rocks or the guest's mixer. Use a jigger for the approved house pour. For a mixed drink, open Drink guide or the saved house recipe. Confirm the pour size and selling price before service.",
+        "modifiers": []
+      }
+    },
+    {
+      "sourcePhoto": "IMG_5953",
+      "menu": {
+        "name": "Don Julio Blanco",
+        "category": "Tequila",
+        "priceCents": null,
+        "prepStation": "bar",
+        "description": "Bottle identified in the bar photo. House pour and price need confirmation.",
+        "instructions": "For a straight serve: confirm neat, on the rocks or the guest's mixer. Use a jigger for the approved house pour. For a mixed drink, open Drink guide or the saved house recipe. Confirm the pour size and selling price before service.",
+        "modifiers": []
+      }
+    },
+    {
+      "sourcePhoto": "IMG_5953",
+      "menu": {
+        "name": "Patrón Reposado",
+        "category": "Tequila",
+        "priceCents": null,
+        "prepStation": "bar",
+        "description": "Bottle identified in the bar photo. House pour and price need confirmation.",
+        "instructions": "For a straight serve: confirm neat, on the rocks or the guest's mixer. Use a jigger for the approved house pour. For a mixed drink, open Drink guide or the saved house recipe. Confirm the pour size and selling price before service.",
+        "modifiers": []
+      }
+    },
+    {
+      "sourcePhoto": "IMG_5953",
+      "menu": {
+        "name": "Di Amore Amaretto",
+        "category": "Liqueurs",
+        "priceCents": null,
+        "prepStation": "bar",
+        "description": "Bottle identified in the bar photo. House pour and price need confirmation.",
+        "instructions": "For a straight serve: confirm neat, on the rocks or the guest's mixer. Use a jigger for the approved house pour. For a mixed drink, open Drink guide or the saved house recipe. Confirm the pour size and selling price before service.",
+        "modifiers": []
+      }
+    },
+    {
+      "sourcePhoto": "IMG_5954",
+      "menu": {
+        "name": "Bombay Sapphire",
+        "category": "Gin",
+        "priceCents": null,
+        "prepStation": "bar",
+        "description": "Bottle identified in the bar photo. House pour and price need confirmation.",
+        "instructions": "For a straight serve: confirm neat, on the rocks or the guest's mixer. Use a jigger for the approved house pour. For a mixed drink, open Drink guide or the saved house recipe. Confirm the pour size and selling price before service.",
+        "modifiers": []
+      }
+    },
+    {
+      "sourcePhoto": "IMG_5954",
+      "menu": {
+        "name": "Bumbu Rum",
+        "category": "Rum",
+        "priceCents": null,
+        "prepStation": "bar",
+        "description": "Bottle identified in the bar photo. House pour and price need confirmation.",
+        "instructions": "For a straight serve: confirm neat, on the rocks or the guest's mixer. Use a jigger for the approved house pour. For a mixed drink, open Drink guide or the saved house recipe. Confirm the pour size and selling price before service.",
+        "modifiers": []
+      }
+    },
+    {
+      "sourcePhoto": "IMG_5954",
+      "menu": {
+        "name": "Campari",
+        "category": "Aperitifs",
+        "priceCents": null,
+        "prepStation": "bar",
+        "description": "Bottle identified in the bar photo. House pour and price need confirmation.",
+        "instructions": "For a straight serve: confirm neat, on the rocks or the guest's mixer. Use a jigger for the approved house pour. For a mixed drink, open Drink guide or the saved house recipe. Confirm the pour size and selling price before service.",
+        "modifiers": []
+      }
+    },
+    {
+      "sourcePhoto": "IMG_5954",
+      "menu": {
+        "name": "Hendrick's Gin",
+        "category": "Gin",
+        "priceCents": null,
+        "prepStation": "bar",
+        "description": "Bottle identified in the bar photo. House pour and price need confirmation.",
+        "instructions": "For a straight serve: confirm neat, on the rocks or the guest's mixer. Use a jigger for the approved house pour. For a mixed drink, open Drink guide or the saved house recipe. Confirm the pour size and selling price before service.",
+        "modifiers": []
+      }
+    },
+    {
+      "sourcePhoto": "IMG_5954",
+      "menu": {
+        "name": "Romana Sambuca",
+        "category": "Liqueurs",
+        "priceCents": null,
+        "prepStation": "bar",
+        "description": "Bottle identified in the bar photo. House pour and price need confirmation.",
+        "instructions": "For a straight serve: confirm neat, on the rocks or the guest's mixer. Use a jigger for the approved house pour. For a mixed drink, open Drink guide or the saved house recipe. Confirm the pour size and selling price before service.",
+        "modifiers": []
+      }
+    },
+    {
+      "sourcePhoto": "IMG_5954",
+      "menu": {
+        "name": "Kahlúa",
+        "category": "Liqueurs",
+        "priceCents": null,
+        "prepStation": "bar",
+        "description": "Bottle identified in the bar photo. House pour and price need confirmation.",
+        "instructions": "For a straight serve: confirm neat, on the rocks or the guest's mixer. Use a jigger for the approved house pour. For a mixed drink, open Drink guide or the saved house recipe. Confirm the pour size and selling price before service.",
+        "modifiers": []
+      }
+    },
+    {
+      "sourcePhoto": "IMG_5957",
+      "menu": {
+        "name": "Crown Royal Canadian Whisky",
+        "category": "Whiskey",
+        "priceCents": null,
+        "prepStation": "bar",
+        "description": "Bottle identified in the bar photo. House pour and price need confirmation.",
+        "instructions": "For a straight serve: confirm neat, on the rocks or the guest's mixer. Use a jigger for the approved house pour. For a mixed drink, open Drink guide or the saved house recipe. Confirm the pour size and selling price before service.",
+        "modifiers": []
+      }
+    },
+    {
+      "sourcePhoto": "IMG_5957",
+      "menu": {
+        "name": "Jim Beam Bourbon",
+        "category": "Whiskey",
+        "priceCents": null,
+        "prepStation": "bar",
+        "description": "Bottle identified in the bar photo. House pour and price need confirmation.",
+        "instructions": "For a straight serve: confirm neat, on the rocks or the guest's mixer. Use a jigger for the approved house pour. For a mixed drink, open Drink guide or the saved house recipe. Confirm the pour size and selling price before service.",
+        "modifiers": []
+      }
+    },
+    {
+      "sourcePhoto": "IMG_5957",
+      "menu": {
+        "name": "Maker's Mark",
+        "category": "Whiskey",
+        "priceCents": null,
+        "prepStation": "bar",
+        "description": "Bottle identified in the bar photo. House pour and price need confirmation.",
+        "instructions": "For a straight serve: confirm neat, on the rocks or the guest's mixer. Use a jigger for the approved house pour. For a mixed drink, open Drink guide or the saved house recipe. Confirm the pour size and selling price before service.",
+        "modifiers": []
+      }
+    },
+    {
+      "sourcePhoto": "IMG_5957",
+      "menu": {
+        "name": "Jack Daniel's Old No. 7",
+        "category": "Whiskey",
+        "priceCents": null,
+        "prepStation": "bar",
+        "description": "Bottle identified in the bar photo. House pour and price need confirmation.",
+        "instructions": "For a straight serve: confirm neat, on the rocks or the guest's mixer. Use a jigger for the approved house pour. For a mixed drink, open Drink guide or the saved house recipe. Confirm the pour size and selling price before service.",
+        "modifiers": []
+      }
+    },
+    {
+      "sourcePhoto": "IMG_5958",
+      "menu": {
+        "name": "Basil Hayden Dark Rye",
+        "category": "Whiskey",
+        "priceCents": null,
+        "prepStation": "bar",
+        "description": "Bottle identified in the bar photo. House pour and price need confirmation.",
+        "instructions": "For a straight serve: confirm neat, on the rocks or the guest's mixer. Use a jigger for the approved house pour. For a mixed drink, open Drink guide or the saved house recipe. Confirm the pour size and selling price before service.",
+        "modifiers": []
+      }
+    },
+    {
+      "sourcePhoto": "IMG_5958",
+      "menu": {
+        "name": "Elijah Craig Small Batch",
+        "category": "Whiskey",
+        "priceCents": null,
+        "prepStation": "bar",
+        "description": "Bottle identified in the bar photo. House pour and price need confirmation.",
+        "instructions": "For a straight serve: confirm neat, on the rocks or the guest's mixer. Use a jigger for the approved house pour. For a mixed drink, open Drink guide or the saved house recipe. Confirm the pour size and selling price before service.",
+        "modifiers": []
+      }
+    },
+    {
+      "sourcePhoto": "IMG_5958",
+      "menu": {
+        "name": "High West Bourbon",
+        "category": "Whiskey",
+        "priceCents": null,
+        "prepStation": "bar",
+        "description": "Bottle identified in the bar photo. House pour and price need confirmation.",
+        "instructions": "For a straight serve: confirm neat, on the rocks or the guest's mixer. Use a jigger for the approved house pour. For a mixed drink, open Drink guide or the saved house recipe. Confirm the pour size and selling price before service.",
+        "modifiers": []
+      }
+    },
+    {
+      "sourcePhoto": "IMG_5958",
+      "menu": {
+        "name": "The Glenlivet 12",
+        "category": "Whiskey",
+        "priceCents": null,
+        "prepStation": "bar",
+        "description": "Bottle identified in the bar photo. House pour and price need confirmation.",
+        "instructions": "For a straight serve: confirm neat, on the rocks or the guest's mixer. Use a jigger for the approved house pour. For a mixed drink, open Drink guide or the saved house recipe. Confirm the pour size and selling price before service.",
+        "modifiers": []
+      }
+    },
+    {
+      "sourcePhoto": "IMG_5958",
+      "menu": {
+        "name": "Korbel Brandy",
+        "category": "Brandy",
+        "priceCents": null,
+        "prepStation": "bar",
+        "description": "Bottle identified in the bar photo. House pour and price need confirmation.",
+        "instructions": "For a straight serve: confirm neat, on the rocks or the guest's mixer. Use a jigger for the approved house pour. For a mixed drink, open Drink guide or the saved house recipe. Confirm the pour size and selling price before service.",
+        "modifiers": []
+      }
+    },
+    {
+      "sourcePhoto": "IMG_5958",
+      "menu": {
+        "name": "E&J VSOP Brandy",
+        "category": "Brandy",
+        "priceCents": null,
+        "prepStation": "bar",
+        "description": "Bottle identified in the bar photo. House pour and price need confirmation.",
+        "instructions": "For a straight serve: confirm neat, on the rocks or the guest's mixer. Use a jigger for the approved house pour. For a mixed drink, open Drink guide or the saved house recipe. Confirm the pour size and selling price before service.",
+        "modifiers": []
+      }
+    },
+    {
+      "sourcePhoto": "IMG_5956",
+      "menu": {
+        "name": "Michelob Ultra",
+        "category": "Draft beer",
+        "priceCents": null,
+        "prepStation": "bar",
+        "description": "Tap handle identified in the photo; confirm current tap, serving size and price.",
+        "instructions": "Confirm the tap label and approved glass size. Use a clean glass; hold it at an angle and open the tap fully without touching the nozzle to the glass. Straighten to finish, close the tap, and check the serve before handing it over.",
+        "modifiers": []
+      }
+    },
+    {
+      "sourcePhoto": "IMG_5956",
+      "menu": {
+        "name": "Miller Lite",
+        "category": "Draft beer",
+        "priceCents": null,
+        "prepStation": "bar",
+        "description": "Tap handle identified in the photo; confirm current tap, serving size and price.",
+        "instructions": "Confirm the tap label and approved glass size. Use a clean glass; hold it at an angle and open the tap fully without touching the nozzle to the glass. Straighten to finish, close the tap, and check the serve before handing it over.",
+        "modifiers": []
+      }
+    },
+    {
+      "sourcePhoto": "IMG_5956",
+      "menu": {
+        "name": "Coors Light",
+        "category": "Draft beer",
+        "priceCents": null,
+        "prepStation": "bar",
+        "description": "Tap handle identified in the photo; confirm current tap, serving size and price.",
+        "instructions": "Confirm the tap label and approved glass size. Use a clean glass; hold it at an angle and open the tap fully without touching the nozzle to the glass. Straighten to finish, close the tap, and check the serve before handing it over.",
+        "modifiers": []
+      }
+    },
+    {
+      "sourcePhoto": "IMG_5956",
+      "menu": {
+        "name": "Truly Wild Berry",
+        "category": "Hard seltzer",
+        "priceCents": null,
+        "prepStation": "bar",
+        "description": "Tap handle identified in the photo; confirm current tap, serving size and price.",
+        "instructions": "Confirm the tap label and approved glass size. Use a clean glass; hold it at an angle and open the tap fully without touching the nozzle to the glass. Straighten to finish, close the tap, and check the serve before handing it over.",
+        "modifiers": []
+      }
+    },
+    {
+      "sourcePhoto": "IMG_5956",
+      "menu": {
+        "name": "Beautiful Monster Big Bold Red",
+        "category": "Wine",
+        "priceCents": null,
+        "prepStation": "bar",
+        "description": "Label identified in the photo. Confirm vintage, glass/bottle availability and price.",
+        "instructions": "Confirm the exact bottle and whether the guest ordered a glass or a bottle. Use a clean wine glass. Measure the approved house glass pour; do not guess a serving size from the bottle photo. Verify the wine is in service before opening it.",
+        "modifiers": []
+      }
+    },
+    {
+      "sourcePhoto": "IMG_5956",
+      "menu": {
+        "name": "Château Prieuré de Blaignan Médoc",
+        "category": "Wine",
+        "priceCents": null,
+        "prepStation": "bar",
+        "description": "Label identified in the photo. Confirm vintage, glass/bottle availability and price.",
+        "instructions": "Confirm the exact bottle and whether the guest ordered a glass or a bottle. Use a clean wine glass. Measure the approved house glass pour; do not guess a serving size from the bottle photo. Verify the wine is in service before opening it.",
+        "modifiers": []
+      }
+    },
+    {
+      "sourcePhoto": "IMG_5956",
+      "menu": {
+        "name": "Gavi",
+        "category": "Wine",
+        "priceCents": null,
+        "prepStation": "bar",
+        "description": "Gavi label identified in the photo. Confirm producer, serving size and price.",
+        "instructions": "Confirm the exact bottle and whether the guest ordered a glass or a bottle. Use a clean wine glass. Measure the approved house glass pour; do not guess a serving size from the bottle photo. Verify the wine is in service before opening it.",
+        "modifiers": []
+      }
+    },
+    {
+      "sourcePhoto": "IMG_5956",
+      "menu": {
+        "name": "Brancatelli Valle delle Stelle Cabernet Sauvignon",
+        "category": "Wine",
+        "priceCents": null,
+        "prepStation": "bar",
+        "description": "Label identified in the photo. Confirm vintage, glass/bottle availability and price.",
+        "instructions": "Confirm the exact bottle and whether the guest ordered a glass or a bottle. Use a clean wine glass. Measure the approved house glass pour; do not guess a serving size from the bottle photo. Verify the wine is in service before opening it.",
+        "modifiers": []
+      }
+    },
+    {
+      "sourcePhoto": "IMG_5956",
+      "menu": {
+        "name": "Banfi Chianti Riserva",
+        "category": "Wine",
+        "priceCents": null,
+        "prepStation": "bar",
+        "description": "Label identified in the photo. Confirm vintage, glass/bottle availability and price.",
+        "instructions": "Confirm the exact bottle and whether the guest ordered a glass or a bottle. Use a clean wine glass. Measure the approved house glass pour; do not guess a serving size from the bottle photo. Verify the wine is in service before opening it.",
+        "modifiers": []
+      }
+    }
+  ],
+  "unresolved": [
+    "Chicken Tenders price is obscured by reflection in the menu photo.",
+    "No drink selling prices, pour sizes, glass/bottle prices, happy-hour prices or sales-tax rate appear in these photos.",
+    "Several rear/partial wine and spirit labels are unreadable. Do not infer exact variants or count mirror reflections as stock.",
+    "Menu says 20% gratuity for parties, but the party-size threshold is obscured. Automatic gratuity is not configured.",
+    "The photos do not show processor, reader, printer or cash drawer hardware.",
+    "No stock quantities or house cocktail recipes were supplied. Standard drink guides are separate authored references."
+  ]
+}

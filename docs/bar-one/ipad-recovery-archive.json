@@ -1,0 +1,12 @@
+{
+  "createdAt": "2026-09-06T16:56:30.934Z",
+  "encryption": "AES-256-GCM; key transferred to iPad Keychain",
+  "bytes": 5161164,
+  "sha256": "0600943e976d8d9488c37b71c6ca71aebd13ab6cf9896fa579dd28519e02aaf5",
+  "includes": [
+    "Verified venue database",
+    "Prior host logs and configuration",
+    "App source and bundled POS engine"
+  ],
+  "destination": "iPad app container/Library/Application Support/BarOne/BarOne-retired-Mac.baronearchive"
+}

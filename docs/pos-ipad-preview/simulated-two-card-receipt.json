@@ -1,0 +1,108 @@
+{
+  "observedAt": "2026-09-06T04:33:35.177083+00:00",
+  "evidenceType": "simulated",
+  "result": {
+    "data": {
+      "merchant": {
+        "name": "Black Label POS \u00b7 TEST STORE",
+        "receiptFooter": null,
+        "currency": "USD"
+      },
+      "cashier": {
+        "id": "Z2df9DIUJI8wgglp3jNtd",
+        "name": "Preview Operator"
+      },
+      "order": {
+        "id": "UrnQa92VIbcJK7UgxXy7G",
+        "tenant_id": "sq1U47UWFnxJQP-mir1LY",
+        "channel": "pos",
+        "status": "paid",
+        "customer_id": null,
+        "show_id": null,
+        "source": "mags",
+        "source_order_id": "pos:cart_c434ac3f-e0ad-4049-a574-a6c49dc83656",
+        "discount_bps": null,
+        "discount_fixed_cents": null,
+        "tax_bps": 825,
+        "subtotal_cents": 8999,
+        "discount_cents": 0,
+        "tax_cents": 742,
+        "total_cents": 9741,
+        "note": null,
+        "sent": false,
+        "sent_at": null,
+        "reserved_at": "2026-09-06T04:31:27.819Z",
+        "paid_at": "2026-09-06T04:32:09.650Z",
+        "fulfilled_at": null,
+        "canceled_at": null,
+        "created_at": "2026-09-06T04:31:27.818Z",
+        "updated_at": "2026-09-06T04:32:09.650Z",
+        "tip_cents": 0,
+        "receipt_number": "BL-20260906-TMMTNMXLLG",
+        "register_id": "register_f4178486-c8a3-43e4-9130-56a83c019440",
+        "device_id": null,
+        "cashier_id": "Z2df9DIUJI8wgglp3jNtd",
+        "cash_session_id": null,
+        "lines": [
+          {
+            "id": "bZ-dnejP8FUTtK4IaATYE",
+            "tenant_id": "sq1U47UWFnxJQP-mir1LY",
+            "order_id": "UrnQa92VIbcJK7UgxXy7G",
+            "position": 0,
+            "variation_id": "J4rPUzT_T3nzt9QgXnS-l",
+            "location_id": "DW0SlY_N7Mku-LZp2ILIb",
+            "description": "Riding helmet \u2014 Standard",
+            "qty": 1,
+            "unit_price_cents": 8999,
+            "discount": null,
+            "line_total_cents": 8999,
+            "fulfillment_state": "pending",
+            "created_at": "2026-09-06T04:31:27.818Z",
+            "updated_at": "2026-09-06T04:31:27.818Z",
+            "returned_qty": 0,
+            "pending_return_qty": 0,
+            "returnable_qty": 1
+          }
+        ]
+      },
+      "tenders": [
+        {
+          "id": "9DIg4KF1Z2_rBJ0T-UMMn",
+          "tenant_id": "sq1U47UWFnxJQP-mir1LY",
+          "order_id": "UrnQa92VIbcJK7UgxXy7G",
+          "kind": "provider",
+          "amount_cents": 5000,
+          "provider": "stripe_terminal",
+          "provider_ref": "ch_pi_preview_1",
+          "status": "captured",
+          "refunded_cents": 0,
+          "idempotency_key": "stripe_terminal:ch_pi_preview_1",
+          "created_at": "2026-09-06T04:31:29.637Z",
+          "updated_at": "2026-09-06T04:31:29.637Z",
+          "cash_received_cents": null,
+          "change_due_cents": null
+        },
+        {
+          "id": "Wzj3QK0yy2EZmgqR0sxXa",
+          "tenant_id": "sq1U47UWFnxJQP-mir1LY",
+          "order_id": "UrnQa92VIbcJK7UgxXy7G",
+          "kind": "provider",
+          "amount_cents": 4741,
+          "provider": "stripe_terminal",
+          "provider_ref": "ch_pi_preview_2",
+          "status": "captured",
+          "refunded_cents": 0,
+          "idempotency_key": "stripe_terminal:ch_pi_preview_2",
+          "created_at": "2026-09-06T04:32:09.650Z",
+          "updated_at": "2026-09-06T04:32:09.650Z",
+          "cash_received_cents": null,
+          "change_due_cents": null
+        }
+      ],
+      "refunds": [],
+      "amountPaidCents": 9741,
+      "amountRefundedCents": 0,
+      "netPaidCents": 9741
+    }
+  }
+}

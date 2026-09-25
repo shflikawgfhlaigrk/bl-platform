@@ -1,0 +1,34 @@
+export function workflowsView(ui){
+ const {api,content,field,area,select,form,panel,table,action,bindForm,bindActions,render,say,esc,when,cents}=ui;
+ const labels={create_task:'Create a task',add_tag:'Tag a record',notify_user:'Notify a team member',webhook:'Call a webhook',send_email:'Send an email',send_sms:'Send an SMS',update_lead_stage:'Update a lead stage',create_appointment:'Create an appointment',create_invoice:'Create an invoice'};
+ let editing;
+ return async()=>{
+  const [rows,executions,tasks,notifications,tags,meta,people,customers]=await Promise.all([api('workflows?limit=200'),api('workflows/executions?limit=100'),api('workflows/tasks?limit=200'),api('workflows/notifications?limit=100'),api('workflows/tags?limit=100'),api('workflows/meta'),api('business/users'),api('crm/customers?limit=200')]);
+  const current=editing?await api(`workflows/${editing}`):undefined;
+  const personOptions=people.map(p=>[p.id,p.name]),customerOptions=customers.map(c=>[c.id,c.name]);
+  const fields=(type,c={})=>{
+   const text=(n,l,def='',required=true)=>field(n,l,'text',c[n]??def,required?'required':'');
+   const person=(n,l)=>select(n,l,[['','Unassigned'],...personOptions],false);
+   if(type==='create_task')return text('title','Task to complete')+person('assigneeUserId','Assign to')+field('dueInHours','Due within hours','number',c.dueInHours??24,'min="1"');
+   if(type==='add_tag')return text('entityType','Record type','crm.lead')+text('entityId','Record from event','{{payload.leadId}}')+text('tag','Tag');
+   if(type==='notify_user')return select('userId','Notify',personOptions)+text('title','Notification title')+area('body','Notification message',c.body||'');
+   if(type==='webhook')return field('url','Destination URL','url',c.url||'','required')+field('timeoutMs','Timeout in milliseconds','number',c.timeoutMs??5000,'min="1" max="30000"');
+   if(type==='send_email'||type==='send_sms')return text('to','Recipient')+(type==='send_email'?text('subject','Subject'):'')+area('body','Message',c.body||'');
+   if(type==='update_lead_stage')return text('leadId','Lead from event','{{payload.leadId}}')+text('stage','Stage key');
+   if(type==='create_appointment')return select('customerId','Customer',customerOptions)+field('startsInHours','Starts in hours','number',c.startsInHours??24,'min="1"')+field('durationMinutes','Duration in minutes','number',c.durationMinutes??60,'min="1"')+text('serviceKey','Service key','',false);
+   if(type==='create_invoice')return select('customerId','Customer',customerOptions)+text('description','Invoice line description',c.lines?.[0]?.description||'')+field('quantity','Quantity','number',c.lines?.[0]?.quantity??1,'min="0.01" step="0.01"')+field('price','Unit price ($)','text',((c.lines?.[0]?.unitPriceCents||0)/100).toFixed(2),'required');
+   return '';
+  };
+  const step=(type='create_task',config={})=>{const div=document.createElement('section');div.className='panel';div.dataset.workflowStep='';div.innerHTML=select('actionType','Action',meta.actionTypes.map(t=>[t,labels[t]||t]),false)+`<div class="fields action-fields">${fields(type,config)}</div><button type="button" class="quiet" data-remove-step>Remove action</button>`;div.querySelector('[name=actionType]').value=type;div.querySelector('[name=actionType]').onchange=e=>{div.querySelector('.action-fields').innerHTML=fields(e.target.value);};div.querySelector('[data-remove-step]').onclick=()=>{if(content.querySelectorAll('[data-workflow-step]').length>1)div.remove();};for(const el of div.querySelectorAll('select'))if(config[el.name])el.value=config[el.name];return div;};
+  content.innerHTML=form('workflow-add',editing?'Edit workflow':'Create a workflow',field('name','Workflow name','text',current?.name||'','required')+select('triggerEvent','When this happens',meta.triggerEvents.map(t=>[t,t.replaceAll('.',' → ').replaceAll('_',' ')]),false)+field('maxAttempts','Maximum attempts','number',current?.maxAttempts??3,'min="1" max="10"')+`<div class="wide" id="workflow-steps"></div><button type="button" class="quiet" id="add-step">Add another action</button>`,editing?'Save workflow':'Create workflow')
+   +panel('Workflows',table(rows,[['Workflow','name'],['Trigger','triggerEvent'],['Enabled',r=>r.enabled?'Yes':'No']],r=>action('toggle',r.id,r.enabled?'Pause':'Enable',`data-enabled="${r.enabled}"`)+action('edit',r.id,'Edit')))
+   +panel('Tasks',table(tasks,[['Task','title'],['Status','status'],['Due',r=>when(r.dueAt)]],r=>r.status!=='completed'?action('complete',r.id,'Complete task'):'Completed'))
+   +panel('Notifications',table(notifications,[['Title','title'],['Message','body'],['Read',r=>r.read?'Yes':'No']],r=>!r.read?action('read',r.id,'Mark read'):''))
+   +panel('Record tags',table(tags,[['Type',r=>r.entity_type||r.entityType],['Record',r=>r.entity_id||r.entityId],['Tag','tag']]))
+   +panel('Execution history',`<p class="muted">Failed steps retain their attempt history and retry after their saved backoff. Paused workflows stop processing.</p>${action('retry','','Process due retries')}`+table(executions,[['Status','status'],['Started',r=>when(r.startedAt)],['Attempts','attempts'],['Next attempt',r=>when(r.nextRetryAt)]],r=>action('receipt',r.id,'View outcome')));
+  const holder=document.querySelector('#workflow-steps');for(const s of current?.actions||[{type:'create_task',config:{}}])holder.append(step(s.type,s.config));document.querySelector('#add-step').onclick=()=>holder.append(step());
+  if(current)document.querySelector('#workflow-add [name=triggerEvent]').value=current.triggerEvent;
+  bindForm('workflow-add',async(d,f)=>{const actions=[...f.querySelectorAll('[data-workflow-step]')].map(s=>{const type=s.querySelector('[name=actionType]').value,c={};for(const e of s.querySelectorAll('.action-fields [name]'))if(e.value!=='')c[e.name]=e.type==='number'?Number(e.value):e.value;if(type==='create_invoice'){c.lines=[{description:c.description,quantity:c.quantity,unitPriceCents:cents(c.price)}];delete c.description;delete c.quantity;delete c.price;}return{type,config:c};});await api(editing?`workflows/${editing}`:'workflows',editing?'PUT':'POST',{name:d.name,triggerEvent:d.triggerEvent,maxAttempts:Number(d.maxAttempts),actions});editing=undefined;});
+  bindActions(async(a,id,b)=>{if(a==='edit'){editing=id;await render();return;}if(a==='toggle')await api(`workflows/${id}/${b.dataset.enabled==='true'?'disable':'enable'}`,'POST',{});if(a==='complete')await api(`workflows/tasks/${id}/complete`,'POST',{});if(a==='read')await api(`workflows/notifications/${id}/read`,'POST',{});if(a==='retry')await api('workflows/run-pending','POST',{});if(a==='receipt'){const r=await api(`workflows/executions/${id}`);content.insertAdjacentHTML('beforeend',panel('Execution outcome',table(r.actions||[],[['Action','type'],['Status','status'],['Result',r=>r.error||JSON.stringify(r.output||{})]])));return;}await render();say('Workflow workspace updated.');});
+ };
+}

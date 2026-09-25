@@ -13,6 +13,7 @@
  * CreateAppointmentContract — apps/api wires it into other modules' deps.
  */
 export const MODULE_KEY = 'scheduling' as const;
+export { createSchedulingContext, listAppointments, getAppointment, runReminderQueue } from './service';
 
 // Migrations
 export { schedulingMigrations } from './migrations';
@@ -30,6 +31,7 @@ export {
 
 // Next-available slot finder (Front Desk V2)
 export { findNextAvailable } from './service';
+export { createAppointment, getCalendar, getAppointmentType } from './service';
 export type { AvailableSlot, NextAvailableQuery, NextAvailableResult } from './service';
 
 // Integration layer (Google-Calendar-ready provider interface + stubs)
@@ -42,6 +44,7 @@ export type {
   ExternalEventInput,
   ReminderDeliveryProvider,
   ReminderDeliveryInput,
+  ReminderDeliveryResult,
   SchedulingReadinessConfig,
   SchedulingReadinessResult,
 } from './service';
@@ -78,3 +81,6 @@ export type {
   FreeInterval,
   RecurrenceInput,
 } from './service';
+
+export { GoogleCalendarProvider } from './google-calendar';
+export type { GoogleCalendarConnection, GoogleCalendarOptions } from './google-calendar';

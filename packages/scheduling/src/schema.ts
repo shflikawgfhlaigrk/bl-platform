@@ -23,7 +23,7 @@ export type OwnerType = 'staff' | 'resource';
 /** RRULE-lite frequencies. */
 export type RecurrenceFrequency = 'daily' | 'weekly' | 'monthly';
 
-export type ReminderStatus = 'pending' | 'sending' | 'sent' | 'canceled';
+export type ReminderStatus = 'pending' | 'sending' | 'submitted' | 'sent' | 'failed' | 'review' | 'canceled';
 
 export type CalendarSyncStatus = 'pending' | 'synced' | 'failed';
 
@@ -186,6 +186,12 @@ export interface SchedulingReminderRow {
   recipient: string;
   message: string | null;
   status: ReminderStatus;
+  attempts: number;
+  last_attempt_at: string | null;
+  next_attempt_at: string | null;
+  lease_expires_at: string | null;
+  delivery_reference: string | null;
+  last_error: string | null;
   sent_at: string | null;
   /** Name of the provider that delivered it. */
   provider: string | null;

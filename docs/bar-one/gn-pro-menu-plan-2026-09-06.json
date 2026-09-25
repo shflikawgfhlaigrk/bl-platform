@@ -1,0 +1,334 @@
+{
+  "createdAt": "2026-09-06T13:59:44.506012+00:00",
+  "catalogSource": "docs/bar-one/gn-pro-prices-2026-09-06.json",
+  "updates": [
+    {
+      "name": "Aperol",
+      "priceCents": 700,
+      "sourceName": "Aperol",
+      "source": ".storage/bar-one-gn-all-prices-attachments/B6DEBFB0-FD59-4C75-A744-8CF4C4B9147D.txt"
+    },
+    {
+      "name": "Bombay Sapphire",
+      "priceCents": 900,
+      "sourceName": "Bombay Sapphire",
+      "source": ".storage/bar-one-gn-all-prices-attachments/4A238D21-CA0D-40AF-98EE-B512659FDC65.txt"
+    },
+    {
+      "name": "Campari",
+      "priceCents": 900,
+      "sourceName": "Campari",
+      "source": ".storage/bar-one-gn-all-prices-attachments/C8283AC7-A679-450F-AACC-8C70EE256096.txt"
+    },
+    {
+      "name": "Patr\u00f3n Reposado",
+      "priceCents": 1500,
+      "sourceName": "Patron Reposado",
+      "source": ".storage/bar-one-gn-all-prices-attachments/939A6129-51F3-48AC-B6DC-A3B25DF73976.txt"
+    },
+    {
+      "name": "Absolut Vodka",
+      "priceCents": 800,
+      "sourceName": "Absolut",
+      "source": ".storage/bar-one-gn-all-prices-attachments/B6DEBFB0-FD59-4C75-A744-8CF4C4B9147D.txt"
+    },
+    {
+      "name": "Grey Goose Vodka",
+      "priceCents": 900,
+      "sourceName": "Greygoose",
+      "source": ".storage/bar-one-gn-all-prices-attachments/C15A3E79-15DE-49A8-A20C-E854DB68C9A3.txt"
+    },
+    {
+      "name": "Hendrick's Gin",
+      "priceCents": 1200,
+      "sourceName": "Hendrick's",
+      "source": ".storage/bar-one-gn-all-prices-attachments/C87B76A7-2A8A-43EF-9C21-12C47DDC3506.txt"
+    },
+    {
+      "name": "Bumbu Rum",
+      "priceCents": 1000,
+      "sourceName": "Bumbu",
+      "source": ".storage/bar-one-gn-all-prices-attachments/C8283AC7-A679-450F-AACC-8C70EE256096.txt"
+    },
+    {
+      "name": "Tanqueray London Dry Gin",
+      "priceCents": 900,
+      "sourceName": "Tanqueray",
+      "source": ".storage/bar-one-gn-all-prices-attachments/23376027-1098-4A37-BFB4-1EFBC14B2D96.txt"
+    },
+    {
+      "name": "Kahl\u00faa",
+      "priceCents": 600,
+      "sourceName": "Kahlua Original",
+      "source": ".storage/bar-one-gn-all-prices-attachments/C87B76A7-2A8A-43EF-9C21-12C47DDC3506.txt"
+    },
+    {
+      "name": "Crown Royal Canadian Whisky",
+      "priceCents": 800,
+      "sourceName": "Crown",
+      "source": ".storage/bar-one-gn-all-prices-attachments/10C8AF06-8EC5-42A3-8D19-87F3E5633D02.txt"
+    },
+    {
+      "name": "Jim Beam Bourbon",
+      "priceCents": 800,
+      "sourceName": "Jim Beam",
+      "source": ".storage/bar-one-gn-all-prices-attachments/C87B76A7-2A8A-43EF-9C21-12C47DDC3506.txt"
+    },
+    {
+      "name": "Maker's Mark",
+      "priceCents": 1000,
+      "sourceName": "Makers",
+      "source": ".storage/bar-one-gn-all-prices-attachments/5C937556-ED24-498E-8B05-E76DDE689AF6.txt"
+    },
+    {
+      "name": "Jack Daniel's Old No. 7",
+      "priceCents": 800,
+      "sourceName": "Jack Daniels",
+      "source": ".storage/bar-one-gn-all-prices-attachments/C87B76A7-2A8A-43EF-9C21-12C47DDC3506.txt"
+    },
+    {
+      "name": "Don Julio Blanco",
+      "priceCents": 1800,
+      "sourceName": "Don Julio Silver",
+      "source": ".storage/bar-one-gn-all-prices-attachments/10C8AF06-8EC5-42A3-8D19-87F3E5633D02.txt"
+    },
+    {
+      "name": "Coors Light",
+      "priceCents": 500,
+      "sourceName": "Coors Light",
+      "source": ".storage/bar-one-gn-all-prices-attachments/E9DCD744-6694-4833-A280-6DEEB1AF0F34.txt"
+    },
+    {
+      "name": "Miller Lite",
+      "priceCents": 500,
+      "sourceName": "Miller Lite",
+      "source": ".storage/bar-one-gn-all-prices-attachments/81FD7737-3142-4C22-828B-F618E00467B2.txt"
+    },
+    {
+      "name": "Michelob Ultra",
+      "priceCents": 500,
+      "sourceName": "Michelob Ultra",
+      "source": ".storage/bar-one-gn-all-prices-attachments/5C937556-ED24-498E-8B05-E76DDE689AF6.txt"
+    },
+    {
+      "name": "Chicken Tenders",
+      "priceCents": 1300,
+      "sourceName": "Chicken Tenders",
+      "source": ".storage/bar-one-gn-menu-attachments/047A01FA-3722-4C0C-8E22-2C6118938027.txt",
+      "reason": "Use the Bar One category price; All Products also contains a different 8.50 item."
+    }
+  ],
+  "additions": [
+    {
+      "name": "Amaretto Sour",
+      "category": "Cocktails",
+      "priceCents": 800,
+      "prepStation": "bar",
+      "source": ".storage/bar-one-gn-all-prices-attachments/B6DEBFB0-FD59-4C75-A744-8CF4C4B9147D.txt"
+    },
+    {
+      "name": "Aperol Spritz",
+      "category": "Cocktails",
+      "priceCents": 1200,
+      "prepStation": "bar",
+      "source": ".storage/bar-one-gn-all-prices-attachments/B6DEBFB0-FD59-4C75-A744-8CF4C4B9147D.txt"
+    },
+    {
+      "name": "Back Nine Bloody",
+      "category": "Cocktails",
+      "priceCents": 900,
+      "prepStation": "bar",
+      "source": ".storage/bar-one-gn-all-prices-attachments/B6DEBFB0-FD59-4C75-A744-8CF4C4B9147D.txt"
+    },
+    {
+      "name": "Bahama Mama",
+      "category": "Cocktails",
+      "priceCents": 900,
+      "prepStation": "bar",
+      "source": ".storage/bar-one-gn-all-prices-attachments/DA250664-94CE-44EB-9E31-9BEA8ADCDE06.txt"
+    },
+    {
+      "name": "Blue Hawaii",
+      "category": "Cocktails",
+      "priceCents": 800,
+      "prepStation": "bar",
+      "source": ".storage/bar-one-gn-all-prices-attachments/DA250664-94CE-44EB-9E31-9BEA8ADCDE06.txt"
+    },
+    {
+      "name": "Bushwacker",
+      "category": "Cocktails",
+      "priceCents": 1200,
+      "prepStation": "bar",
+      "source": ".storage/bar-one-gn-all-prices-attachments/C8283AC7-A679-450F-AACC-8C70EE256096.txt"
+    },
+    {
+      "name": "cosmopolitan",
+      "category": "Cocktails",
+      "priceCents": 1100,
+      "prepStation": "bar",
+      "source": ".storage/bar-one-gn-all-prices-attachments/E9DCD744-6694-4833-A280-6DEEB1AF0F34.txt"
+    },
+    {
+      "name": "Dirty Martini",
+      "category": "Cocktails",
+      "priceCents": 1300,
+      "prepStation": "bar",
+      "source": ".storage/bar-one-gn-all-prices-attachments/10C8AF06-8EC5-42A3-8D19-87F3E5633D02.txt"
+    },
+    {
+      "name": "Gimlet",
+      "category": "Cocktails",
+      "priceCents": 800,
+      "prepStation": "bar",
+      "source": ".storage/bar-one-gn-all-prices-attachments/C15A3E79-15DE-49A8-A20C-E854DB68C9A3.txt"
+    },
+    {
+      "name": "Long Island Iced Tee",
+      "category": "Cocktails",
+      "priceCents": 1200,
+      "prepStation": "bar",
+      "source": ".storage/bar-one-gn-all-prices-attachments/5C937556-ED24-498E-8B05-E76DDE689AF6.txt"
+    },
+    {
+      "name": "Mai Tai",
+      "category": "Cocktails",
+      "priceCents": 800,
+      "prepStation": "bar",
+      "source": ".storage/bar-one-gn-all-prices-attachments/5C937556-ED24-498E-8B05-E76DDE689AF6.txt"
+    },
+    {
+      "name": "Manhattan",
+      "category": "Cocktails",
+      "priceCents": 1200,
+      "prepStation": "bar",
+      "source": ".storage/bar-one-gn-all-prices-attachments/5C937556-ED24-498E-8B05-E76DDE689AF6.txt"
+    },
+    {
+      "name": "Margarita",
+      "category": "Cocktails",
+      "priceCents": 1000,
+      "prepStation": "bar",
+      "source": ".storage/bar-one-gn-all-prices-attachments/5C937556-ED24-498E-8B05-E76DDE689AF6.txt"
+    },
+    {
+      "name": "Martini",
+      "category": "Cocktails",
+      "priceCents": 1200,
+      "prepStation": "bar",
+      "source": ".storage/bar-one-gn-all-prices-attachments/5C937556-ED24-498E-8B05-E76DDE689AF6.txt"
+    },
+    {
+      "name": "Mimosa",
+      "category": "Cocktails",
+      "priceCents": 800,
+      "prepStation": "bar",
+      "source": ".storage/bar-one-gn-all-prices-attachments/81FD7737-3142-4C22-828B-F618E00467B2.txt"
+    },
+    {
+      "name": "Mojito",
+      "category": "Cocktails",
+      "priceCents": 1100,
+      "prepStation": "bar",
+      "source": ".storage/bar-one-gn-all-prices-attachments/81FD7737-3142-4C22-828B-F618E00467B2.txt"
+    },
+    {
+      "name": "Moscow Mule",
+      "category": "Cocktails",
+      "priceCents": 1000,
+      "prepStation": "bar",
+      "source": ".storage/bar-one-gn-all-prices-attachments/81FD7737-3142-4C22-828B-F618E00467B2.txt"
+    },
+    {
+      "name": "Negroni",
+      "category": "Cocktails",
+      "priceCents": 1200,
+      "prepStation": "bar",
+      "source": ".storage/bar-one-gn-all-prices-attachments/81FD7737-3142-4C22-828B-F618E00467B2.txt"
+    },
+    {
+      "name": "Old Fashioned",
+      "category": "Cocktails",
+      "priceCents": 1200,
+      "prepStation": "bar",
+      "source": ".storage/bar-one-gn-all-prices-attachments/939A6129-51F3-48AC-B6DC-A3B25DF73976.txt"
+    },
+    {
+      "name": "Painkiller",
+      "category": "Cocktails",
+      "priceCents": 1000,
+      "prepStation": "bar",
+      "source": ".storage/bar-one-gn-all-prices-attachments/939A6129-51F3-48AC-B6DC-A3B25DF73976.txt"
+    },
+    {
+      "name": "Paloma",
+      "category": "Cocktails",
+      "priceCents": 800,
+      "prepStation": "bar",
+      "source": ".storage/bar-one-gn-all-prices-attachments/939A6129-51F3-48AC-B6DC-A3B25DF73976.txt"
+    },
+    {
+      "name": "Pina Colada",
+      "category": "Cocktails",
+      "priceCents": 1100,
+      "prepStation": "bar",
+      "source": ".storage/bar-one-gn-all-prices-attachments/D4D7D2D3-9AB8-4E9F-BC98-3D0C69EA6E81.txt"
+    },
+    {
+      "name": "Screwdriver",
+      "category": "Cocktails",
+      "priceCents": 900,
+      "prepStation": "bar",
+      "source": ".storage/bar-one-gn-all-prices-attachments/23376027-1098-4A37-BFB4-1EFBC14B2D96.txt"
+    },
+    {
+      "name": "Sex On The Beach",
+      "category": "Cocktails",
+      "priceCents": 1000,
+      "prepStation": "bar",
+      "source": ".storage/bar-one-gn-all-prices-attachments/23376027-1098-4A37-BFB4-1EFBC14B2D96.txt"
+    },
+    {
+      "name": "Whiskey Sour",
+      "category": "Cocktails",
+      "priceCents": 1000,
+      "prepStation": "bar",
+      "source": ".storage/bar-one-gn-all-prices-attachments/DE21FD4C-A364-4D8D-86B6-038C79704247.txt"
+    },
+    {
+      "name": "Bottled Water",
+      "category": "No alcohol",
+      "priceCents": 150,
+      "prepStation": "bar",
+      "source": ".storage/bar-one-gn-all-prices-attachments/4A238D21-CA0D-40AF-98EE-B512659FDC65.txt"
+    },
+    {
+      "name": "Coca-Cola",
+      "category": "No alcohol",
+      "priceCents": 300,
+      "prepStation": "bar",
+      "source": ".storage/bar-one-gn-all-prices-attachments/E9DCD744-6694-4833-A280-6DEEB1AF0F34.txt"
+    },
+    {
+      "name": "Diet Coke",
+      "category": "No alcohol",
+      "priceCents": 300,
+      "prepStation": "bar",
+      "source": ".storage/bar-one-gn-all-prices-attachments/10C8AF06-8EC5-42A3-8D19-87F3E5633D02.txt"
+    },
+    {
+      "name": "Sprite",
+      "category": "No alcohol",
+      "priceCents": 300,
+      "prepStation": "bar",
+      "source": ".storage/bar-one-gn-all-prices-attachments/23376027-1098-4A37-BFB4-1EFBC14B2D96.txt"
+    },
+    {
+      "name": "Mocktail",
+      "category": "No alcohol",
+      "priceCents": 400,
+      "prepStation": "bar",
+      "source": ".storage/bar-one-gn-all-prices-attachments/81FD7737-3142-4C22-828B-F618E00467B2.txt"
+    }
+  ],
+  "rule": "Only currently unpriced exact or reviewed product matches. Preserve existing food prices. Current Bar One category resolves Chicken Tenders conflict. No tax, pour size, brand variant, unavailable stock or happy-hour assumptions."
+}

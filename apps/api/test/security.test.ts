@@ -20,7 +20,10 @@ describe('security headers', () => {
   it('sets CSP / nosniff / no-referrer / DENY on every response', async () => {
     const { platform } = await boot();
     const res = await platform.app.request('/api/health');
-    expect(res.headers.get('Content-Security-Policy')).toContain("default-src 'self'");
+    const csp = res.headers.get('Content-Security-Policy');
+    expect(csp).toContain("default-src 'self'");
+    expect(csp).toContain("style-src 'self' 'unsafe-inline'");
+    expect(csp).not.toContain("script-src 'unsafe-inline'");
     expect(res.headers.get('X-Content-Type-Options')).toBe('nosniff');
     expect(res.headers.get('Referrer-Policy')).toBe('no-referrer');
     expect(res.headers.get('X-Frame-Options')).toBe('DENY');
@@ -38,8 +41,9 @@ describe('static serving fallback', () => {
 });
 
 describe('origin / CSRF', () => {
-  it('rejects a cross-origin browser mutation 403 but allows a loopback tool call', async () => {
+  it('rejects cross-origin CSRF, allows loopback tools, and still requires a signed browser session', async () => {
     const { platform, tenantId } = await boot();
+    await platform.seedTenant(tenantId);
 
     // Cross-origin browser mutation (Origin present, foreign host, no CSRF header).
     const blocked = await platform.app.request('/api/inventory/locations', {
@@ -62,7 +66,7 @@ describe('origin / CSRF', () => {
     });
     expect(ok.status).toBe(201);
 
-    // Cross-origin but carrying the custom header → allowed.
+    // The CSRF header clears the origin gate, but it is not authentication.
     const csrfd = await platform.app.request('/api/inventory/locations', {
       method: 'POST',
       headers: {
@@ -73,12 +77,40 @@ describe('origin / CSRF', () => {
       },
       body: JSON.stringify({ name: 'WH2', kind: 'warehouse' }),
     });
-    expect(csrfd.status).toBe(201);
+    expect(csrfd.status).toBe(401);
+
+    const signedIn = await platform.app.request('/api/pos/auth/bootstrap', {
+      method: 'POST',
+      headers: {
+        'x-tenant-id': tenantId,
+        'content-type': 'application/json',
+        'x-mags-csrf': '1',
+        'sec-fetch-site': 'same-origin',
+      },
+      body: JSON.stringify({ pin: '2468' }),
+    });
+    expect(signedIn.status).toBe(201);
+    const cookie = signedIn.headers.get('set-cookie')?.split(';')[0];
+    expect(cookie).toBeTruthy();
+
+    // Cross-origin + explicit CSRF proof + an authenticated operator is allowed.
+    const authenticated = await platform.app.request('/api/inventory/locations', {
+      method: 'POST',
+      headers: {
+        'x-tenant-id': tenantId,
+        'content-type': 'application/json',
+        Origin: 'http://evil.example',
+        'x-mags-csrf': '1',
+        cookie: String(cookie),
+      },
+      body: JSON.stringify({ name: 'WH3', kind: 'warehouse' }),
+    });
+    expect(authenticated.status).toBe(201);
   });
 });
 
 describe('rate limiting', () => {
-  it('returns 429 once the per-route-group bucket is exhausted (injected clock)', async () => {
+  it('returns 429 once the per-source bucket is exhausted (injected clock)', async () => {
     const { platform } = await boot({ rateLimit: { generalPerMinute: 3, now: () => 1000 } });
     const codes: number[] = [];
     for (let i = 0; i < 5; i++) {
@@ -91,7 +123,11 @@ describe('rate limiting', () => {
 });
 
 describe('RBAC (journey 18)', () => {
-  async function assignRole(db: unknown, tenantId: string, roleKey: 'cashier' | 'manager'): Promise<string> {
+  async function assignRole(
+    db: unknown,
+    tenantId: string,
+    roleKey: 'cashier' | 'manager' | 'inventory',
+  ): Promise<string> {
     const wdb = db as import('kysely').Kysely<WorkforceDatabase>;
     const user = await createUser(asCoreDb(db as never), tenantId, {
       name: `Security ${roleKey}`,
@@ -113,8 +149,7 @@ describe('RBAC (journey 18)', () => {
 
   const GUARDED: { method: string; path: string; body?: unknown }[] = [
     { method: 'POST', path: '/api/purchasing/purchase-orders/nope/approve', body: {} },
-    { method: 'GET', path: '/api/customers/export' },
-    { method: 'GET', path: '/api/finance/payouts' },
+    { method: 'GET', path: '/api/finance/cash-sessions' },
     { method: 'GET', path: '/api/admin/credentials' },
     { method: 'POST', path: '/api/automation/rules', body: {} },
     { method: 'POST', path: '/api/automation/evaluate', body: {} },
@@ -176,5 +211,126 @@ describe('RBAC (journey 18)', () => {
       });
       expect(denied.status, `manager should be 403 on POST ${path}`).toBe(403);
     }
+  });
+
+  it('separates order reads, register writes, and refunds by permission', async () => {
+    const { platform, db, tenantId } = await boot();
+    await platform.seedTenant(tenantId);
+    const cashierId = await assignRole(db, tenantId, 'cashier');
+    const inventoryId = await assignRole(db, tenantId, 'inventory');
+    const headers = (userId: string) => ({
+      'x-tenant-id': tenantId,
+      'x-user-id': userId,
+      'content-type': 'application/json',
+      'x-mags-csrf': '1',
+    });
+
+    const cashierRead = await platform.app.request('/api/orders/orders', {
+      headers: headers(cashierId),
+    });
+    expect(cashierRead.status).toBe(200);
+
+    const cashierCreate = await platform.app.request('/api/orders/orders', {
+      method: 'POST',
+      headers: headers(cashierId),
+      body: JSON.stringify({ channel: 'pos', lines: [] }),
+    });
+    expect(cashierCreate.status).toBe(403);
+
+    const cashierReprice = await platform.app.request('/api/orders/orders/nope', {
+      method: 'PUT',
+      headers: headers(cashierId),
+      body: JSON.stringify({ lines: [{ description: 'repriced', qty: 1, unitPriceCents: 1 }] }),
+    });
+    expect(cashierReprice.status).toBe(403);
+
+    const cashierPosCreate = await platform.app.request('/api/pos/orders', {
+      method: 'POST',
+      headers: headers(cashierId),
+      body: JSON.stringify({ cartId: 'cashier-cart', lines: [{ description: 'x', qty: 1, unitPriceCents: 1 }] }),
+    });
+    expect(cashierPosCreate.status).not.toBe(403);
+
+    const cashierRefund = await platform.app.request('/api/orders/orders/nope/refunds', {
+      method: 'POST',
+      headers: headers(cashierId),
+      body: JSON.stringify({}),
+    });
+    expect(cashierRefund.status).toBe(403);
+
+    const cashierPosRefund = await platform.app.request('/api/pos/orders/nope/refunds', {
+      method: 'POST',
+      headers: headers(cashierId),
+      body: JSON.stringify({}),
+    });
+    expect(cashierPosRefund.status).toBe(403);
+
+    const cashierGenericPay = await platform.app.request('/api/orders/orders/nope/pay', {
+      method: 'POST',
+      headers: headers(cashierId),
+      body: JSON.stringify({ tenders: [] }),
+    });
+    expect(cashierGenericPay.status).toBe(403);
+
+    const cashierPosPay = await platform.app.request('/api/pos/orders/nope/pay', {
+      method: 'POST',
+      headers: headers(cashierId),
+      body: JSON.stringify({ tenders: [] }),
+    });
+    expect(cashierPosPay.status).not.toBe(403);
+
+    const inventoryRead = await platform.app.request('/api/orders/orders', {
+      headers: headers(inventoryId),
+    });
+    expect(inventoryRead.status).toBe(403);
+
+    const ownerRefund = await platform.app.request('/api/orders/orders/nope/refunds', {
+      method: 'POST',
+      headers: { 'x-tenant-id': tenantId, 'content-type': 'application/json', 'x-mags-csrf': '1' },
+      body: JSON.stringify({}),
+    });
+    expect(ownerRefund.status).not.toBe(403);
+
+    const ownerPosRefund = await platform.app.request('/api/pos/orders/nope/refunds', {
+      method: 'POST',
+      headers: { 'x-tenant-id': tenantId, 'content-type': 'application/json', 'x-mags-csrf': '1' },
+      body: JSON.stringify({}),
+    });
+    expect(ownerPosRefund.status).not.toBe(403);
+  });
+
+  it('keeps POS finance and reconciliation controls out of the cashier role', async () => {
+    const { platform, db, tenantId } = await boot();
+    await platform.seedTenant(tenantId);
+    const cashierId = await assignRole(db, tenantId, 'cashier');
+    const managerId = await assignRole(db, tenantId, 'manager');
+    const headers = (userId: string) => ({
+      'x-tenant-id': tenantId,
+      'x-user-id': userId,
+      'content-type': 'application/json',
+      'x-mags-csrf': '1',
+    });
+
+    for (const path of ['/api/pos/finance/summary', '/api/pos/reconciliation']) {
+      const denied = await platform.app.request(path, { headers: headers(cashierId) });
+      expect(denied.status, `cashier should be 403 on GET ${path}`).toBe(403);
+
+      const managerRead = await platform.app.request(path, { headers: headers(managerId) });
+      expect(managerRead.status, `manager should read GET ${path}`).toBe(200);
+    }
+
+    const managerDrain = await platform.app.request('/api/pos/reconciliation/drain', {
+      method: 'POST',
+      headers: headers(managerId),
+      body: '{}',
+    });
+    expect(managerDrain.status).toBe(403);
+
+    const ownerDrain = await platform.app.request('/api/pos/reconciliation/drain', {
+      method: 'POST',
+      headers: { 'x-tenant-id': tenantId, 'content-type': 'application/json', 'x-mags-csrf': '1' },
+      body: '{}',
+    });
+    expect(ownerDrain.status).not.toBe(403);
   });
 });

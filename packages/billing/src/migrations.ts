@@ -208,4 +208,15 @@ export const billingMigrations: Migration[] = [
         .execute();
     },
   },
+  {
+    name: 'billing.0002_subscription_period_receipts',
+    up: async db => {
+      await db.schema.createTable('billing_subscription_periods')
+        .addColumn('id', 'text', c => c.primaryKey()).addColumn('tenant_id', 'text', c => c.notNull())
+        .addColumn('subscription_id', 'text', c => c.notNull()).addColumn('period_start', 'text', c => c.notNull())
+        .addColumn('invoice_id', 'text', c => c.notNull()).addColumn('created_at', 'text', c => c.notNull()).execute();
+      await db.schema.createIndex('billing_subscription_periods_tenant_period_idx').on('billing_subscription_periods')
+        .columns(['tenant_id', 'subscription_id', 'period_start']).unique().execute();
+    },
+  },
 ];

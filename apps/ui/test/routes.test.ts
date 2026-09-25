@@ -51,6 +51,11 @@ describe('route table completeness', () => {
     }
   });
 
+  it('puts the register in the primary floor navigation', () => {
+    const register = NAV.find((item) => item.route === 'register');
+    expect(register).toMatchObject({ label: 'Register', short: 'Sell', group: 'run' });
+  });
+
   it('parseHash extracts route + params and defaults sensibly', () => {
     expect(parseHash('#/scan')).toEqual({ route: 'scan', params: [] });
     expect(parseHash('#/counts/abc123')).toEqual({ route: 'counts', params: ['abc123'] });

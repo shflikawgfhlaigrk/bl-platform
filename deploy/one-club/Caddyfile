@@ -1,0 +1,4 @@
+# Replace the hostname with the venue server's real DNS name.
+pos.example.com {
+    reverse_proxy 127.0.0.1:8480
+}

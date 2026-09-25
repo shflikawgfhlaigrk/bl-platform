@@ -1,0 +1,13 @@
+{
+  "observedAt": "2026-09-06T04:33:35.179772+00:00",
+  "evidenceType": "simulated",
+  "result": {
+    "data": {
+      "totalCount": 3,
+      "pendingCount": 0,
+      "completedCount": 3,
+      "errorCount": 0,
+      "healthy": true
+    }
+  }
+}

@@ -25,9 +25,10 @@ export type MessageDirection = (typeof MESSAGE_DIRECTIONS)[number];
  * Message delivery status:
  * - 'received' — inbound message recorded
  * - 'sent'     — outbound, provider accepted (or no provider needed, e.g. internal)
- * - 'failed'   — outbound, provider rejected or threw
+ * - 'queued'   — submission pending or provider outcome unresolved
+ * - 'failed'   — outbound, definitively rejected
  */
-export const MESSAGE_STATUSES = ['received', 'sent', 'failed'] as const;
+export const MESSAGE_STATUSES = ['received', 'queued', 'sent', 'failed'] as const;
 export type MessageStatus = (typeof MESSAGE_STATUSES)[number];
 
 /**
@@ -81,6 +82,11 @@ export interface MessagingMessageRow {
   subject: string | null;
   body: string;
   status: MessageStatus;
+  idempotency_key?: string | null;
+  request_hash?: string | null;
+  delivery_status?: string | null;
+  reconciled_at?: string | null;
+  reconciliation_json?: string | null;
   /** Id returned by the channel provider (stub providers return "stub-..."). */
   provider_message_id: string | null;
   failed_reason: string | null;
@@ -136,6 +142,13 @@ export interface MessagingAssignmentRow {
 }
 
 export interface MessagingDatabase extends CoreDatabase {
+  messaging_operations: {
+    id: string;
+    tenant_id: string;
+    request_hash: string;
+    conversation_id: string | null;
+    created_at: string;
+  };
   messaging_channels: MessagingChannelRow;
   messaging_conversations: MessagingConversationRow;
   messaging_messages: MessagingMessageRow;

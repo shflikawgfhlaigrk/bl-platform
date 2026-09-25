@@ -39,6 +39,7 @@ import type { PaymentIntent, PaymentProvider, ProviderWebhookEvent, WebhookOutco
 export interface BillingCtx {
   db: Kysely<BillingDatabase>;
   events: EventBus;
+  deferredEvents?: { type: string; payload: Record<string, unknown> }[];
 }
 
 /** Invoice with the 0/1 portal flag converted to a boolean at the service boundary. */
@@ -227,11 +228,13 @@ export async function createInvoice(
     number: invoice.number,
     totalCents: invoice.total_cents,
   });
-  await ctx.events.emit(tenantId, 'billing.invoice.created', {
+  const created = {
     invoiceId: invoice.id,
     customerId: invoice.customer_id,
     totalCents: invoice.total_cents,
-  });
+  };
+  if (ctx.deferredEvents) ctx.deferredEvents.push({ type: 'billing.invoice.created', payload: created });
+  else await ctx.events.emit(tenantId, 'billing.invoice.created', created);
   return { invoice: toInvoiceDto(invoice), lines };
 }
 
@@ -1124,7 +1127,18 @@ export async function generateDueInvoices(
 
   const generated: GeneratedInvoiceRef[] = [];
   for (const sub of due) {
-    const { invoice } = await createInvoice(ctx, tenantId, 'system', {
+    const pending: NonNullable<BillingCtx['deferredEvents']> = [];
+    const committed = await ctx.db.transaction().execute(async trx => {
+      const current = await trx.selectFrom('billing_subscriptions').selectAll().where('tenant_id', '=', tenantId).where('id', '=', sub.id).executeTakeFirst();
+      if (!current || current.status !== 'active' || current.next_invoice_at !== sub.next_invoice_at) return undefined;
+      const nextInvoiceAt = advanceInterval(sub.next_invoice_at, sub.interval);
+      const previous = await trx.selectFrom('billing_subscription_periods').selectAll().where('tenant_id', '=', tenantId)
+        .where('subscription_id', '=', sub.id).where('period_start', '=', sub.next_invoice_at).executeTakeFirst();
+      if (previous) {
+        await trx.updateTable('billing_subscriptions').set({next_invoice_at:nextInvoiceAt,updated_at:nowIso()}).where('tenant_id','=',tenantId).where('id','=',sub.id).execute();
+        return undefined;
+      }
+      const { invoice } = await createInvoice({ ...ctx, db: trx, deferredEvents: pending }, tenantId, 'system', {
       customerId: sub.customer_id,
       billingAccountId: sub.billing_account_id ?? undefined,
       lines: [
@@ -1139,20 +1153,25 @@ export async function generateDueInvoices(
       sourceEntityType: 'billing.subscription',
       sourceEntityId: sub.id,
     });
-    const nextInvoiceAt = advanceInterval(sub.next_invoice_at, sub.interval);
-    await ctx.db
+    await trx.insertInto('billing_subscription_periods').values({id:id(),tenant_id:tenantId,subscription_id:sub.id,period_start:sub.next_invoice_at,invoice_id:invoice.id,created_at:nowIso()}).execute();
+    await trx
       .updateTable('billing_subscriptions')
       .set({ next_invoice_at: nextInvoiceAt, updated_at: nowIso() })
       .where('tenant_id', '=', tenantId)
       .where('id', '=', sub.id)
       .execute();
-    await ctx.events.emit(tenantId, 'billing.invoice.generated', {
+    pending.push({ type: 'billing.invoice.generated', payload: {
       invoiceId: invoice.id,
       subscriptionId: sub.id,
       customerId: sub.customer_id,
       totalCents: invoice.total_cents,
+    }});
+    return { subscriptionId: sub.id, invoiceId: invoice.id, nextInvoiceAt };
     });
-    generated.push({ subscriptionId: sub.id, invoiceId: invoice.id, nextInvoiceAt });
+    if (committed) {
+      for (const event of pending) await ctx.events.emit(tenantId, event.type, event.payload);
+      generated.push(committed);
+    }
   }
   return generated;
 }

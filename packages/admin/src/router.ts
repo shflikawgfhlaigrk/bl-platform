@@ -187,29 +187,35 @@ export function adminRouter(deps: AdminRouterDeps): Hono<TenantEnv> {
 
   /* ---------------- backups ---------------- */
 
+  const publicBackup = (row: import('./schema').AdminBackupRow) => {
+    const { path: _path, detail: _detail, ...metadata } = row;
+    return { ...metadata, scope: 'single-tenant-database' };
+  };
+
   app.post('/backups/run', async (c) => {
     if (!backups.hasProvider) throw new ApiError(501, 'backup provider not configured', 'not_implemented');
-    const body = (await jsonBody(c).catch(() => ({}))) as { destDir?: string; encrypted?: boolean };
-    const destDir = body.destDir ?? '.storage/backups';
+    await backups.assertHttpScope(c.get('tenantId'));
+    const body = z.object({ encrypted: z.literal(true).default(true) }).strict().parse(await jsonBody(c));
     const row = await backups.runBackup(
       c.get('tenantId'),
       actorOf(c),
-      { destDir, countProbe: deps.countProbe, encrypted: body.encrypted },
+      { countProbe: deps.countProbe, encrypted: body.encrypted },
       async (payload) => {
         await events.emit(c.get('tenantId'), 'admin.backup.failed', { v: 1, ...payload });
       },
     );
-    return c.json({ data: row }, 201);
+    return c.json({ data: publicBackup(row) }, 201);
   });
 
   app.get('/backups', async (c) => {
     const page = parsePagination(c.req.query());
     const list = await backups.list(c.get('tenantId'), page);
-    return c.json({ data: list, limit: page.limit, offset: page.offset });
+    return c.json({ data: list.map(publicBackup), limit: page.limit, offset: page.offset });
   });
 
   app.post('/backups/:id/verify', async (c) => {
     if (!backups.hasProvider) throw new ApiError(501, 'backup provider not configured', 'not_implemented');
+    await backups.assertHttpScope(c.get('tenantId'));
     const row = await backups.verifyExisting(
       c.get('tenantId'),
       actorOf(c),
@@ -219,14 +225,25 @@ export function adminRouter(deps: AdminRouterDeps): Hono<TenantEnv> {
         await events.emit(c.get('tenantId'), 'admin.backup.failed', { v: 1, ...payload });
       },
     );
-    return c.json({ data: row });
+    return c.json({ data: publicBackup(row) });
   });
 
   app.post('/backups/prune', async (c) => {
     if (!backups.hasProvider) throw new ApiError(501, 'backup provider not configured', 'not_implemented');
+    await backups.assertHttpScope(c.get('tenantId'));
     const body = deps.retention ?? retentionSchema.parse(await jsonBody(c));
     const res = await backups.prune(c.get('tenantId'), actorOf(c), body);
     return c.json({ data: res });
+  });
+
+  app.get('/backups/:id/download', async (c) => {
+    if (!backups.hasProvider) throw new ApiError(501, 'backup provider not configured', 'not_implemented');
+    const bytes = await backups.download(c.get('tenantId'), c.req.param('id'));
+    c.header('Content-Type', 'application/octet-stream');
+    c.header('Content-Disposition', 'attachment; filename="blacklabel-backup.blbackup"');
+    c.header('Cache-Control', 'no-store');
+    c.header('X-Content-Type-Options', 'nosniff');
+    return c.body(new Uint8Array(bytes));
   });
 
   /* ---------------- diagnostics + audit export + jobs ---------------- */

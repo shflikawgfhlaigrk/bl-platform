@@ -19,6 +19,7 @@
  * in-memory db; server.ts runs it on the real file db with real fs injections.
  */
 import { Hono } from 'hono';
+import { frontdeskAdmissionRouter } from './frontdesk-admission';
 import type { Kysely } from 'kysely';
 import { runMigrations, type Migration } from '@blacklabel/db';
 import {
@@ -42,6 +43,7 @@ import {
   createSchedulingContract,
   createSchedulingAppointmentTypeContract,
   type SchedulingDatabase,
+  type SchedulingRouterOptions,
 } from '@blacklabel/scheduling';
 import { quotingMigrations, quotingRouter, type QuotingDatabase } from '@blacklabel/quoting';
 import {
@@ -64,8 +66,9 @@ import {
   messagingRouter,
   createMessagingSendContract,
   type MessagingDatabase,
+  type MessagingServiceOptions,
 } from '@blacklabel/messaging';
-import { reviewsMigrations, reviewsRouter, type ReviewsDatabase } from '@blacklabel/reviews';
+import { reviewsMigrations, reviewsRouter, type ReviewsDatabase, type ReviewProvider } from '@blacklabel/reviews';
 import {
   workflowsMigrations,
   workflowsRouter,
@@ -79,6 +82,7 @@ import {
   billingRouter,
   billingCreateInvoiceContract,
   type BillingDatabase,
+  type BillingRouterOptions,
 } from '@blacklabel/billing';
 import {
   filesMigrations,
@@ -116,6 +120,7 @@ import {
   ordersMigrations,
   ordersRouter,
   simulatorCheckoutProvider,
+  type CheckoutProvider,
   type OrdersDatabase,
 } from '@blacklabel/orders';
 import {
@@ -174,6 +179,33 @@ import {
 import { defaultRbacRules, makeGetActingUser, rbacGuard } from './rbac';
 import { buildDispatcherRegistry, registerCrossModuleWiring } from './wiring';
 import { buildHealthProbes } from './admin-wiring';
+import { businessLeadStages, businessPortalProviders, isBusinessPortalRoute } from './business-wiring';
+import { businessQuoteConversion } from './business-conversion';
+import { businessReminderDelivery } from './business-reminders';
+import {
+  posClaimedOrderGuard,
+  posRouter,
+  type PosCardPresentOptions,
+  type PosDatabase,
+} from './pos';
+import {
+  posReconciliationMigrations,
+  type PosReconciliationTables,
+} from './pos-reconciliation-migrations';
+import {
+  posReconciliationMiddleware,
+  posReconciliationRouter,
+  reconcileAllPosTenants,
+  type PosReconciliationDatabase,
+} from './pos-reconciliation';
+import { posAuthMigrations, type PosAuthTables } from './pos-auth-migrations';
+import { barPosMigrations, type BarTables } from './bar-pos-migrations';
+import { barPosRouter, type BarDatabase } from './bar-pos';
+import {
+  createPosAuth,
+  isBrowserApiRequest,
+  type PosAuthDatabase,
+} from './pos-auth';
 
 /** Every module's tables in the one shared database. */
 export type PlatformDatabase = CoreDatabase &
@@ -205,7 +237,9 @@ export type PlatformDatabase = CoreDatabase &
   WorkforceDatabase &
   AdminDatabase &
   StorefrontDatabase &
-  ApiDatabase;
+  ApiDatabase &
+  PosReconciliationTables &
+  PosAuthTables & BarTables;
 
 /** Module keys in mount order (also the /api/<key> mount points + health list). */
 export const MODULE_KEYS = [
@@ -230,6 +264,7 @@ export const MODULE_KEYS = [
   'vendors',
   'purchasing',
   'orders',
+  'pos',
   'customers',
   'loyalty',
   'outreach',
@@ -278,12 +313,24 @@ export const allMigrations: readonly Migration[] = [
   ...retailMigrations,
   ...storefrontMigrations,
   ...apiMigrations,
+  ...posReconciliationMigrations,
+  ...posAuthMigrations,
+  ...barPosMigrations,
 ];
 
 export interface CreateAppOptions {
   db: Kysely<PlatformDatabase>;
   storage?: StorageProvider;
   skipMigrations?: boolean;
+  /** Customer-specific provider adapters, shared by routes and automation contracts. */
+  messaging?: MessagingServiceOptions;
+  reviewProvider?: ReviewProvider;
+  scheduling?: SchedulingRouterOptions;
+  billing?: BillingRouterOptions;
+  /** Verified owner sessions supplied by the business application composition. */
+  browserSessionUser?: (request: Request, tenantId: string) => Promise<string | undefined>;
+  /** Customer and employee modules authenticate their own public portal routes. */
+  businessPortals?: boolean;
 
   /** AES-256-GCM master key (base64/hex/passphrase or Buffer). Ephemeral if unset. */
   adminMasterKey?: Buffer | string;
@@ -298,6 +345,15 @@ export interface CreateAppOptions {
 
   /** Checkout-simulator HMAC secret. Derived from the master key when unset. */
   checkoutSimSecret?: string;
+  /** Disable the deterministic payment simulator on a real venue deployment. */
+  includeCheckoutSimulator?: boolean;
+  /** Additional real checkout providers injected by server.ts. */
+  checkoutProviders?: readonly CheckoutProvider[];
+  /** Server-owned, live-verified card reader capability exposed to POS only. */
+  posCardPresent?: PosCardPresentOptions;
+  posProcessorStatus?: () => Promise<unknown>;
+  /** Dedicated venue server: every request needs a session, including curl/tools. */
+  posNetworkMode?: boolean;
   /** Public unsubscribe base URL for outreach links. */
   unsubscribeBaseUrl?: string;
 
@@ -470,19 +526,21 @@ export async function createApp(options: CreateAppOptions): Promise<PlatformApp>
   // Cross-module contract implementations (CONVENTIONS §9).
   const contracts: Contracts = {
     createTask: workflowsCreateTaskContract(dbFor<WorkflowsDatabase>(db), events),
-    createAppointment: createSchedulingContract({ db: dbFor<SchedulingDatabase>(db), events }),
+    createAppointment: createSchedulingContract({ db: dbFor<SchedulingDatabase>(db), events, ...options.scheduling }),
     createAppointmentType: createSchedulingAppointmentTypeContract({
       db: dbFor<SchedulingDatabase>(db),
       events,
     }),
     createInvoice: billingCreateInvoiceContract(dbFor<BillingDatabase>(db), events),
-    sendMessage: createMessagingSendContract(dbFor<MessagingDatabase>(db), events),
+    sendMessage: createMessagingSendContract(dbFor<MessagingDatabase>(db), events, options.messaging),
   };
+
+  const schedulingOptions = { ...options.scheduling, ...(options.businessPortals && !options.scheduling?.reminderDelivery ? { reminderDelivery: businessReminderDelivery(dbFor<MessagingDatabase>(db), events, options.messaging) } : {}) };
 
   const deps = <T>(): ModuleDeps<T> => ({ db: dbFor<T>(db), events, contracts });
 
   // Workflows engine subscriptions.
-  const { engine, detach: detachEngine } = attachWorkflowEngine(deps<WorkflowsDatabase>());
+  const { engine, detach: detachEngine } = attachWorkflowEngine(deps<WorkflowsDatabase>(), { leadStages: businessLeadStages(dbFor<CrmDatabase>(db), events) });
 
   // Automation + actions subscriptions (the primary '*' subscribers).
   const detachAutomation = registerAutomationSubscriptions(deps<AutomationDatabase>());
@@ -497,12 +555,27 @@ export async function createApp(options: CreateAppOptions): Promise<PlatformApp>
     envDefaultLocationId: options.envDefaultLocationId,
   });
 
+  // A bounded startup pass repairs committed POS facts that outlived a crash
+  // or an in-memory event-handler failure.
+  await reconcileAllPosTenants(
+    dbFor<PosReconciliationDatabase>(db),
+    events,
+    { limit: 200, envDefaultLocationId: options.envDefaultLocationId },
+  ).catch((error) => {
+    logger.error('POS startup reconciliation failed', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  });
+
   // Outbox dispatcher registry (honest 501 handlers for gated transports).
   const dispatcher = buildDispatcherRegistry(logger);
 
-  // Orders checkout providers: simulator wired (real HMAC); square_hosted is a
-  // founder gate (not wired here).
-  const checkoutProviders = [simulatorCheckoutProvider({ secret: checkoutSecret })];
+  // Simulator is retained for deterministic tests. Real providers are injected
+  // only when server.ts has explicit credentials; absent means fail-closed.
+  const checkoutProviders = [
+    ...(options.includeCheckoutSimulator === false ? [] : [simulatorCheckoutProvider({ secret: checkoutSecret })]),
+    ...(options.checkoutProviders ?? []),
+  ];
 
   // Outreach adapters: no transport/reader (cold — 'no_provider' honestly).
   // isSuppressed → customers; suppress → customers suppression ledger.
@@ -559,17 +632,44 @@ export async function createApp(options: CreateAppOptions): Promise<PlatformApp>
 
   // Security + RBAC, in front of everything (order matters).
   const rateLimiter = new RateLimiter(options.rateLimit);
+  const posAuth = createPosAuth(dbFor<PosAuthDatabase>(db), options.posNetworkMode ? {
+    requireAllRequests: true, bootstrapEnabled: false,
+    paymentWebhookPaths: (options.checkoutProviders ?? []).map(p => `/api/orders/webhooks/${p.key}`),
+  } : {});
   const getActingUser = makeGetActingUser(dbFor<CoreDatabase>(db), {
     ownerUserIdEnv: options.ownerUserIdEnv,
+    sessionUser: async (c, tenantId) => await options.browserSessionUser?.(c.req.raw, tenantId) ?? posAuth.resolveSessionUserId(c, tenantId),
+    isBrowserRequest: options.posNetworkMode ? () => true : isBrowserApiRequest,
   });
   app.use('*', requestLogger(logger));
   app.use('*', securityHeaders());
   app.use('*', bodyLimit());
   if (!options.disableRateLimit) app.use('*', rateLimiter.middleware());
   app.use('*', csrfGuard());
+  app.use('/api/*', async (c, next) => {
+    if (options.businessPortals && isBusinessPortalRoute(c.req.path)) return next();
+    const tenantId = c.req.header('x-tenant-id');
+    if (tenantId && await options.browserSessionUser?.(c.req.raw, tenantId)) return next();
+    return posAuth.browserGuard(c, next);
+  });
+  const permissions = rbacGuard(dbFor<WorkforceDatabase & CoreDatabase & ActionsDatabase>(db), getActingUser, defaultRbacRules());
+  app.use('/api/*', (c, next) => {
+    // These narrowly matched routes enforce customer sessions, employee roles,
+    // or per-review tokens inside their own module. They never receive an owner.
+    if (options.businessPortals && isBusinessPortalRoute(c.req.path)) return next();
+    // Configured processor callbacks authenticate their signed payload in the
+    // orders router. They never inherit an owner or a cashier session.
+    if (options.posNetworkMode && c.req.method === 'POST' &&
+      options.checkoutProviders?.some(p => c.req.path === `/api/orders/webhooks/${p.key}`)) return next();
+    return permissions(c, next);
+  });
+  app.use('/api/orders/*', posClaimedOrderGuard(dbFor<ApiDatabase>(db)));
   app.use(
-    '/api/*',
-    rbacGuard(dbFor<WorkforceDatabase & CoreDatabase>(db), getActingUser, defaultRbacRules()),
+    '/api/pos/*',
+    posReconciliationMiddleware(dbFor<PosReconciliationDatabase>(db), events, {
+      envDefaultLocationId: options.envDefaultLocationId,
+      logger,
+    }),
   );
 
   app.get('/api/health', (c) => {
@@ -584,15 +684,18 @@ export async function createApp(options: CreateAppOptions): Promise<PlatformApp>
 
   // Existing V1 module routers.
   app.route('/api/crm', crmRouter(deps<CrmDatabase>()));
-  app.route('/api/scheduling', schedulingRouter(deps<SchedulingDatabase>()));
-  app.route('/api/quoting', quotingRouter(deps<QuotingDatabase>()));
-  app.route('/api/portal-customer', portalCustomerRouter(deps<PortalCustomerDatabase>()));
+  app.route('/api/scheduling', schedulingRouter(deps<SchedulingDatabase>(), schedulingOptions));
+  app.route('/api', frontdeskAdmissionRouter(db as Kysely<PlatformDatabase>, events, schedulingOptions));
+  app.route('/api/quoting', quotingRouter(deps<QuotingDatabase>(), options.businessPortals ? { convert: businessQuoteConversion(db, events) } : {}));
+  app.route('/api/portal-customer', portalCustomerRouter({ ...deps<PortalCustomerDatabase>(),
+    brandName: options.businessPortals ? 'BlackLabel' : undefined,
+    providers: businessPortalProviders(db, events, contracts, storage, options.scheduling, options.billing) }));
   app.route('/api/portal-employee', portalEmployeeRouter(deps<PortalEmployeeDatabase>()));
   app.route('/api/dashboard', dashboardRouter(deps<DashboardDatabase>()));
-  app.route('/api/messaging', messagingRouter(deps<MessagingDatabase>()));
-  app.route('/api/reviews', reviewsRouter(deps<ReviewsDatabase>()));
+  app.route('/api/messaging', messagingRouter(deps<MessagingDatabase>(), options.messaging));
+  app.route('/api/reviews', reviewsRouter(deps<ReviewsDatabase>(), options.reviewProvider));
   app.route('/api/workflows', workflowsRouter(deps<WorkflowsDatabase>()));
-  app.route('/api/billing', billingRouter(deps<BillingDatabase>()));
+  app.route('/api/billing', billingRouter(deps<BillingDatabase>(), options.billing));
   app.route('/api/files', filesRouter({ ...deps<FilesDatabase>(), storage }));
   app.route('/api/industries', industriesRouter(deps<IndustriesDatabase>()));
   app.route('/api/retail', retailRouter(deps<RetailDatabase>()));
@@ -606,6 +709,25 @@ export async function createApp(options: CreateAppOptions): Promise<PlatformApp>
   app.route('/api/vendors', vendorsRouter(deps<VendorsDatabase>()));
   app.route('/api/purchasing', purchasingRouter(deps<PurchasingDatabase>()));
   app.route('/api/orders', ordersRouter(deps<OrdersDatabase>(), { providers: checkoutProviders }));
+  app.route('/api/pos/auth', posAuth.router);
+  app.route('/api/pos/bar', barPosRouter(dbFor<BarDatabase>(db), events, getActingUser));
+  app.route(
+    '/api/pos',
+    posRouter(dbFor<PosDatabase>(db), events, {
+      providers: checkoutProviders,
+      envDefaultLocationId: options.envDefaultLocationId,
+      cardPresent: options.posCardPresent,
+      processorStatus: options.posProcessorStatus,
+      getActingUser,
+    }),
+  );
+  app.route(
+    '/api/pos',
+    posReconciliationRouter(dbFor<PosReconciliationDatabase>(db), events, {
+      envDefaultLocationId: options.envDefaultLocationId,
+      logger,
+    }),
+  );
   app.route('/api/customers', customersRouter(deps<CustomersDatabase>()));
   app.route('/api/loyalty', loyaltyRouter(deps<LoyaltyDatabase>()));
   app.route('/api/outreach', outreachRouter(deps<OutreachDatabase>(), outreachAdapters));

@@ -14,10 +14,11 @@
  * the bus for sibling handlers.
  *
  * Event → handler → idempotency key (see the handler bodies):
- *   orders.order.reserved            → inventory.reserve         reserve:{orderId}:{variationId}
+ *   orders.order.reserved            → inventory.reserve         order reference + variation/location
  *   orders.order.paid                → inventory.sellForOrder    order-paid:{orderId}
  *                                    + actions.unassigned_custom_sale  unassigned:{orderId}:{lineId}
- *   orders.order.returned            → inventory movement / action  return:{returnId}:{variationId}
+ *   orders.order.canceled            → release order reservations
+ *   orders.order.returned            → inventory movement / action  return:{returnId}:{lineIndex}:{variationId}
  *   purchasing.purchase_order.received → inventory movement / action  receipt:{receiptId}:{variationId}
  *   shows.manifest.loaded            → inventory transfer (ship)  manifest_loaded:{manifestId}
  *   shows.manifest.returned          → inventory transfer (receive+close)  manifest_returned:{manifestId}
@@ -33,6 +34,7 @@ import {
   getTransfer,
   receiveTransfer,
   reserve,
+  settleReservationsForReference,
   sellForOrder,
   shipTransfer,
   closeTransfer,
@@ -40,8 +42,14 @@ import {
   type MovementReason,
 } from '@blacklabel/inventory';
 import { open as openAction, type ActionsDatabase } from '@blacklabel/actions';
+import { getVariation, type CatalogDatabase } from '@blacklabel/catalog';
 import { getOrder, type OrdersDatabase } from '@blacklabel/orders';
 import { getShow, type ShowsDatabase } from '@blacklabel/shows';
+import {
+  recordCashRefund,
+  recordCashTender,
+  type FinanceDatabase,
+} from '@blacklabel/finance';
 import { DispatcherRegistry } from '@blacklabel/automation';
 import type { ApiDatabase } from './migrations';
 import {
@@ -56,7 +64,13 @@ const ACTOR = 'system';
 
 /** Every module table lives in one db; narrow per module at the call site. */
 type AnyDb = Kysely<
-  InventoryDatabase & ActionsDatabase & OrdersDatabase & ShowsDatabase & ApiDatabase
+  InventoryDatabase &
+    ActionsDatabase &
+    OrdersDatabase &
+    ShowsDatabase &
+    FinanceDatabase &
+    CatalogDatabase &
+    ApiDatabase
 >;
 function as<T>(db: AnyDb): Kysely<T> {
   return db as unknown as Kysely<T>;
@@ -105,10 +119,19 @@ export function registerCrossModuleWiring(deps: WiringDeps): () => void {
   const inv = as<InventoryDatabase>(db);
   const act = as<ActionsDatabase>(db);
   const apiDb = as<ApiDatabase>(db);
+  const finance = as<FinanceDatabase>(db);
+  const catalog = as<CatalogDatabase>(db);
   const unsubs: Array<() => void> = [];
 
   const defaultLoc = (tenantId: string) =>
     resolveDefaultLocationId(apiDb, tenantId, envDefaultLocationId);
+
+  const isTrackedVariation = async (tenantId: string, variationId: string): Promise<boolean> => {
+    const variation = await getVariation(catalog, tenantId, variationId);
+    // Preserve the generic orders integration for opaque/external variation
+    // ids, but honor the catalog flag whenever the variation is locally known.
+    return variation ? variation.track_inventory === 1 : true;
+  };
 
   const openSetupRequired = async (tenantId: string, dedupe: string, title: string, evidence: unknown) => {
     await openAction(act, events, tenantId, ACTOR, {
@@ -121,6 +144,72 @@ export function registerCrossModuleWiring(deps: WiringDeps): () => void {
     });
   };
 
+  /* ---------------- captured cash tender -> drawer ledger ---------------- */
+  unsubs.push(
+    events.on(
+      'orders.tender.captured',
+      safe<{
+        cashSessionId: string | null;
+        orderId: string;
+        tenderId: string;
+        kind: string;
+        amountCents: number;
+        occurredAt: string;
+      }>(logger, 'cash-tender', async (e) => {
+        if (e.payload.kind !== 'cash') return;
+        if (!e.payload.cashSessionId) {
+          await openSetupRequired(
+            e.tenantId,
+            'setup:cash-session:' + e.payload.orderId,
+            'Cash sale was not attached to an open drawer',
+            { orderId: e.payload.orderId, tenderId: e.payload.tenderId },
+          );
+          return;
+        }
+        await recordCashTender(finance, e.tenantId, ACTOR, e.payload.cashSessionId, {
+          tenderRef: e.payload.tenderId,
+          orderRef: e.payload.orderId,
+          amountCents: e.payload.amountCents,
+          occurredAt: e.payload.occurredAt,
+        });
+      }),
+    ),
+  );
+
+  /* ---------------- completed cash refund -> current drawer ledger ---------------- */
+  unsubs.push(
+    events.on(
+      'orders.refund.created',
+      safe<{
+        cashSessionId: string | null;
+        orderId: string;
+        refundId: string;
+        tenderId: string;
+        tenderKind: string;
+        amountCents: number;
+        occurredAt: string;
+      }>(logger, 'cash-refund', async (e) => {
+        if (e.payload.tenderKind !== 'cash') return;
+        if (!e.payload.cashSessionId) {
+          await openSetupRequired(
+            e.tenantId,
+            'setup:refund-cash-session:' + e.payload.refundId,
+            'Cash refund was not attached to an open drawer',
+            { orderId: e.payload.orderId, refundId: e.payload.refundId },
+          );
+          return;
+        }
+        await recordCashRefund(finance, e.tenantId, ACTOR, e.payload.cashSessionId, {
+          refundRef: e.payload.refundId,
+          tenderRef: e.payload.tenderId,
+          orderRef: e.payload.orderId,
+          amountCents: e.payload.amountCents,
+          occurredAt: e.payload.occurredAt,
+        });
+      }),
+    ),
+  );
+
   /* ---------------- orders.order.reserved → reserve ---------------- */
   unsubs.push(
     events.on(
@@ -129,8 +218,10 @@ export function registerCrossModuleWiring(deps: WiringDeps): () => void {
         const tenantId = e.tenantId;
         const { orderId, lines } = e.payload;
         let fallback: string | null | undefined;
+        const grouped = new Map<string, { variationId: string; locationId: string; qty: number }>();
         for (const line of lines) {
           if (!line.variationId) continue; // custom line — no inventory effect
+          if (!(await isTrackedVariation(tenantId, line.variationId))) continue;
           let loc = line.locationId;
           if (!loc) {
             fallback = fallback ?? (await defaultLoc(tenantId));
@@ -145,16 +236,40 @@ export function registerCrossModuleWiring(deps: WiringDeps): () => void {
             );
             continue;
           }
-          const key = `reserve:${orderId}:${line.variationId}`;
-          if (!(await claimOnce(apiDb, tenantId, key))) continue; // replay
+          const key = JSON.stringify([line.variationId, loc]);
+          const prior = grouped.get(key);
+          if (prior) prior.qty += line.qty;
+          else grouped.set(key, { variationId: line.variationId, locationId: loc, qty: line.qty });
+        }
+        // Repeated lines for the same variation/location are one allocation;
+        // reserve() itself is replay-safe on the order reference + stock facts.
+        for (const line of grouped.values()) {
           await reserve(inv, events, tenantId, ACTOR, {
             variationId: line.variationId,
-            locationId: loc,
+            locationId: line.locationId,
             qty: line.qty,
             refType: 'order',
-            refId: `${orderId}:${line.variationId}`,
+            refId: orderId,
           });
         }
+      }),
+    ),
+  );
+
+  /* ---------------- orders.order.canceled → release reservations ---------------- */
+  unsubs.push(
+    events.on(
+      'orders.order.canceled',
+      safe<{ orderId: string }>(logger, 'cancel-release', async (e) => {
+        await settleReservationsForReference(
+          inv,
+          events,
+          e.tenantId,
+          ACTOR,
+          'order',
+          e.payload.orderId,
+          'released',
+        );
       }),
     ),
   );
@@ -172,6 +287,7 @@ export function registerCrossModuleWiring(deps: WiringDeps): () => void {
         let missingLoc = false;
         for (const line of lines) {
           if (!line.variationId) continue;
+          if (!(await isTrackedVariation(tenantId, line.variationId))) continue;
           let loc = line.locationId;
           if (!loc) {
             fallback = fallback ?? (await defaultLoc(tenantId));
@@ -227,11 +343,15 @@ export function registerCrossModuleWiring(deps: WiringDeps): () => void {
       safe<{ orderId: string; returnId: string; lines: StockLine[] }>(logger, 'returned', async (e) => {
         const tenantId = e.tenantId;
         const { orderId, returnId, lines } = e.payload;
-        for (const line of lines) {
+        for (const [lineIndex, line] of lines.entries()) {
           if (!line.variationId) continue;
+          if (!(await isTrackedVariation(tenantId, line.variationId))) continue;
           const disposition = line.disposition ?? 'none';
           if (disposition === 'none') continue;
-          const key = `return:${returnId}:${line.variationId}`;
+          // One refund may legitimately return two distinct order lines for
+          // the same variation. Include the stable payload position so each
+          // movement is replay-safe without collapsing a later line.
+          const key = `return:${returnId}:${lineIndex}:${line.variationId}`;
           if (disposition === 'restock') {
             const loc = line.locationId ?? (await defaultLoc(tenantId)) ?? undefined;
             if (!loc) {

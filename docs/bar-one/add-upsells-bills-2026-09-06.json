@@ -1,0 +1,244 @@
+{
+  "checkedAt": "2026-09-06T14:27:06.164263+00:00",
+  "origin": "https://bar-one-pos.michael-070.workers.dev",
+  "device": {
+    "udid": "00008120-000C085E3CE00032",
+    "bundle": "com.blacklabel.oneclub.pos",
+    "build": "9"
+  },
+  "features": {
+    "firstItemStartsSavedWalkIn": true,
+    "addsToSelectedBill": true,
+    "pricedUpsellsSaveAtomically": true,
+    "quantitiesAndPreparationNotes": true,
+    "namedBillsPersistAndAreSearchable": true,
+    "billNameFrozenIntoReceiptOrder": true,
+    "draftItemsSaveBeforeTaxSetup": true,
+    "pendingTaxClearlyLabeled": true,
+    "serviceAndPaymentBlockedUntilTaxConfigured": true,
+    "visibleAddFooter": true,
+    "scrollableBillPanel": true
+  },
+  "physicalAcceptance": {
+    "resultBundle": ".storage/bar-one-add-upsells-scroll-device.xcresult",
+    "attachments": ".storage/bar-one-add-upsells-scroll-device-attachments",
+    "passed": true,
+    "verificationTabID": "6kcLlNex0nUw-PvJesscq",
+    "verificationTabName": "Add verification 4AD933",
+    "billName": "Michael verification",
+    "items": [
+      {
+        "name": "Double Smash Burger",
+        "priceCents": 1600,
+        "modifiers": [
+          "Side: Onion rings"
+        ]
+      },
+      {
+        "name": "Bottled Water",
+        "priceCents": 150,
+        "modifiers": []
+      }
+    ],
+    "beforeTaxCents": 1750,
+    "testTabCanceled": true,
+    "noServiceOrPaymentSent": true,
+    "screenshotsReviewed": true,
+    "addFooterScreenshot": ".storage/bar-one-add-upsells-scroll-device-attachments/B3473E3B-E806-4AAE-B7F6-81368CDDFC3C.png",
+    "namedBillScreenshot": ".storage/bar-one-add-upsells-scroll-device-attachments/294B8479-2296-4710-8471-105548DB2F68.png"
+  },
+  "venueDatabasePostconditions": {
+    "orders_orders": 0,
+    "orders_tenders": 0,
+    "orders_refunds": 0,
+    "orders_payment_attempts": 0,
+    "openTabs": 0,
+    "prepTickets": 0
+  },
+  "browserAcceptance": {
+    "checkedAt": "2026-09-06T14:23:50.924Z",
+    "environment": "Disposable practice only",
+    "firstItemCreatesTab": true,
+    "extrasSavedAtomically": true,
+    "billNamePersists": true,
+    "reloadPreservesFiveItems": true,
+    "subtotalCents": 5100,
+    "taxCents": 510,
+    "noPaymentOrKitchenSend": true,
+    "testTabCanceled": true,
+    "pageErrors": []
+  },
+  "practiceService": {
+    "checkedAt": "2026-09-06T14:18:31.431Z",
+    "environment": "Disposable practice; simulated payments and printer bridge only",
+    "stages": [
+      "Practice identity and cash shift verified",
+      "Food and drink round routed to separate test printers",
+      "Equal checks, partial card plus cash, tip review, refund and receipt reprint verified",
+      "Lost response recovered with one tab; no duplicate business action"
+    ],
+    "actualPaymentOrPrintSent": false,
+    "orderIDs": [
+      "7zLD9jFOwq-4nfnQDLwMT",
+      "48U498yXo8IyLQW5M7AdD"
+    ],
+    "capturedCents": 2640,
+    "refundedCents": 100,
+    "cashCollectedCents": 820,
+    "printedRequests": [
+      {
+        "id": "ticket:-7FH90T2je3oOw8YC97Ku:1",
+        "documentId": "ticket:-7FH90T2je3oOw8YC97Ku",
+        "role": "bar",
+        "automatic": true,
+        "reprint": false
+      },
+      {
+        "id": "ticket:-7FH90T2je3oOw8YC97Ku:kitchen:1",
+        "documentId": "ticket:-7FH90T2je3oOw8YC97Ku:kitchen",
+        "role": "kitchen",
+        "automatic": true,
+        "reprint": false
+      },
+      {
+        "id": "c2a99560-1163-42e6-a2cb-c81d10bc8b8a",
+        "documentId": "receipt:7zLD9jFOwq-4nfnQDLwMT",
+        "role": "receipt",
+        "automatic": false,
+        "reprint": false
+      },
+      {
+        "id": "27802943-6b05-4bcc-9574-cdbf7e22d192",
+        "documentId": "receipt:7zLD9jFOwq-4nfnQDLwMT",
+        "role": "receipt",
+        "automatic": false,
+        "reprint": true
+      },
+      {
+        "id": "464189f3-0206-4550-bbf8-28ab4f0c10c4",
+        "documentId": "receipt:48U498yXo8IyLQW5M7AdD",
+        "role": "receipt",
+        "automatic": false,
+        "reprint": false
+      }
+    ],
+    "pageErrors": []
+  },
+  "validation": {
+    "targetedTests": "28 passed: 18 bar-pos, 3 printing, 7 service worker",
+    "typecheck": "passed",
+    "postLayoutBrowserAcceptance": "passed",
+    "postLayoutPhysicalAcceptance": "passed"
+  },
+  "liveReadiness": {
+    "checkedAt": "2026-09-06T14:22:41.439Z",
+    "data": {
+      "ready": false,
+      "operational": false,
+      "settings": {
+        "defaultLocationId": "jdfWVZNIFj3gRIwONqXGj",
+        "taxBps": null,
+        "taxConfigured": false,
+        "receiptFooter": null,
+        "currency": "USD"
+      },
+      "providers": [],
+      "tenders": {
+        "cash": {
+          "enabled": false
+        },
+        "external": {
+          "enabled": false
+        },
+        "cardPresent": {
+          "enabled": false,
+          "configured": false,
+          "provider": null,
+          "readerId": null,
+          "readerStatus": null,
+          "physicalReaderVerified": false,
+          "checkedAt": null
+        }
+      },
+      "blockers": [
+        {
+          "code": "tax_rate_required",
+          "message": "Set the sales tax rate explicitly; use 0% where appropriate.",
+          "blocking": true
+        },
+        {
+          "code": "card_present_not_configured",
+          "message": "Stripe Terminal credentials and a reader are not configured. Cash and external tenders remain available.",
+          "blocking": false
+        }
+      ]
+    }
+  },
+  "hardwareRecheck": {
+    "checkedAt": "2026-09-06T14:25:33.949007+00:00",
+    "checks": [
+      {
+        "ip": "10.1.10.71",
+        "port": 9100,
+        "result": "TimeoutError"
+      },
+      {
+        "ip": "10.1.10.248",
+        "port": 443,
+        "result": "ConnectionRefusedError"
+      },
+      {
+        "ip": "10.1.10.248",
+        "port": 8080,
+        "result": "ConnectionRefusedError"
+      },
+      {
+        "ip": "10.1.10.248",
+        "port": 12000,
+        "result": "ConnectionRefusedError"
+      }
+    ]
+  },
+  "publicArtifacts": {
+    "checkedAt": "2026-09-06T14:24:32.124Z",
+    "origin": "https://bar-one-pos.michael-070.workers.dev",
+    "checks": [
+      {
+        "path": "/js/printing.js",
+        "status": 200,
+        "sha256": "ceae58eac7e1e71e2f5c069a6fb6bcabfc18bcb2341a08ba7de5335f9ffadbc6"
+      },
+      {
+        "path": "/js/views/bar.js",
+        "status": 200,
+        "sha256": "62e466237f890872987cc8ebb76775cdd15ec9c55b46e4153e1edf29005f6591"
+      },
+      {
+        "path": "/app.css",
+        "status": 200,
+        "sha256": "56cd18cde6019f54b39c296fd7f7b72cbe63994c2b5933903dae452eab1402db"
+      },
+      {
+        "path": "/sw.js",
+        "status": 200,
+        "sha256": "49e7b8241476dd2eafccdaab6b6a86978a7afd382e5534d1e8aa14fbef543742"
+      }
+    ]
+  },
+  "sourceSHA256": {
+    "apps/api/src/bar-pos.ts": "e9fea31932e388869eb02900fe7ecdcc76658e6e54728c2823b9dca7002d5382",
+    "apps/api/test/bar-pos.test.ts": "e30afe02b3f4cd3374bfbd4999f7b44434302002cd7c07ebb8e26042e4b8afd0",
+    "apps/ui/public/js/views/bar.js": "62e466237f890872987cc8ebb76775cdd15ec9c55b46e4153e1edf29005f6591",
+    "apps/ui/public/js/printing.js": "ceae58eac7e1e71e2f5c069a6fb6bcabfc18bcb2341a08ba7de5335f9ffadbc6",
+    "apps/ui/public/app.css": "56cd18cde6019f54b39c296fd7f7b72cbe63994c2b5933903dae452eab1402db",
+    "apps/ui/public/sw.js": "49e7b8241476dd2eafccdaab6b6a86978a7afd382e5534d1e8aa14fbef543742",
+    "apps/ui/test/printing.test.ts": "f2fc288f725b761ea82c1d46ed31d26279494a9bcc42d01c359146db6da971e9",
+    "apps/ipad/UITests/PracticeRegisterTests.swift": "ae110db6bfa57b2ef6e104af57bded17c0a697adf51d85dce8ce02297fd00ed7",
+    "scripts/verify-bar-one-add.mjs": "c69368d0e334f09a4fad93fbe13cad072b29cdda2e371d664036558233c316c2",
+    "scripts/verify-bar-one-service.mjs": "837b353aa617967a6cd8b1cb2bcc193ec6923903676ad3f6e172a5fe75376c75"
+  },
+  "predeploymentBackup": ".storage/bar-one-venue/backups/2026-09-06T14-16-15-615Z",
+  "livePaymentOrRefundVerified": false,
+  "physicalPaperReceiptVerified": false,
+  "fullyOperational": false
+}

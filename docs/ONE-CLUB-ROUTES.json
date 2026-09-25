@@ -1,0 +1,367 @@
+{
+  "checkedAt": "2026-09-06T10:05:30.698616+00:00",
+  "scope": "All declared bar, POS facade, POS auth, order webhook and finance cash-session routes. This is a source inventory, not proof of live device connectivity.",
+  "deploymentEntry": "apps/api/src/bar-server.ts",
+  "register": "one-club-bar",
+  "pinDigits": 4,
+  "routes": [
+    {
+      "method": "GET",
+      "path": "/api/pos/auth/operators",
+      "source": "apps/api/src/pos-auth.ts",
+      "line": 365
+    },
+    {
+      "method": "POST",
+      "path": "/api/pos/auth/bootstrap",
+      "source": "apps/api/src/pos-auth.ts",
+      "line": 378,
+      "bootstrapPubliclyAvailable": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/pos/auth/session",
+      "source": "apps/api/src/pos-auth.ts",
+      "line": 408
+    },
+    {
+      "method": "GET",
+      "path": "/api/pos/auth/session",
+      "source": "apps/api/src/pos-auth.ts",
+      "line": 459
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/pos/auth/session",
+      "source": "apps/api/src/pos-auth.ts",
+      "line": 465
+    },
+    {
+      "method": "PUT",
+      "path": "/api/pos/auth/operators/:userId/pin",
+      "source": "apps/api/src/pos-auth.ts",
+      "line": 480
+    },
+    {
+      "method": "POST",
+      "path": "/api/pos/auth/operators",
+      "source": "apps/api/src/pos-auth.ts",
+      "line": 508
+    },
+    {
+      "method": "GET",
+      "path": "/api/pos/bar/state",
+      "source": "apps/api/src/bar-pos.ts",
+      "line": 223
+    },
+    {
+      "method": "GET",
+      "path": "/api/pos/bar/setup",
+      "source": "apps/api/src/bar-pos.ts",
+      "line": 236
+    },
+    {
+      "method": "POST",
+      "path": "/api/pos/bar/setup",
+      "source": "apps/api/src/bar-pos.ts",
+      "line": 241
+    },
+    {
+      "method": "POST",
+      "path": "/api/pos/bar/menu-import-preview",
+      "source": "apps/api/src/bar-pos.ts",
+      "line": 255
+    },
+    {
+      "method": "POST",
+      "path": "/api/pos/bar/menu-import",
+      "source": "apps/api/src/bar-pos.ts",
+      "line": 270
+    },
+    {
+      "method": "POST",
+      "path": "/api/pos/bar/menu",
+      "source": "apps/api/src/bar-pos.ts",
+      "line": 287
+    },
+    {
+      "method": "POST",
+      "path": "/api/pos/bar/stock",
+      "source": "apps/api/src/bar-pos.ts",
+      "line": 304
+    },
+    {
+      "method": "POST",
+      "path": "/api/pos/bar/tabs",
+      "source": "apps/api/src/bar-pos.ts",
+      "line": 319
+    },
+    {
+      "method": "POST",
+      "path": "/api/pos/bar/tabs/:tabId/commands",
+      "source": "apps/api/src/bar-pos.ts",
+      "line": 325
+    },
+    {
+      "method": "POST",
+      "path": "/api/pos/bar/tabs/:tabId/new-check",
+      "source": "apps/api/src/bar-pos.ts",
+      "line": 434
+    },
+    {
+      "method": "POST",
+      "path": "/api/pos/bar/tabs/:tabId/merge",
+      "source": "apps/api/src/bar-pos.ts",
+      "line": 442
+    },
+    {
+      "method": "POST",
+      "path": "/api/pos/bar/tabs/:tabId/checks/:checkId/checkout",
+      "source": "apps/api/src/bar-pos.ts",
+      "line": 456
+    },
+    {
+      "method": "POST",
+      "path": "/api/pos/bar/tickets/:ticketId/ready",
+      "source": "apps/api/src/bar-pos.ts",
+      "line": 491
+    },
+    {
+      "method": "POST",
+      "path": "/api/pos/bar/tabs/:tabId/checks/:checkId/drawer",
+      "source": "apps/api/src/bar-pos.ts",
+      "line": 498
+    },
+    {
+      "method": "GET",
+      "path": "/api/pos/settings",
+      "source": "apps/api/src/pos.ts",
+      "line": 655
+    },
+    {
+      "method": "PUT",
+      "path": "/api/pos/settings",
+      "source": "apps/api/src/pos.ts",
+      "line": 660
+    },
+    {
+      "method": "GET",
+      "path": "/api/pos/readiness",
+      "source": "apps/api/src/pos.ts",
+      "line": 677
+    },
+    {
+      "method": "GET",
+      "path": "/api/pos/catalog",
+      "source": "apps/api/src/pos.ts",
+      "line": 741
+    },
+    {
+      "method": "GET",
+      "path": "/api/pos/stock",
+      "source": "apps/api/src/pos.ts",
+      "line": 784
+    },
+    {
+      "method": "GET",
+      "path": "/api/pos/drawer",
+      "source": "apps/api/src/pos.ts",
+      "line": 843
+    },
+    {
+      "method": "POST",
+      "path": "/api/pos/drawer/open",
+      "source": "apps/api/src/pos.ts",
+      "line": 857
+    },
+    {
+      "method": "POST",
+      "path": "/api/pos/drawer/:id/movements",
+      "source": "apps/api/src/pos.ts",
+      "line": 875
+    },
+    {
+      "method": "POST",
+      "path": "/api/pos/drawer/:id/close",
+      "source": "apps/api/src/pos.ts",
+      "line": 890
+    },
+    {
+      "method": "POST",
+      "path": "/api/pos/orders",
+      "source": "apps/api/src/pos.ts",
+      "line": 903
+    },
+    {
+      "method": "POST",
+      "path": "/api/pos/orders/:orderId/pay",
+      "source": "apps/api/src/pos.ts",
+      "line": 1085
+    },
+    {
+      "method": "POST",
+      "path": "/api/pos/orders/:orderId/cancel",
+      "source": "apps/api/src/pos.ts",
+      "line": 1183
+    },
+    {
+      "method": "POST",
+      "path": "/api/pos/orders/:orderId/cancel-split",
+      "source": "apps/api/src/pos.ts",
+      "line": 1200
+    },
+    {
+      "method": "POST",
+      "path": "/api/pos/orders/:orderId/card-payments",
+      "source": "apps/api/src/pos.ts",
+      "line": 1210
+    },
+    {
+      "method": "GET",
+      "path": "/api/pos/processor",
+      "source": "apps/api/src/pos.ts",
+      "line": 1247
+    },
+    {
+      "method": "GET",
+      "path": "/api/pos/orders/:orderId/balance",
+      "source": "apps/api/src/pos.ts",
+      "line": 1250
+    },
+    {
+      "method": "GET",
+      "path": "/api/pos/orders/:orderId/payment-attempts",
+      "source": "apps/api/src/pos.ts",
+      "line": 1265
+    },
+    {
+      "method": "GET",
+      "path": "/api/pos/payment-attempts/:attemptId",
+      "source": "apps/api/src/pos.ts",
+      "line": 1272
+    },
+    {
+      "method": "POST",
+      "path": "/api/pos/payment-attempts/:attemptId/cancel",
+      "source": "apps/api/src/pos.ts",
+      "line": 1291
+    },
+    {
+      "method": "POST",
+      "path": "/api/pos/orders/:orderId/refunds",
+      "source": "apps/api/src/pos.ts",
+      "line": 1308
+    },
+    {
+      "method": "GET",
+      "path": "/api/pos/receipts/:orderId",
+      "source": "apps/api/src/pos.ts",
+      "line": 1362
+    },
+    {
+      "method": "POST",
+      "path": "/api/orders/webhooks/:provider",
+      "source": "packages/orders/src/router.ts",
+      "line": 174
+    },
+    {
+      "method": "GET",
+      "path": "/api/orders/webhooks",
+      "source": "packages/orders/src/router.ts",
+      "line": 190
+    },
+    {
+      "method": "POST",
+      "path": "/api/finance/cash-sessions",
+      "source": "packages/finance/src/router.ts",
+      "line": 298
+    },
+    {
+      "method": "GET",
+      "path": "/api/finance/cash-sessions",
+      "source": "packages/finance/src/router.ts",
+      "line": 303
+    },
+    {
+      "method": "GET",
+      "path": "/api/finance/cash-sessions/:id",
+      "source": "packages/finance/src/router.ts",
+      "line": 308
+    },
+    {
+      "method": "GET",
+      "path": "/api/finance/cash-sessions/:id/reconciliation",
+      "source": "packages/finance/src/router.ts",
+      "line": 312
+    },
+    {
+      "method": "POST",
+      "path": "/api/finance/cash-sessions/:id/movements",
+      "source": "packages/finance/src/router.ts",
+      "line": 316
+    },
+    {
+      "method": "GET",
+      "path": "/api/finance/cash-sessions/:id/movements",
+      "source": "packages/finance/src/router.ts",
+      "line": 325
+    },
+    {
+      "method": "PUT",
+      "path": "/api/finance/cash-sessions/:id/expected",
+      "source": "packages/finance/src/router.ts",
+      "line": 330
+    },
+    {
+      "method": "POST",
+      "path": "/api/finance/cash-sessions/:id/close",
+      "source": "packages/finance/src/router.ts",
+      "line": 335
+    },
+    {
+      "method": "POST",
+      "path": "/api/finance/cash-sessions/:id/adjustments",
+      "source": "packages/finance/src/router.ts",
+      "line": 340
+    },
+    {
+      "method": "GET",
+      "path": "/api/finance/cash-sessions/:id/adjustments",
+      "source": "packages/finance/src/router.ts",
+      "line": 345
+    }
+  ],
+  "barCommands": [
+    "add",
+    "repeat",
+    "send",
+    "rename",
+    "split",
+    "equal",
+    "move",
+    "comp",
+    "void",
+    "tip",
+    "close",
+    "cancel"
+  ],
+  "nativeBridges": [
+    {
+      "name": "oneClubPrint",
+      "destination": "UIPrintInteractionController",
+      "state": "compiled; physical printer test pending"
+    },
+    {
+      "name": "oneClubExport",
+      "destination": "UIActivityViewController",
+      "state": "compiled; iPad Files/share test pending"
+    }
+  ],
+  "sourceSha256": {
+    "apps/api/src/pos-auth.ts": "89bd5715007083a04153976ea951b66cfa0acfd5b28874be485c89620b029f14",
+    "apps/api/src/bar-pos.ts": "76783b38e637b0401b349f0434bc8e056ca656104145300598038aa602ef699a",
+    "apps/api/src/pos.ts": "9544b9689efa995054b5b9e11876e9a18a50e1448bd2fb3014f914afeb6c63f3",
+    "packages/orders/src/router.ts": "87b47f20bfe22cb62ca8c069f598afad67ecd4cf046a86c51ac7ef17cbc8a7ff",
+    "packages/finance/src/router.ts": "e3b2760385ee14fba14eec4dbc959f84c114e06ef5534bcc08b44435c44e7d5f"
+  }
+}

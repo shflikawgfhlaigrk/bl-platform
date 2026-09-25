@@ -1,0 +1,123 @@
+{
+  "data": {
+    "merchant": {
+      "name": "ONE Club \u00b7 DEMO",
+      "receiptFooter": "Thank you for visiting ONE Club. Demonstration receipt \u2014 no real payment.",
+      "currency": "USD"
+    },
+    "cashier": {
+      "id": "TcxB613xV3g3eAgRlFiZX",
+      "name": "Club Operator"
+    },
+    "order": {
+      "id": "EdB3tM-NVi5MyzbhfpLck",
+      "tenant_id": "mBD4z-ANmjAe0gSOGGf4Y",
+      "channel": "pos",
+      "status": "paid",
+      "customer_id": null,
+      "show_id": null,
+      "source": "mags",
+      "source_order_id": "pos:cart_fca1d4ab-bd79-4519-899d-7d760c04749e",
+      "discount_bps": null,
+      "discount_fixed_cents": null,
+      "tax_bps": 825,
+      "subtotal_cents": 9700,
+      "discount_cents": 0,
+      "tax_cents": 800,
+      "total_cents": 10500,
+      "note": null,
+      "sent": false,
+      "sent_at": null,
+      "reserved_at": "2026-09-06T05:37:03.902Z",
+      "paid_at": "2026-09-06T05:37:42.863Z",
+      "fulfilled_at": null,
+      "canceled_at": null,
+      "created_at": "2026-09-06T05:37:03.901Z",
+      "updated_at": "2026-09-06T05:37:42.863Z",
+      "tip_cents": 0,
+      "receipt_number": "BL-20260906-S7P_GNG7UB",
+      "register_id": "register_f4178486-c8a3-43e4-9130-56a83c019440",
+      "device_id": null,
+      "cashier_id": "TcxB613xV3g3eAgRlFiZX",
+      "cash_session_id": null,
+      "lines": [
+        {
+          "id": "nyZcO2GN89OSt6-ZxJlFy",
+          "tenant_id": "mBD4z-ANmjAe0gSOGGf4Y",
+          "order_id": "EdB3tM-NVi5MyzbhfpLck",
+          "position": 0,
+          "variation_id": "0bH_-vMSWu1ZYfUAsJBYt",
+          "location_id": "OYAcO_U0_OuYRBA8xD1t5",
+          "description": "ONE Club polo \u2014 Standard",
+          "qty": 1,
+          "unit_price_cents": 6500,
+          "discount": null,
+          "line_total_cents": 6500,
+          "fulfillment_state": "pending",
+          "created_at": "2026-09-06T05:37:03.901Z",
+          "updated_at": "2026-09-06T05:37:03.901Z",
+          "returned_qty": 0,
+          "pending_return_qty": 0,
+          "returnable_qty": 1
+        },
+        {
+          "id": "jK3os3LX-navUbQFvKTxH",
+          "tenant_id": "mBD4z-ANmjAe0gSOGGf4Y",
+          "order_id": "EdB3tM-NVi5MyzbhfpLck",
+          "position": 1,
+          "variation_id": "rl0lplSbJDPZOLHbICyay",
+          "location_id": "OYAcO_U0_OuYRBA8xD1t5",
+          "description": "Course cap \u2014 Standard",
+          "qty": 1,
+          "unit_price_cents": 3200,
+          "discount": null,
+          "line_total_cents": 3200,
+          "fulfillment_state": "pending",
+          "created_at": "2026-09-06T05:37:03.901Z",
+          "updated_at": "2026-09-06T05:37:03.901Z",
+          "returned_qty": 0,
+          "pending_return_qty": 0,
+          "returnable_qty": 1
+        }
+      ]
+    },
+    "tenders": [
+      {
+        "id": "mc2P-dg2cZ8rdPjWPWr1t",
+        "tenant_id": "mBD4z-ANmjAe0gSOGGf4Y",
+        "order_id": "EdB3tM-NVi5MyzbhfpLck",
+        "kind": "provider",
+        "amount_cents": 5000,
+        "provider": "stripe_terminal",
+        "provider_ref": "ch_pi_preview_1",
+        "status": "captured",
+        "refunded_cents": 0,
+        "idempotency_key": "stripe_terminal:ch_pi_preview_1",
+        "created_at": "2026-09-06T05:37:05.720Z",
+        "updated_at": "2026-09-06T05:37:05.720Z",
+        "cash_received_cents": null,
+        "change_due_cents": null
+      },
+      {
+        "id": "23fkSK-gIAnJ5YW_lWaGa",
+        "tenant_id": "mBD4z-ANmjAe0gSOGGf4Y",
+        "order_id": "EdB3tM-NVi5MyzbhfpLck",
+        "kind": "provider",
+        "amount_cents": 5500,
+        "provider": "stripe_terminal",
+        "provider_ref": "ch_pi_preview_2",
+        "status": "captured",
+        "refunded_cents": 0,
+        "idempotency_key": "stripe_terminal:ch_pi_preview_2",
+        "created_at": "2026-09-06T05:37:42.863Z",
+        "updated_at": "2026-09-06T05:37:42.863Z",
+        "cash_received_cents": null,
+        "change_due_cents": null
+      }
+    ],
+    "refunds": [],
+    "amountPaidCents": 10500,
+    "amountRefundedCents": 0,
+    "netPaidCents": 10500
+  }
+}

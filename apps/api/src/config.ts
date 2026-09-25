@@ -18,6 +18,10 @@ export const CONFIG_KEYS = {
   quarantineLocation: 'quarantine_location_id',
   damagedLocation: 'damaged_location_id',
   ownerUserId: 'owner_user_id',
+  /** Explicit tenant POS tax rate. Missing is different from a configured 0%. */
+  posTaxBps: 'pos_tax_bps',
+  /** Optional text printed below POS receipts. */
+  posReceiptFooter: 'pos_receipt_footer',
   /** Prefix + manifestId → the inventory transfer created for a show load-out. */
   manifestTransferPrefix: 'manifest_transfer:',
 } as const;

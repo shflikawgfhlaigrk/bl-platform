@@ -1277,6 +1277,20 @@ export async function expireQuoteManually(ctx: QuotingCtx, quoteId: string): Pro
  * Convert quote -> job (+ invoice via the createInvoice contract)
  * ------------------------------------------------------------------ */
 
+export async function getQuoteConversion(ctx: QuotingCtx, quoteId: string) {
+  return ctx.db.selectFrom('quoting_conversions').selectAll().where('tenant_id', '=', ctx.tenantId).where('quote_id', '=', quoteId).executeTakeFirst();
+}
+
+/** Composition records ids only after the CRM job and invoice have been read back. */
+export async function recordQuoteConversion(ctx: QuotingCtx, quoteId: string, jobId: string, invoiceId: string) {
+  const quote = await getQuoteRow(ctx, quoteId);
+  if (!quote.converted_at || quote.invoice_id !== invoiceId || !jobId) throw ApiError.conflict('Conversion state does not match its invoice.');
+  const row = { id: id(), tenant_id: ctx.tenantId, quote_id: quoteId, job_id: jobId, invoice_id: invoiceId, created_at: nowIso() };
+  await ctx.db.insertInto('quoting_conversions').values(row).execute();
+  await audit(asCoreDb(ctx.db), ctx.tenantId, ctx.actor, 'quoting.conversion.verified', 'quoting.conversion', row.id, { quoteId, jobId, invoiceId });
+  return row;
+}
+
 export async function convertQuote(ctx: QuotingCtx, quoteId: string): Promise<ConvertQuoteResult> {
   const quote = await getQuoteRow(ctx, quoteId);
   if (quote.status !== 'approved') {

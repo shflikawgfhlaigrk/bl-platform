@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#181845" />
+    <meta name="description" content="Bar One — Point of sale for ONE Club Gulf Shores." />
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="icon" href="./icons/icon.svg" />
+    <link rel="apple-touch-icon" href="./brand/one-club-logo.png" />
+    <meta name="apple-mobile-web-app-title" content="Bar One" />
+    <link rel="stylesheet" href="./app.css" />
+    <title>Bar One</title>
+  </head>
+  <body data-pos-profile="bar" data-native-pos="true">
+    <a class="skip-link" href="#main">Skip to main content</a>
+
+    <div id="app-shell" class="shell">
+      <!-- Header / banner -->
+      <header class="app-header" role="banner">
+        <button
+          id="nav-toggle"
+          class="icon-btn nav-toggle"
+          aria-label="Show or hide navigation"
+          aria-expanded="false"
+          aria-controls="app-nav"
+        >
+          <span aria-hidden="true">☰</span>
+        </button>
+        <div class="brand">
+          <img class="club-crest" src="./brand/one-club-logo.png" alt="Bar One crest" width="64" height="64" />
+          <span class="club-wordmark"><strong>BAR ONE</strong><span>GULF SHORES</span></span>
+          <span class="brand-divider" aria-hidden="true"></span>
+          <span class="brand-product">Point of sale</span>
+        </div>
+        <div class="header-meta">
+          <span id="data-as-of" class="data-as-of" title="The date of the newest data loaded">Data as of —</span>
+          <button
+            id="sync-indicator"
+            class="sync-indicator sync-synced"
+            type="button"
+            aria-live="polite"
+            title="Sync status. Click to retry any failed items."
+          >
+            <span class="sync-dot" aria-hidden="true"></span>
+            <span id="sync-text">Synced</span>
+          </button>
+          <button
+            id="current-user"
+            class="current-user"
+            type="button"
+            title="Signed-in register operator"
+            hidden
+          >
+            Sign in
+          </button>
+        </div>
+      </header>
+
+      <!-- Left navigation -->
+      <nav id="app-nav" class="app-nav" aria-label="Sections">
+        <ul id="nav-list" class="nav-list"><!-- populated by app.js --></ul>
+        <div class="nav-footer">
+          <span class="nav-signature">BAR ONE</span>
+          <span class="nav-account" id="tenant-name">Point of sale</span>
+          <span class="nav-mode" id="offline-badge" hidden>● Offline — changes are being saved on this device</span>
+        </div>
+      </nav>
+
+      <!-- Main content -->
+      <main id="main" class="app-main" tabindex="-1">
+        <div id="view-root" class="view-root" aria-live="polite">
+          <div class="loading">Preparing your register…</div>
+        </div>
+      </main>
+
+      <!-- Live region for toasts / scan feedback (screen-reader) -->
+      <div id="live-region" class="visually-hidden" role="status" aria-live="assertive"></div>
+      <div id="toast-root" class="toast-root" aria-hidden="false"></div>
+      <div id="scan-flash" class="scan-flash" aria-hidden="true"></div>
+    </div>
+
+    <noscript>
+      <p style="padding:1rem">Bar One needs JavaScript enabled to run. Your register is stored on this iPad.</p>
+    </noscript>
+
+    <script src="./runtime.js"></script><script src="./ui.js" defer></script>
+  </body>
+</html>

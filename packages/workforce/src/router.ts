@@ -67,7 +67,7 @@ import {
   updateSessionPolicy,
 } from './service';
 
-const BACK_OFFICE_ACTOR = 'system';
+const backOfficeActor = (c: Context): string => c.get('actingUserId') ?? 'system';
 
 async function jsonBody(c: Context): Promise<unknown> {
   return c.req.json().catch(() => ({}));
@@ -186,7 +186,7 @@ export function workforceRouter(deps: ModuleDeps<WorkforceDatabase>): Hono<Tenan
   /* ---- roles ---- */
   app.post('/roles', async (c) => {
     const input = createRoleSchema.parse(await jsonBody(c));
-    const role = await createRole(db, c.get('tenantId'), BACK_OFFICE_ACTOR, input);
+    const role = await createRole(db, c.get('tenantId'), backOfficeActor(c), input);
     return c.json({ data: role }, 201);
   });
   app.get('/roles', async (c) => {
@@ -199,11 +199,11 @@ export function workforceRouter(deps: ModuleDeps<WorkforceDatabase>): Hono<Tenan
   });
   app.patch('/roles/:roleId', async (c) => {
     const patch = updateRoleSchema.parse(await jsonBody(c));
-    const role = await updateRole(db, c.get('tenantId'), BACK_OFFICE_ACTOR, c.req.param('roleId'), patch);
+    const role = await updateRole(db, c.get('tenantId'), backOfficeActor(c), c.req.param('roleId'), patch);
     return c.json({ data: role });
   });
   app.delete('/roles/:roleId', async (c) => {
-    await deleteRole(db, c.get('tenantId'), BACK_OFFICE_ACTOR, c.req.param('roleId'));
+    await deleteRole(db, c.get('tenantId'), backOfficeActor(c), c.req.param('roleId'));
     return c.json({ data: { deleted: true } });
   });
 
@@ -217,7 +217,7 @@ export function workforceRouter(deps: ModuleDeps<WorkforceDatabase>): Hono<Tenan
     const permissions = await grantPermission(
       db,
       c.get('tenantId'),
-      BACK_OFFICE_ACTOR,
+      backOfficeActor(c),
       c.req.param('roleId'),
       permission,
     );
@@ -227,7 +227,7 @@ export function workforceRouter(deps: ModuleDeps<WorkforceDatabase>): Hono<Tenan
     const permissions = await revokePermission(
       db,
       c.get('tenantId'),
-      BACK_OFFICE_ACTOR,
+      backOfficeActor(c),
       c.req.param('roleId'),
       c.req.param('permission'),
     );
@@ -245,14 +245,14 @@ export function workforceRouter(deps: ModuleDeps<WorkforceDatabase>): Hono<Tenan
   });
   app.post('/users/:userId/roles', async (c) => {
     const { roleId } = assignRoleSchema.parse(await jsonBody(c));
-    await assignRole(db, c.get('tenantId'), BACK_OFFICE_ACTOR, c.req.param('userId'), roleId);
+    await assignRole(db, c.get('tenantId'), backOfficeActor(c), c.req.param('userId'), roleId);
     return c.json({ data: { assigned: true } }, 201);
   });
   app.delete('/users/:userId/roles/:roleId', async (c) => {
     await unassignRole(
       db,
       c.get('tenantId'),
-      BACK_OFFICE_ACTOR,
+      backOfficeActor(c),
       c.req.param('userId'),
       c.req.param('roleId'),
     );
@@ -273,7 +273,7 @@ export function workforceRouter(deps: ModuleDeps<WorkforceDatabase>): Hono<Tenan
   /* ---- invitations ---- */
   app.post('/invitations', async (c) => {
     const input = invitationSchema.parse(await jsonBody(c));
-    const created = await createInvitation(db, c.get('tenantId'), BACK_OFFICE_ACTOR, input);
+    const created = await createInvitation(db, c.get('tenantId'), backOfficeActor(c), input);
     // Raw token returned exactly once.
     return c.json({ data: { ...created.invitation, token: created.token } }, 201);
   });
@@ -290,7 +290,7 @@ export function workforceRouter(deps: ModuleDeps<WorkforceDatabase>): Hono<Tenan
     const invitation = await revokeInvitation(
       db,
       c.get('tenantId'),
-      BACK_OFFICE_ACTOR,
+      backOfficeActor(c),
       c.req.param('invitationId'),
     );
     return c.json({ data: invitation });
@@ -298,23 +298,23 @@ export function workforceRouter(deps: ModuleDeps<WorkforceDatabase>): Hono<Tenan
 
   /* ---- session policy ---- */
   app.get('/session-policy', async (c) => {
-    const policy = await getSessionPolicy(db, c.get('tenantId'), BACK_OFFICE_ACTOR);
+    const policy = await getSessionPolicy(db, c.get('tenantId'), backOfficeActor(c));
     return c.json({ data: policy });
   });
   app.put('/session-policy', async (c) => {
     const patch = sessionPolicySchema.parse(await jsonBody(c));
-    const policy = await updateSessionPolicy(db, c.get('tenantId'), BACK_OFFICE_ACTOR, patch);
+    const policy = await updateSessionPolicy(db, c.get('tenantId'), backOfficeActor(c), patch);
     return c.json({ data: policy });
   });
   app.post('/session-policy/invalidate-all', async (c) => {
-    const policy = await invalidateAllSessions(db, c.get('tenantId'), BACK_OFFICE_ACTOR);
+    const policy = await invalidateAllSessions(db, c.get('tenantId'), backOfficeActor(c));
     return c.json({ data: policy });
   });
 
   /* ---- schedules ---- */
   app.post('/schedules', async (c) => {
     const input = scheduleSchema.parse(await jsonBody(c));
-    const schedule = await createSchedule(db, events, c.get('tenantId'), BACK_OFFICE_ACTOR, input);
+    const schedule = await createSchedule(db, events, c.get('tenantId'), backOfficeActor(c), input);
     return c.json({ data: schedule }, 201);
   });
   app.get('/schedules', async (c) => {
@@ -333,7 +333,7 @@ export function workforceRouter(deps: ModuleDeps<WorkforceDatabase>): Hono<Tenan
     const schedule = await updateSchedule(
       db,
       c.get('tenantId'),
-      BACK_OFFICE_ACTOR,
+      backOfficeActor(c),
       c.req.param('scheduleId'),
       patch,
     );
@@ -345,14 +345,14 @@ export function workforceRouter(deps: ModuleDeps<WorkforceDatabase>): Hono<Tenan
       db,
       events,
       c.get('tenantId'),
-      BACK_OFFICE_ACTOR,
+      backOfficeActor(c),
       c.req.param('scheduleId'),
       options,
     );
     return c.json({ data: schedule });
   });
   app.delete('/schedules/:scheduleId', async (c) => {
-    await deleteSchedule(db, c.get('tenantId'), BACK_OFFICE_ACTOR, c.req.param('scheduleId'));
+    await deleteSchedule(db, c.get('tenantId'), backOfficeActor(c), c.req.param('scheduleId'));
     return c.json({ data: { deleted: true } });
   });
 
@@ -360,7 +360,7 @@ export function workforceRouter(deps: ModuleDeps<WorkforceDatabase>): Hono<Tenan
   app.get('/time-exports/adapters', (c) => c.json({ data: listPayrollAdapters() }));
   app.post('/time-exports', async (c) => {
     const input = timeExportSchema.parse(await jsonBody(c));
-    const exported = await exportApprovedTime(db, c.get('tenantId'), BACK_OFFICE_ACTOR, input);
+    const exported = await exportApprovedTime(db, c.get('tenantId'), backOfficeActor(c), input);
     return c.json({ data: exported }, 201);
   });
   app.get('/time-exports', async (c) => {
@@ -378,7 +378,7 @@ export function workforceRouter(deps: ModuleDeps<WorkforceDatabase>): Hono<Tenan
   /* ---- handoffs ---- */
   app.post('/handoffs', async (c) => {
     const input = handoffSchema.parse(await jsonBody(c));
-    const handoff = await createHandoff(db, c.get('tenantId'), BACK_OFFICE_ACTOR, input);
+    const handoff = await createHandoff(db, c.get('tenantId'), backOfficeActor(c), input);
     return c.json({ data: handoff }, 201);
   });
   app.get('/handoffs', async (c) => {
@@ -397,7 +397,7 @@ export function workforceRouter(deps: ModuleDeps<WorkforceDatabase>): Hono<Tenan
       db,
       events,
       c.get('tenantId'),
-      BACK_OFFICE_ACTOR,
+      backOfficeActor(c),
       c.req.param('handoffId'),
     );
     return c.json({ data: handoff });

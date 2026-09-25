@@ -15,6 +15,7 @@ import { describe, it, expect } from 'vitest';
 import { asCoreDb, createTenant } from '@blacklabel/core';
 import { createTestDb, runMigrations } from '@blacklabel/db';
 import { allMigrations, createApp, MODULE_KEYS, type PlatformDatabase } from '../src/app';
+import { posReconciliationMigrations } from '../src/pos-reconciliation-migrations';
 
 async function boot() {
   const db = createTestDb<PlatformDatabase>();
@@ -66,6 +67,7 @@ describe('api composition root (createApp)', () => {
       'vendors',
       'purchasing',
       'orders',
+      'pos',
       'customers',
       'loyalty',
       'outreach',
@@ -75,7 +77,7 @@ describe('api composition root (createApp)', () => {
     ]) {
       expect(mods, `health should list ${m}`).toContain(m);
     }
-    expect(mods).toHaveLength(27);
+    expect(mods).toHaveLength(28);
   });
 
   it('mounts and serves representative V1 + new module routes (200 with a valid tenant)', async () => {
@@ -105,5 +107,17 @@ describe('api composition root (createApp)', () => {
     const second = await runMigrations(db, allMigrations);
     expect(first.applied.length).toBeGreaterThan(0);
     expect(second.applied).toHaveLength(0); // nothing new to apply the second time
+  });
+
+  it('replays POS DDL after a crash before migration bookkeeping', async () => {
+    const db = createTestDb<PlatformDatabase>();
+    // `up` completed but _migrations was never updated: the most demanding
+    // interruption point for this repository's runner.
+    for (const migration of posReconciliationMigrations) await migration.up(db);
+    const resumed = await runMigrations(db, posReconciliationMigrations);
+    expect(resumed.applied).toEqual(posReconciliationMigrations.map((migration) => migration.name));
+    expect(await db.selectFrom('api_pos_reconciliation_effects').selectAll().execute()).toEqual([]);
+    expect(await db.selectFrom('api_pos_finance_entries').selectAll().execute()).toEqual([]);
+    expect(await db.selectFrom('api_pos_cart_facts').selectAll().execute()).toEqual([]);
   });
 });

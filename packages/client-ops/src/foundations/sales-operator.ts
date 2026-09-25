@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from 'node:util';
 import type {
   FoundationAdapterReadiness,
   FoundationInvocationRequest,
@@ -390,7 +391,7 @@ export class SalesOperatorAdapter implements ServiceFoundationAdapter {
       };
     }
     const expected = coerceRecord(request.expected);
-    const leadId = resolveLeadId(expected);
+    const leadId = resolveLeadId(expected) ?? resolveLeadId(expected.lead);
     if (!leadId) {
       return { verified: false, evidence: { reason: 'no leadId to verify', invocationId: request.invocationId }, checkedAt };
     }
@@ -401,13 +402,17 @@ export class SalesOperatorAdapter implements ServiceFoundationAdapter {
       }
       const emailOk = isLegitEmail(lead);
       const contactable = emailOk || isCurrentPhone(lead.phone);
-      const expectedContactable = expected.contactable;
-      const matches = typeof expectedContactable === 'boolean' ? expectedContactable === contactable : true;
+      const expectedContactable = expected.contactable ?? coerceRecord(expected.validation).contactable;
+      const contactMatches = typeof expectedContactable === 'boolean' ? expectedContactable === contactable : true;
+      const reportMatches = expected.lead === undefined || typeof expected.action === 'string'
+        && isDeepStrictEqual(buildLeadReport(lead, expected.action), expected);
+      const matches = contactMatches && reportMatches;
       return {
         verified: matches,
         evidence: {
           leadId,
           contactable,
+          reportMatches,
           surfacedEmailStatus: emailOk ? SURFACED_LISTED_STATUS : 'none',
           expectedContactable: typeof expectedContactable === 'boolean' ? expectedContactable : null,
           readOnly: true,

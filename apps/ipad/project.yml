@@ -1,0 +1,86 @@
+name: OneClubPOS
+options:
+  deploymentTarget:
+    iOS: "17.0"
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    TARGETED_DEVICE_FAMILY: "2"
+    CODE_SIGN_STYLE: Automatic
+    MARKETING_VERSION: "1.0"
+    CURRENT_PROJECT_VERSION: "12"
+packages:
+  StarIO10:
+    url: https://github.com/star-micronics/StarXpand-SDK-iOS
+    exactVersion: 2.13.0
+targets:
+  OneClubPOSUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - UITests
+      - Sources/ReceiptRasterizer.swift
+      - Sources/PrintJournal.swift
+    dependencies:
+      - target: OneClubPOS
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.blacklabel.oneclub.pos.uitests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: OneClubPOS
+  OneClubPOS:
+    type: application
+    platform: iOS
+    dependencies:
+      - package: StarIO10
+    sources:
+      - Sources
+      - Assets.xcassets
+      - path: Resources/Register
+        type: folder
+        buildPhase: resources
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.blacklabel.oneclub.pos
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        SUPPORTS_MACCATALYST: NO
+        SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD: NO
+    info:
+      path: Info.plist
+      properties:
+        UIFileSharingEnabled: true
+        LSSupportsOpeningDocumentsInPlace: true
+        CFBundleDisplayName: Bar One
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        UILaunchScreen:
+          UIColorName: LaunchBackground
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        NSLocalNetworkUsageDescription: Connect to your receipt printer and payment terminal on the venue network.
+        NSBluetoothAlwaysUsageDescription: Find and connect to your Star receipt printer.
+        UISupportedExternalAccessoryProtocols:
+          - jp.star-m.starpro
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+          NSAllowsArbitraryLoadsInWebContent: true
+        ITSAppUsesNonExemptEncryption: false
+schemes:
+  OneClubPOS:
+    build:
+      targets:
+        OneClubPOS: all
+    test:
+      targets:
+        - OneClubPOSUITests
+      environmentVariables:
+        BARONE_OPERATOR_PIN: $(BARONE_OPERATOR_PIN)
+        BARONE_HARDWARE_INSPECTION: $(BARONE_HARDWARE_INSPECTION)
+        BARONE_READER_NAME: $(BARONE_READER_NAME)
+        BARONE_INSPECT_APP_BUNDLE: $(BARONE_INSPECT_APP_BUNDLE)
+        BARONE_PRINTER_IP: $(BARONE_PRINTER_IP)
+        ONECLUB_TEST_ORIGIN: $(ONECLUB_TEST_ORIGIN)
+        ONECLUB_RESTORE_ORIENTATION: $(ONECLUB_RESTORE_ORIENTATION)

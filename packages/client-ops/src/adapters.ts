@@ -55,6 +55,8 @@ export interface FoundationVerificationRequest {
   runId: string;
   invocationId: string;
   expected: unknown;
+  /** Revalidate the same tenant-owned connection used by invocation. */
+  ownedSourceRef?: OwnedSourceConnection;
 }
 
 export interface FoundationVerificationResult {

@@ -15,6 +15,7 @@ import type { FinanceDatabase } from './schema';
 import {
   addCashAdjustment,
   addItemCost,
+  cashSessionReconciliation,
   closeCashSession,
   currentCost,
   exportCsvRows,
@@ -27,6 +28,7 @@ import {
   importTaxEvidence,
   importVendorBillRefs,
   listCashAdjustments,
+  listCashMovements,
   listCashSessions,
   listItemCosts,
   listLiabilitySnapshots,
@@ -37,6 +39,7 @@ import {
   openCashSession,
   payoutReconciliationSummary,
   periodSummary,
+  postCashDrawerMovement,
   postExpectedCents,
   recordLiabilitySnapshot,
   upsertTaxConfig,
@@ -148,6 +151,9 @@ const payoutMatchSchema = z.object({
 const openCashSchema = z.object({
   locationRef: z.string().nullable().optional(),
   showRef: z.string().nullable().optional(),
+  drawerRef: z.string().nullable().optional(),
+  registerRef: z.string().nullable().optional(),
+  expectedMode: z.enum(['posted', 'ledger']).optional(),
   openedBy: z.string().min(1),
   openingFloatCents: cents,
   note: z.string().nullable().optional(),
@@ -166,6 +172,15 @@ const adjustmentSchema = z.object({
   amountCents: cents,
   reason: z.string().min(1),
   createdBy: z.string().min(1),
+});
+
+const cashMovementSchema = z.object({
+  kind: z.enum(['paid_in', 'paid_out', 'drop']),
+  idempotencyKey: z.string().min(1),
+  amountCents: cents.positive(),
+  note: z.string().min(1),
+  createdBy: z.string().min(1).optional(),
+  occurredAt: iso.optional(),
 });
 
 const itemCostSchema = z.object({
@@ -220,6 +235,7 @@ const CSV_KINDS: readonly CsvKind[] = [
   'refunds',
   'payouts',
   'cash-sessions',
+  'cash-movements',
   'tax-evidence',
   'item-costs',
 ];
@@ -292,6 +308,24 @@ export function financeRouter(deps: ModuleDeps<FinanceDatabase>): Hono<TenantEnv
   app.get('/cash-sessions/:id', async (c) => {
     const s = await getCashSession(db, c.get('tenantId'), c.req.param('id'));
     return c.json({ data: s });
+  });
+  app.get('/cash-sessions/:id/reconciliation', async (c) => {
+    const result = await cashSessionReconciliation(db, c.get('tenantId'), c.req.param('id'));
+    return c.json({ data: result });
+  });
+  app.post('/cash-sessions/:id/movements', async (c) => {
+    const body = cashMovementSchema.parse(await jsonBody(c));
+    const result = await postCashDrawerMovement(db, c.get('tenantId'), actorOf(c), c.req.param('id'), body);
+    const reconciliation = await cashSessionReconciliation(db, c.get('tenantId'), c.req.param('id'));
+    return c.json(
+      { data: { movement: result.movement, reconciliation }, created: result.created },
+      result.created ? 201 : 200,
+    );
+  });
+  app.get('/cash-sessions/:id/movements', async (c) => {
+    const page = parsePagination(c.req.query());
+    const rows = await listCashMovements(db, c.get('tenantId'), c.req.param('id'), page);
+    return c.json({ data: rows, limit: page.limit, offset: page.offset });
   });
   app.put('/cash-sessions/:id/expected', async (c) => {
     const { expectedCents } = expectedSchema.parse(await jsonBody(c));

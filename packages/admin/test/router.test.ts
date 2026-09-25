@@ -46,8 +46,9 @@ describe('router — health run through the endpoint', () => {
 describe('router — full backup flow with a fake provider', () => {
   it('runs a backup and lists it as verified', async () => {
     const provider: BackupProvider = {
+      scope: 'single-tenant-database', supportsEncryption: true,
       async create() {
-        return { path: '/tmp/x.db', bytes: 10, sha256: 'abc' };
+        return { path: '/tmp/x.db', bytes: 10, sha256: 'abc', encrypted: true };
       },
       async restoreToTemp() {
         return { tempPath: '/tmp/x-restore' };
@@ -56,11 +57,12 @@ describe('router — full backup flow with a fake provider', () => {
         return { ok: true };
       },
     };
-    const { app, tenantA } = await setup({ backupProvider: provider });
+    const { app, tenantA, tenantB, db } = await setup({ backupProvider: provider });
+    await db.deleteFrom('tenants').where('id', '=', tenantB.id).execute(); // isolated single-tenant fixture
     const run = await app.request('/backups/run', {
       method: 'POST',
       headers: headers(tenantA, 'owner1'),
-      body: JSON.stringify({ destDir: '/tmp/b' }),
+      body: JSON.stringify({ encrypted: true }),
     });
     expect(run.status).toBe(201);
     expect(((await run.json()) as any).data.status).toBe('verified');

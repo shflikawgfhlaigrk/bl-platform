@@ -16,10 +16,9 @@ import { createActiveInstallation, createInstallation, createRun, headers, setup
  *
  * The adapter reads REAL computed-% handoff packets off disk. Each test seeds a
  * temp directory with a genuine packet (same schema as
- * `~/BlackLabel-Team/STATE/handoffs/*.json`) and points the adapter at it, so the
+ * the HQ packet schema) and binds the tenant's connector to it, so the
  * assertions exercise the real read→assemble→deep-link path deterministically —
- * not a hardcoded string. Pointed at its default dir the same code reads the
- * live fleet packets.
+ * not a hardcoded string. There is no implicit host-directory fallback.
  */
 
 const FIXTURE_SEAT = 'executive-operations-fixture';
@@ -90,7 +89,8 @@ describe('executive-operations-hq foundation adapter', () => {
     expect(run.status).toBe('requested');
 
     const handoffsDir = seedHandoffDir([fixturePacket()]);
-    const adapter = new ExecutiveOperationsHqAdapter({ handoffsDir });
+    const connection = (await service.listConnectedOwnedSources(tenantA.id))[0];
+    const adapter = new ExecutiveOperationsHqAdapter({ service, sources: [{ tenantId: tenantA.id, connection, handoffsDir }] });
     expect(adapter.readiness()).toBe('ready');
 
     const registry = new ServiceFoundationRegistry();
@@ -138,19 +138,26 @@ describe('executive-operations-hq foundation adapter', () => {
     await expect(service.listCompletionReceipts(tenantA.id, { limit: 10, offset: 0 })).resolves.toHaveLength(0);
   });
 
-  it('assembles a real brief from packets on disk via direct invoke, and stays honest (declared + failed) when the source is empty', async () => {
+  it('assembles a tenant-bound brief via direct invoke and fails honestly when that source is empty', async () => {
+    const { db, events, app, tenantA } = await setup();
+    const service = new ClientOpsService(db, events);
+    const installation = await createActiveInstallationFor(app, tenantA, 'executive-operations-hq');
+    const run = await createRun(app, tenantA, installation);
+    await service.updateRun(tenantA.id, run.id, { status: 'running' });
+    const connection = (await service.listConnectedOwnedSources(tenantA.id))[0];
     // Ready path: a genuine packet directory yields a brief with derived aggregates.
     const handoffsDir = seedHandoffDir([
       fixturePacket(),
       { seat: 'second-seat', task: 'another', percent: 100, checklist: [{ item: 'done', done: true }], blockers: [] },
     ]);
-    const ready = new ExecutiveOperationsHqAdapter({ handoffsDir });
+    const ready = new ExecutiveOperationsHqAdapter({ service, sources: [{ tenantId: tenantA.id, connection, handoffsDir }] });
     expect(ready.readiness()).toBe('ready');
 
     const result = await ready.invoke({
-      tenantId: 't1',
-      installationId: 'i1',
-      runId: 'r1',
+      tenantId: tenantA.id,
+      installationId: installation.id,
+      runId: run.id,
+      ownedSourceRef: connection,
       workflowTemplateId: 'daily_operations_brief',
       actionType: 'publish_brief',
       input: null,
@@ -162,15 +169,16 @@ describe('executive-operations-hq foundation adapter', () => {
     expect(brief.seats.map((s: any) => s.seat)).toContain(FIXTURE_SEAT);
     expect(result.externalReferences.some((r) => r.startsWith('client-ops://hq/handoffs/'))).toBe(true);
 
-    // Honest path: an empty/absent source is 'declared', and invoke fails (no fabrication).
+    // Configuration is ready, but empty source data cannot produce a result.
     const emptyDir = mkdtempSync(join(tmpdir(), 'hq-empty-'));
     tmpDirs.push(emptyDir);
-    const notReady = new ExecutiveOperationsHqAdapter({ handoffsDir: emptyDir });
-    expect(notReady.readiness()).toBe('declared');
+    const notReady = new ExecutiveOperationsHqAdapter({ service, sources: [{ tenantId: tenantA.id, connection, handoffsDir: emptyDir }] });
+    expect(notReady.readiness()).toBe('ready');
     const failed = await notReady.invoke({
-      tenantId: 't1',
-      installationId: 'i1',
-      runId: 'r2',
+      tenantId: tenantA.id,
+      installationId: installation.id,
+      runId: run.id,
+      ownedSourceRef: connection,
       workflowTemplateId: 'daily_operations_brief',
       actionType: 'publish_brief',
       input: null,

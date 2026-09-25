@@ -1,0 +1,78 @@
+{
+  "checkedAt": "2026-09-06T10:05:30.698616+00:00",
+  "environment": "Isolated local practice server on port 8470. All card responses simulated.",
+  "workflow": {
+    "receipt": "BL-20260906-Z9ZLB_YC3Z",
+    "originalItemsCents": 2400,
+    "originalTaxCents": 240,
+    "equalCheckBaseCents": [
+      1320,
+      1320
+    ],
+    "firstCheckTipCents": 240,
+    "firstCheckCardCents": 500,
+    "firstCheckCashCents": 1060,
+    "cashReceivedCents": 2000,
+    "changeCents": 940,
+    "originalCardRefundCents": 100,
+    "secondCheckCashCents": 1320
+  },
+  "closedDrawer": {
+    "id": "M2sL1_rVkN6KX9Wa65H_W",
+    "drawer_ref": "one-club-bar",
+    "opening_float_cents": 10000,
+    "expected_cents": 12380,
+    "counted_cents": 12380,
+    "variance_cents": 0,
+    "status": "closed"
+  },
+  "browserChecks": [
+    "Saved and reopened equipment setup; equipment remained pending.",
+    "Reviewed and imported Practice Snack at $4.25 to kitchen.",
+    "Saved modifier extra-ingredient recipe and reopened it.",
+    "Mixed round created kitchen burger with Side salad and No onions; beer in bar.",
+    "Mark ready moved kitchen ticket to Ready for pickup.",
+    "Paid both split checks and closed the tab."
+  ],
+  "layoutChecks": [
+    {
+      "viewport": [
+        1180,
+        820
+      ],
+      "contentWidth": 1165,
+      "paymentBottom": 808
+    },
+    {
+      "viewport": [
+        820,
+        1180
+      ],
+      "contentWidth": 805,
+      "paymentBottom": 1123.2109375
+    }
+  ],
+  "physicalAcceptance": {
+    "ipadInstalled": false,
+    "realPayment": false,
+    "physicalPrint": false,
+    "drawerOpenCommand": false
+  },
+  "finalVerificationAt": "2026-09-06T10:07:27.571096+00:00",
+  "validation": {
+    "testFilesPassed": 229,
+    "testsPassed": 1602,
+    "typecheck": "passed",
+    "diffWhitespace": "passed",
+    "nativeRelease": "device build succeeded unsigned",
+    "ipadInstallScript": "bash syntax passed"
+  },
+  "artifactSha256": {
+    "apps/ui/public/js/views/bar.js": "4ab5dcf98968133b1aff2a9d12759504eff1b323a67c2ff17c7bd5c6d395998a",
+    "apps/ui/public/sw.js": "c828ecdefc13671cfb83f05f717b3fa15d228caa3a911b30c6b911fdeecc2968",
+    "apps/ipad/Sources/OneClubPOSApp.swift": "941cb328adadbddf4b1236c4bda3c85dcdfa45b6a461e247ef30a737b780c797",
+    "apps/api/src/bar-server.ts": "56eb99dcf2986778e1b76ece9401445f26479180133f52a6b24558382da3a2f3",
+    "apps/api/src/venue-gateway.ts": "d63a3e535406106206e8bb26162601ba803a10da3498583aa5ff9995a2570e55",
+    ".storage/one-club-ios-build/Build/Products/Release-iphoneos/OneClubPOS.app/OneClubPOS": "80bd6242faae7fd89e0ee557fb564532c93ac20835e222e9876dc1a73e9fb5d3"
+  }
+}

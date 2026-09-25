@@ -1,0 +1,147 @@
+{
+  "checkedAt": "2026-09-06T14:40:46.054885+00:00",
+  "origin": "https://bar-one-pos.michael-070.workers.dev",
+  "installedDevice": {
+    "udid": "00008120-000C085E3CE00032",
+    "bundleIdentifier": "com.blacklabel.oneclub.pos",
+    "version": "1.0",
+    "build": "10",
+    "name": "Bar One"
+  },
+  "physicalAcceptance": {
+    "passed": true,
+    "resultBundle": ".storage/bar-one-save-next-final10-device.xcresult",
+    "buttonHittable": true,
+    "serviceButtonPositionUnchangedAfterAdd": true,
+    "saveNextThenReopenNamedBill": true,
+    "billName": "Michael verification",
+    "savedItemCents": [
+      1600,
+      150
+    ],
+    "verificationTabID": "RpSGPMz3wsD2e_z-7hMjI",
+    "verificationTabCanceled": true,
+    "noServiceOrPaymentSent": true,
+    "screenshotsReviewed": true,
+    "screenshots": [
+      ".storage/bar-one-save-next-final10-device-attachments/424CF22C-06E3-4AA2-AEBC-7DC47DE7F9B0.png",
+      ".storage/bar-one-save-next-final10-device-attachments/4696369E-E5F9-4736-8A74-0D374387BBEC.png"
+    ]
+  },
+  "browserAcceptance": {
+    "checkedAt": "2026-09-06T14:39:40.068Z",
+    "environment": "Disposable practice only",
+    "sampledFrames": 16,
+    "maxMenuMovement": 0,
+    "maxFooterMovement": 0,
+    "scrollPreserved": true,
+    "unchangedPollPreservesDOM": true,
+    "savedBillReopens": true,
+    "nextGuestSurvivesReload": true,
+    "nextItemCreatesSeparateTab": true,
+    "failedConfirmationRetainsGuest": true,
+    "landscapeAndPortraitFooterVisible": true,
+    "testTabsCanceled": true,
+    "actualServiceOrPaymentSent": false,
+    "pageErrors": []
+  },
+  "practiceService": {
+    "checkedAt": "2026-09-06T14:39:06.060Z",
+    "environment": "Disposable practice; simulated payments and printer bridge only",
+    "stages": [
+      "Practice identity and cash shift verified",
+      "Food and drink round routed to separate test printers",
+      "Equal checks, partial card plus cash, tip review, refund and receipt reprint verified",
+      "Lost response recovered with one tab; no duplicate business action"
+    ],
+    "actualPaymentOrPrintSent": false,
+    "orderIDs": [
+      "WWSVIsz87eQNEqPufZFK7",
+      "JblVJPUZg78fgMCB0A4Bm"
+    ],
+    "capturedCents": 2640,
+    "refundedCents": 100,
+    "cashCollectedCents": 820,
+    "printedRequests": [
+      {
+        "id": "ticket:tdGpaBlhIpciGgjhVbwqN:1",
+        "documentId": "ticket:tdGpaBlhIpciGgjhVbwqN",
+        "role": "bar",
+        "automatic": true,
+        "reprint": false
+      },
+      {
+        "id": "ticket:tdGpaBlhIpciGgjhVbwqN:kitchen:1",
+        "documentId": "ticket:tdGpaBlhIpciGgjhVbwqN:kitchen",
+        "role": "kitchen",
+        "automatic": true,
+        "reprint": false
+      },
+      {
+        "id": "5a843cac-f7ec-48b8-a680-66744b698b85",
+        "documentId": "receipt:WWSVIsz87eQNEqPufZFK7",
+        "role": "receipt",
+        "automatic": false,
+        "reprint": false
+      },
+      {
+        "id": "fe7c00dc-f508-4708-802c-4783f51954b2",
+        "documentId": "receipt:WWSVIsz87eQNEqPufZFK7",
+        "role": "receipt",
+        "automatic": false,
+        "reprint": true
+      },
+      {
+        "id": "d6ab838b-6e9f-44ae-bf67-ea7bd81d5d4d",
+        "documentId": "receipt:JblVJPUZg78fgMCB0A4Bm",
+        "role": "receipt",
+        "automatic": false,
+        "reprint": false
+      }
+    ],
+    "pageErrors": []
+  },
+  "checks": {
+    "targetedTests": "28 passed",
+    "typecheck": "passed"
+  },
+  "nativeChanges": {
+    "overscrollBounceDisabled": true
+  },
+  "venuePostconditions": {
+    "userOpenTabs": 2,
+    "orders": 0,
+    "paymentAttempts": 0
+  },
+  "publicArtifacts": {
+    "checkedAt": "2026-09-06T14:39:50.927Z",
+    "origin": "https://bar-one-pos.michael-070.workers.dev",
+    "checks": [
+      {
+        "path": "/js/views/bar.js",
+        "status": 200,
+        "sha256": "abbd90554502ec89e0dc471c9d504666cc340a9969583ff137bd2eb21ff67d53"
+      },
+      {
+        "path": "/app.css",
+        "status": 200,
+        "sha256": "b5937460974d4ec4fa3aacd85739e7a170be9f645af18dff9fd9967587dc28a9"
+      },
+      {
+        "path": "/sw.js",
+        "status": 200,
+        "sha256": "c944c399747a4eb3174f62e9f4d1211c747b11befbba96bab84ca491087406bd"
+      }
+    ]
+  },
+  "sourceSHA256": {
+    "apps/ui/public/js/views/bar.js": "abbd90554502ec89e0dc471c9d504666cc340a9969583ff137bd2eb21ff67d53",
+    "apps/ui/public/app.css": "b5937460974d4ec4fa3aacd85739e7a170be9f645af18dff9fd9967587dc28a9",
+    "apps/ui/public/sw.js": "c944c399747a4eb3174f62e9f4d1211c747b11befbba96bab84ca491087406bd",
+    "apps/ipad/Sources/OneClubPOSApp.swift": "f745e1ff37ae3bfcf112921a5b1a5c6d058ce70f5c8d1b91fa28bffcfa58f782",
+    "apps/ipad/OneClubPOS.xcodeproj/project.pbxproj": "16396feea3be8d3a142e56d85f29a96aa670535723328dbca3f9ce0d98d43937",
+    "apps/ipad/UITests/PracticeRegisterTests.swift": "823ac4e9031fdd5e620be1f4b62a02609fde5a37179d9da8113883030216a6b4",
+    "scripts/verify-bar-one-save-next.mjs": "3b9ca3ba69337d15011ede05b05011f39a73e5d315640d133d35d762e31b3b5b"
+  },
+  "paymentReadinessUnchanged": true
+}

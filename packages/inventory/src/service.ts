@@ -556,6 +556,38 @@ export async function reserve(
   if (input.qty <= 0) throw ApiError.badRequest('reservation qty must be > 0');
   const out = await db.transaction().execute(async (trxRaw) => {
     const trx = trxRaw as unknown as Db;
+    // A business reference makes reservation creation replay-safe. This is
+    // critical for the POS/order event lane: the event can be delivered again
+    // after a crash and must not reserve the same stock twice.
+    if (input.refType && input.refId) {
+      const prior = await trx
+        .selectFrom('inventory_reservations')
+        .selectAll()
+        .where('tenant_id', '=', tenantId)
+        .where('ref_type', '=', input.refType)
+        .where('ref_id', '=', input.refId)
+        .where('variation_id', '=', input.variationId)
+        .where('location_id', '=', input.locationId)
+        .orderBy('created_at', 'desc')
+        .orderBy('id', 'desc')
+        .executeTakeFirst();
+      if (prior && (prior.status === 'active' || prior.status === 'converted')) {
+        if (
+          prior.variation_id !== input.variationId ||
+          prior.location_id !== input.locationId ||
+          prior.qty !== input.qty
+        ) {
+          throw ApiError.conflict(`reservation reference "${input.refType}:${input.refId}" was reused with different stock facts`);
+        }
+        const level = await loadLevel(trx, tenantId, prior.variation_id, prior.location_id);
+        return {
+          reservation: prior,
+          oversold: prior.oversold === 1,
+          available: (level?.on_hand ?? 0) - (level?.reserved ?? 0),
+          mv: null as MovementTxResult | null,
+        };
+      }
+    }
     const loc = await requireLocation(trx, tenantId, input.locationId);
     const level = await loadLevel(trx, tenantId, input.variationId, input.locationId);
     const available = (level?.on_hand ?? 0) - (level?.reserved ?? 0);
@@ -599,13 +631,13 @@ export async function reserve(
       qty: input.qty,
       oversold,
     });
-    return { reservation, oversold, mv };
+    return { reservation, oversold, available: mv.level.on_hand - mv.level.reserved, mv };
   });
-  await emitMovementEvents(events, tenantId, out.mv);
+  if (out.mv) await emitMovementEvents(events, tenantId, out.mv);
   return {
     reservation: out.reservation,
     oversold: out.oversold,
-    available: out.mv.level.on_hand - out.mv.level.reserved,
+    available: out.available,
   };
 }
 
@@ -665,6 +697,58 @@ export async function releaseReservation(
   });
   if (out.mv) await emitMovementEvents(events, tenantId, out.mv);
   return { reservation: out.reservation, available: out.available };
+}
+
+export interface SettleReservationsResult {
+  refType: string;
+  refId: string;
+  disposition: 'released' | 'converted';
+  settled: number;
+  reservationIds: string[];
+}
+
+/**
+ * Release or convert every ACTIVE reservation owned by one business reference.
+ * The operation is atomic across the reference and replay-safe: a repeated call
+ * sees no active rows and returns `settled: 0` without changing stock again.
+ * `converted` is used when a reserved order becomes a completed sale;
+ * `released` is used for cancellation/expiry-style abandonment.
+ */
+export async function settleReservationsForReference(
+  db: Db,
+  events: EventBus,
+  tenantId: string,
+  actor: string,
+  refType: string,
+  refId: string,
+  disposition: 'released' | 'converted',
+): Promise<SettleReservationsResult> {
+  if (!refType.trim() || !refId.trim()) throw ApiError.badRequest('reservation reference is required');
+  const out = await db.transaction().execute(async (trxRaw) => {
+    const trx = trxRaw as unknown as Db;
+    const rows = await trx
+      .selectFrom('inventory_reservations')
+      .selectAll()
+      .where('tenant_id', '=', tenantId)
+      .where('ref_type', '=', refType)
+      .where('ref_id', '=', refId)
+      .where('status', '=', 'active')
+      .orderBy('id')
+      .execute();
+    const movements: MovementTxResult[] = [];
+    for (const row of rows) {
+      movements.push(await releaseReservationTx(trx, tenantId, actor, row, disposition));
+    }
+    return { rows, movements };
+  });
+  for (const movement of out.movements) await emitMovementEvents(events, tenantId, movement);
+  return {
+    refType,
+    refId,
+    disposition,
+    settled: out.rows.length,
+    reservationIds: out.rows.map((row) => row.id),
+  };
 }
 
 /** Convert overdue active reservations → expired, releasing their reserved qty. */
@@ -776,8 +860,25 @@ export async function sellForOrder(
       };
     }
 
-    const lineResults: SellLineResult[] = [];
     const mvs: MovementTxResult[] = [];
+    // If the order was reserved first, convert every reservation inside this
+    // SAME inventory transaction before applying the sale movements. Without
+    // this, on_hand and reserved both stay reduced after payment and available
+    // stock is understated twice.
+    const activeReservations = await trx
+      .selectFrom('inventory_reservations')
+      .selectAll()
+      .where('tenant_id', '=', tenantId)
+      .where('ref_type', '=', 'order')
+      .where('ref_id', '=', orderId)
+      .where('status', '=', 'active')
+      .orderBy('id')
+      .execute();
+    for (const reservation of activeReservations) {
+      mvs.push(await releaseReservationTx(trx, tenantId, actor, reservation, 'converted'));
+    }
+
+    const lineResults: SellLineResult[] = [];
     let i = 0;
     for (const line of lines) {
       const mv = await writeMovementTx(trx, tenantId, actor, {
@@ -880,6 +981,27 @@ async function requireSession(
   return s;
 }
 
+// Acquire a write lock on the session before inspecting or changing its lines.
+// The conditional UPDATE is the shared serialization boundary for edits and
+// closure (SQLite write lock; row lock on a row-locking database).
+async function lockMutableCountSession(
+  db: Db, tenantId: string, sessionId: string,
+  statuses: InventoryCountSessionRow['status'][] = ['open', 'paused', 'review'],
+): Promise<InventoryCountSessionRow> {
+  const row = await db.updateTable('inventory_count_sessions')
+    .set((eb) => ({ updated_at: eb.ref('updated_at') }))
+    .where('tenant_id', '=', tenantId).where('id', '=', sessionId)
+    .where('status', 'in', statuses).returningAll().executeTakeFirst();
+  if (row) return row;
+  const session = await requireSession(db, tenantId, sessionId);
+  throw ApiError.conflict(`count session in status "${session.status}" is not mutable`);
+}
+
+async function countTransaction<T>(db: Db, run: (trx: Db) => Promise<T>): Promise<T> {
+  if (db.isTransaction) return run(db);
+  return db.transaction().execute((trx) => run(trx as unknown as Db));
+}
+
 export async function getCountSession(
   db: Db,
   tenantId: string,
@@ -896,28 +1018,27 @@ export async function addCountLine(
   sessionId: string,
   variationId: string,
 ): Promise<InventoryCountLineRow> {
-  const session = await requireSession(db, tenantId, sessionId);
-  if (session.status !== 'open' && session.status !== 'paused') {
-    throw ApiError.conflict(`cannot add lines to a session in status "${session.status}"`);
-  }
-  const level = await loadLevel(db, tenantId, variationId, session.location_id);
-  const now = nowIso();
-  const row: InventoryCountLineRow = {
-    id: id(),
-    tenant_id: tenantId,
-    session_id: sessionId,
-    variation_id: variationId,
-    expected_qty: level?.on_hand ?? 0,
-    counted_qty: null,
-    variance: null,
-    recount_required: 0,
-    recount_qty: null,
-    approved: 0,
-    created_at: now,
-    updated_at: now,
-  };
-  await db.insertInto('inventory_count_lines').values(row).execute();
-  return row;
+  return countTransaction(db, async (trx) => {
+    const session = await lockMutableCountSession(trx, tenantId, sessionId, ['open', 'paused']);
+    const level = await loadLevel(trx, tenantId, variationId, session.location_id);
+    const now = nowIso();
+    const row: InventoryCountLineRow = {
+      id: id(),
+      tenant_id: tenantId,
+      session_id: sessionId,
+      variation_id: variationId,
+      expected_qty: level?.on_hand ?? 0,
+      counted_qty: null,
+      variance: null,
+      recount_required: 0,
+      recount_qty: null,
+      approved: 0,
+      created_at: now,
+      updated_at: now,
+    };
+    await trx.insertInto('inventory_count_lines').values(row).execute();
+    return row;
+  });
 }
 
 async function requireLine(
@@ -937,85 +1058,67 @@ async function requireLine(
   return l;
 }
 
+/** Apply the complete HTTP patch under one session lock and transaction. */
+export async function patchCountLine(
+  db: Db, tenantId: string, actor: string, sessionId: string, lineId: string,
+  patch: { countedQty?: number; recountQty?: number; approved?: boolean },
+): Promise<InventoryCountLineRow> {
+  if (patch.countedQty === undefined && patch.recountQty === undefined && patch.approved !== true) {
+    throw ApiError.badRequest('no line change provided');
+  }
+  for (const qty of [patch.countedQty, patch.recountQty]) {
+    if (qty !== undefined && !Number.isInteger(qty)) throw ApiError.badRequest('count quantities must be integers');
+  }
+  return countTransaction(db, async (trx) => {
+    const session = await lockMutableCountSession(trx, tenantId, sessionId);
+    const line = await requireLine(trx, tenantId, sessionId, lineId);
+    const update: Partial<InventoryCountLineRow> = { updated_at: nowIso() };
+    if (patch.countedQty !== undefined) {
+      const variance = patch.countedQty - line.expected_qty;
+      Object.assign(update, { counted_qty: patch.countedQty, variance,
+        recount_required: Math.abs(variance) > session.recount_threshold ? 1 : 0 });
+    }
+    if (patch.recountQty !== undefined) {
+      Object.assign(update, { recount_qty: patch.recountQty, variance: patch.recountQty - line.expected_qty });
+    }
+    if (patch.approved === true) update.approved = 1;
+    await trx.updateTable('inventory_count_lines').set(update)
+      .where('tenant_id', '=', tenantId).where('session_id', '=', sessionId)
+      .where('id', '=', lineId).execute();
+    return requireLine(trx, tenantId, sessionId, lineId);
+  });
+}
+
 /** Record a counted quantity; sets variance and recount_required per threshold. */
 export async function recordCount(
-  db: Db,
-  tenantId: string,
-  actor: string,
-  sessionId: string,
-  lineId: string,
-  countedQty: number,
+  db: Db, tenantId: string, actor: string, sessionId: string, lineId: string, countedQty: number,
 ): Promise<InventoryCountLineRow> {
-  const session = await requireSession(db, tenantId, sessionId);
-  const line = await requireLine(db, tenantId, sessionId, lineId);
-  const variance = countedQty - line.expected_qty;
-  const recountRequired = Math.abs(variance) > session.recount_threshold ? 1 : 0;
-  const now = nowIso();
-  await db
-    .updateTable('inventory_count_lines')
-    .set({ counted_qty: countedQty, variance, recount_required: recountRequired, updated_at: now })
-    .where('tenant_id', '=', tenantId)
-    .where('id', '=', lineId)
-    .execute();
-  return requireLine(db, tenantId, sessionId, lineId);
+  return patchCountLine(db, tenantId, actor, sessionId, lineId, { countedQty });
 }
 
 /** Provide a recount value for a line flagged recount_required. */
 export async function recordRecount(
-  db: Db,
-  tenantId: string,
-  actor: string,
-  sessionId: string,
-  lineId: string,
-  recountQty: number,
+  db: Db, tenantId: string, actor: string, sessionId: string, lineId: string, recountQty: number,
 ): Promise<InventoryCountLineRow> {
-  const line = await requireLine(db, tenantId, sessionId, lineId);
-  const variance = recountQty - line.expected_qty;
-  const now = nowIso();
-  await db
-    .updateTable('inventory_count_lines')
-    .set({ recount_qty: recountQty, variance, updated_at: now })
-    .where('tenant_id', '=', tenantId)
-    .where('id', '=', lineId)
-    .execute();
-  return requireLine(db, tenantId, sessionId, lineId);
+  return patchCountLine(db, tenantId, actor, sessionId, lineId, { recountQty });
 }
 
 export async function approveCountLine(
-  db: Db,
-  tenantId: string,
-  actor: string,
-  sessionId: string,
-  lineId: string,
+  db: Db, tenantId: string, actor: string, sessionId: string, lineId: string,
 ): Promise<InventoryCountLineRow> {
-  await requireLine(db, tenantId, sessionId, lineId);
-  const now = nowIso();
-  await db
-    .updateTable('inventory_count_lines')
-    .set({ approved: 1, updated_at: now })
-    .where('tenant_id', '=', tenantId)
-    .where('id', '=', lineId)
-    .execute();
-  return requireLine(db, tenantId, sessionId, lineId);
+  return patchCountLine(db, tenantId, actor, sessionId, lineId, { approved: true });
 }
 
 export async function setCountSessionStatus(
-  db: Db,
-  tenantId: string,
-  actor: string,
-  sessionId: string,
+  db: Db, tenantId: string, actor: string, sessionId: string,
   status: 'paused' | 'open' | 'review' | 'abandoned',
 ): Promise<InventoryCountSessionRow> {
-  const session = await requireSession(db, tenantId, sessionId);
-  if (session.status === 'closed') throw ApiError.conflict('session is already closed');
-  const now = nowIso();
-  await db
-    .updateTable('inventory_count_sessions')
-    .set({ status, updated_at: now })
-    .where('tenant_id', '=', tenantId)
-    .where('id', '=', sessionId)
-    .execute();
-  return requireSession(db, tenantId, sessionId);
+  return countTransaction(db, async (trx) => {
+    await lockMutableCountSession(trx, tenantId, sessionId, ['open', 'paused', 'review', 'abandoned']);
+    await trx.updateTable('inventory_count_sessions').set({ status, updated_at: nowIso() })
+      .where('tenant_id', '=', tenantId).where('id', '=', sessionId).execute();
+    return requireSession(trx, tenantId, sessionId);
+  });
 }
 
 export interface CountLineView extends Omit<InventoryCountLineRow, 'expected_qty'> {
@@ -1059,8 +1162,7 @@ export async function closeCountSession(
 
   const out = await db.transaction().execute(async (trxRaw) => {
     const trx = trxRaw as unknown as Db;
-    const session = await requireSession(trx, tenantId, sessionId);
-    if (session.status === 'closed') throw ApiError.conflict('session is already closed');
+    const session = await lockMutableCountSession(trx, tenantId, sessionId);
     const lines = await trx
       .selectFrom('inventory_count_lines')
       .selectAll()
@@ -1745,7 +1847,7 @@ export async function verifyConservation(db: Db, tenantId: string): Promise<Cons
     .groupBy(['variation_id', 'location_id'])
     .execute();
   const ledgerMap = new Map<string, number>();
-  for (const r of ledger) ledgerMap.set(`${r.variation_id} ${r.location_id}`, Number(r.sum ?? 0));
+  for (const r of ledger) ledgerMap.set(`${r.variation_id}\u0000${r.location_id}`, Number(r.sum ?? 0));
 
   const reservedRows = await db
     .selectFrom('inventory_reservations')
@@ -1755,7 +1857,7 @@ export async function verifyConservation(db: Db, tenantId: string): Promise<Cons
     .groupBy(['variation_id', 'location_id'])
     .execute();
   const reservedMap = new Map<string, number>();
-  for (const r of reservedRows) reservedMap.set(`${r.variation_id} ${r.location_id}`, Number(r.sum ?? 0));
+  for (const r of reservedRows) reservedMap.set(`${r.variation_id}\u0000${r.location_id}`, Number(r.sum ?? 0));
 
   const levels = await db
     .selectFrom('inventory_stock_levels')
@@ -1766,7 +1868,7 @@ export async function verifyConservation(db: Db, tenantId: string): Promise<Cons
   const drift: ConservationDrift[] = [];
   const seen = new Set<string>();
   for (const lv of levels) {
-    const key = `${lv.variation_id} ${lv.location_id}`;
+    const key = `${lv.variation_id}\u0000${lv.location_id}`;
     seen.add(key);
     const ledgerOnHand = ledgerMap.get(key) ?? 0;
     const activeReserved = reservedMap.get(key) ?? 0;
@@ -1784,7 +1886,7 @@ export async function verifyConservation(db: Db, tenantId: string): Promise<Cons
   // Ledger keys with no cache row are also drift.
   for (const [key, ledgerOnHand] of ledgerMap) {
     if (!seen.has(key) && ledgerOnHand !== 0) {
-      const [variationId, locationId] = key.split(' ');
+      const [variationId, locationId] = key.split('\u0000');
       drift.push({
         variationId,
         locationId,

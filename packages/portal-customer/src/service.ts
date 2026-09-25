@@ -116,8 +116,9 @@ export interface PaymentIntentStub {
   invoiceId: string;
   amountCents: number;
   currency: string;
-  status: 'requires_payment_method';
-  clientSecret: string;
+  status: 'requires_payment_method' | 'requires_action' | 'requires_confirmation' | 'succeeded' | 'canceled';
+  clientSecret?: string;
+  instructions?: string;
 }
 
 export interface PortalPaymentProvider {
@@ -135,6 +136,7 @@ export interface PortalFileRegistration {
   fileName: string;
   contentType: string;
   sizeBytes: number;
+  contentBase64?: string;
   kind: PortalUploadKind;
   relatedEntityType?: string;
   relatedEntityId?: string;
@@ -143,6 +145,8 @@ export interface PortalFileRegistration {
 /** Registers upload metadata with the files module; returns the file id. */
 export interface PortalFilesProvider {
   registerUpload(input: PortalFileRegistration): Promise<{ id: string }>;
+  listForCustomer?(tenantId: string, customerId: string): Promise<{ id: string; name: string; mime: string; sizeBytes: number; sha256: string }[]>;
+  readForCustomer?(tenantId: string, customerId: string, fileId: string): Promise<{ name: string; mime: string; content: Uint8Array }>;
 }
 
 /** Customer-visible job/project status (workflows or owning module). */
@@ -506,7 +510,9 @@ export async function decideQuote(
     approvalEventId,
     totalCents: quote.totalCents,
   });
-  return { quote, approvalEventId };
+  const updated = await quotes.getForCustomer(tenantId, account.customer_id, quoteId);
+  if (!updated) throw ApiError.notFound('quote was removed after the decision');
+  return { quote: updated, approvalEventId };
 }
 
 /* ------------------------------------------------------------------ *
@@ -528,7 +534,8 @@ export async function createInvoicePaymentIntent(
   if (invoice.balanceCents <= 0) {
     throw ApiError.badRequest('invoice has no outstanding balance');
   }
-  const provider = payments ?? stubPaymentProvider();
+  if (!payments) throw notWired('payments');
+  const provider = payments;
   const intent = await provider.createPaymentIntent({
     tenantId,
     customerId: account.customer_id,
@@ -631,25 +638,29 @@ export async function recordUpload(
     fileName: string;
     contentType: string;
     sizeBytes: number;
+    contentBase64?: string;
     kind: PortalUploadKind;
     relatedEntityType?: string;
     relatedEntityId?: string;
   },
 ): Promise<PortalCustomerUploadRow> {
-  let fileId: string | null = null;
-  if (files) {
-    const registered = await files.registerUpload({
+  if (!files) throw notWired('files');
+  if (input.contentBase64 === undefined || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(input.contentBase64)) {
+    throw ApiError.badRequest('file content must be supplied as base64');
+  }
+  if (Buffer.from(input.contentBase64, 'base64').byteLength !== input.sizeBytes) throw ApiError.badRequest('file size does not match its content');
+  const registered = await files.registerUpload({
       tenantId,
       customerId: account.customer_id,
       fileName: input.fileName,
       contentType: input.contentType,
       sizeBytes: input.sizeBytes,
+      contentBase64: input.contentBase64,
       kind: input.kind,
       relatedEntityType: input.relatedEntityType,
       relatedEntityId: input.relatedEntityId,
-    });
-    fileId = registered.id;
-  }
+  });
+  const fileId = registered.id;
   const row: PortalCustomerUploadRow = {
     id: id(),
     tenant_id: tenantId,

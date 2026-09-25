@@ -210,9 +210,12 @@ describe('server-rendered portal UI', () => {
     expect(rows[0].body).toBe('From the UI');
   });
 
-  it('pays an invoice from the UI and renders the payment-intent placeholder', async () => {
+  it('shows connected manual collection instructions without claiming payment completed', async () => {
     const seedInvoices: Array<{ tenantId: string; invoice: PortalInvoice }> = [];
-    const ctx = await setup({ providers: { invoices: makeInvoicesProvider(seedInvoices) } });
+    const ctx = await setup({ providers: { invoices: makeInvoicesProvider(seedInvoices), payments: {
+      createPaymentIntent: async (input) => ({ id: 'manual-fixture', provider: 'manual', invoiceId: input.invoiceId,
+        amountCents: input.amountCents, currency: 'usd', status: 'requires_action', instructions: 'Pay at the service desk.' }),
+    } } });
     seedInvoices.push({
       tenantId: ctx.tenantA,
       invoice: { id: 'inv1', customerId: 'cust_ada', status: 'open', totalCents: 5000, balanceCents: 5000 },
@@ -223,9 +226,10 @@ describe('server-rendered portal UI', () => {
     const res = await uiForm(ctx, ctx.tenantA, '/ui/invoices/inv1/pay', {}, cookie);
     expect(res.status).toBe(200);
     const html = await res.text();
-    expect(html).toContain('Payment started');
+    expect(html).toContain('Payment instructions');
     expect(html).toContain('$50.00');
-    expect(html).toContain('requires_payment_method');
+    expect(html).toContain('Pay at the service desk.');
+    expect(html).not.toContain('was initiated');
   });
 
   it('logout clears the session: the dashboard redirects to login again', async () => {
@@ -239,4 +243,24 @@ describe('server-rendered portal UI', () => {
     // The revoked session no longer works even if the cookie is replayed.
     expect((await uiGet(ctx, ctx.tenantA, '/ui', cookie)).status).toBe(302);
   });
+});
+
+
+it('shows safe review links only after portal login and rejects unsafe provider URLs', async () => {
+  const ctx = await setup({ providers: { reviews: { listPendingForCustomer: async () => [
+    { id: 'good', requestedAt: '2026-09-13', url: '/review#synthetic-capability' },
+    { id: 'https', requestedAt: '2026-09-13', url: 'https://reviews.example.test/feedback' },
+    { id: 'script', requestedAt: '2026-09-13', url: 'javascript:alert(1)' },
+    { id: 'authority', requestedAt: '2026-09-13', url: '//outside.example.test/feedback' },
+    { id: 'backslash', requestedAt: '2026-09-13', url: '/\\outside.example.test/feedback' },
+  ] } } });
+  await createAccountViaApi(ctx.app, ctx.tenantA, { email: 'reviewer@example.test', customerId: 'reviewer' });
+  const anonymous = await uiGet(ctx, ctx.tenantA, '/ui');
+  expect(anonymous.status).toBe(302); expect(await anonymous.text()).not.toContain('synthetic-capability');
+  const cookie = await uiLogin(ctx, ctx.tenantA, 'reviewer@example.test');
+  const response = await uiGet(ctx, ctx.tenantA, '/ui', cookie);
+  expect(response.status).toBe(200); const html = await response.text();
+  expect(html).toContain('href="/review#synthetic-capability"');
+  expect(html).toContain('href="https://reviews.example.test/feedback"');
+  expect(html).not.toContain('javascript:'); expect(html).not.toContain('outside.example.test');
 });

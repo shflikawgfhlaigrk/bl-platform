@@ -22,6 +22,7 @@ async function boot() {
   const db = createTestDb<PlatformDatabase>();
   const platform = await createApp({ db });
   const tenant = await createTenant(asCoreDb(db), { name: 'Smoke Tenant' });
+  await platform.seedTenant(tenant.id);
   const outer = new Hono();
   outer.use('/*', serveStatic({ root: uiPublic })); // UI_DIR = apps/ui/public
   outer.route('/', platform.app);
@@ -34,7 +35,7 @@ describe('mags-ui served app smoke', () => {
     const res = await outer.request('/');
     expect(res.status).toBe(200);
     const html = await res.text();
-    expect(html).toContain('<title>Mags Commerce OS</title>');
+    expect(html).toContain('<title>Bar One</title>');
     expect(html).toContain('id="view-root"');
   });
 
@@ -44,6 +45,10 @@ describe('mags-ui served app smoke', () => {
     expect(css.status).toBe(200);
     const appjs = await outer.request('/js/app.js');
     expect(appjs.status).toBe(200);
+    const register = await outer.request('/js/views/register.js');
+    expect(register.status).toBe(200);
+    const cart = await outer.request('/src/cart.mjs');
+    expect(cart.status).toBe(200);
   });
 
   it('GET /api/actions returns a list envelope the UI parses', async () => {
@@ -57,6 +62,14 @@ describe('mags-ui served app smoke', () => {
   it('GET /api/inventory/locations returns {data:[...]} the UI reads via getData', async () => {
     const { outer, tenantId } = await boot();
     const res = await outer.request('/api/inventory/locations', { headers: { 'x-tenant-id': tenantId } });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as any;
+    expect(Array.isArray(body.data)).toBe(true);
+  });
+
+  it('GET /api/pos/stock returns the buyer-visible stock list the Stock view reads', async () => {
+    const { outer, tenantId } = await boot();
+    const res = await outer.request('/api/pos/stock', { headers: { 'x-tenant-id': tenantId } });
     expect(res.status).toBe(200);
     const body = (await res.json()) as any;
     expect(Array.isArray(body.data)).toBe(true);

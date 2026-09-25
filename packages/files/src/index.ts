@@ -17,6 +17,7 @@
  * - `files.permission.revoked`  { fileId, permissionId }
  */
 export const MODULE_KEY = 'files' as const;
+export { initUpload, completeUpload, attachLink, listFiles, getFileOrThrow, readFileContent, SYSTEM_ACTOR } from './service';
 
 // Migrations
 export { filesMigrations } from './migrations';

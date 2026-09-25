@@ -279,17 +279,7 @@ export function inventoryRouter(deps: ModuleDeps<InventoryDatabase>): Hono<Tenan
     const body = linePatchSchema.parse(await jsonBody(c));
     const sessionId = c.req.param('id');
     const lineId = c.req.param('lineId');
-    let row;
-    if (body.countedQty !== undefined) {
-      row = await svc.recordCount(db, t(c), actorOf(c), sessionId, lineId, body.countedQty);
-    }
-    if (body.recountQty !== undefined) {
-      row = await svc.recordRecount(db, t(c), actorOf(c), sessionId, lineId, body.recountQty);
-    }
-    if (body.approved === true) {
-      row = await svc.approveCountLine(db, t(c), actorOf(c), sessionId, lineId);
-    }
-    if (!row) throw ApiError.badRequest('no line change provided');
+    const row = await svc.patchCountLine(db, t(c), actorOf(c), sessionId, lineId, body);
     return c.json({ data: row });
   });
   app.post('/count-sessions/:id/status', async (c) => {

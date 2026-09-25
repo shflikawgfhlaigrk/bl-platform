@@ -30,6 +30,7 @@ import type {
   FilesUploadSessionRow,
 } from './schema';
 import { LocalDiskStorageProvider, type StorageProvider } from './storage';
+import { decodeUpload } from './upload-limits';
 import {
   abortUpload,
   assertFileAccess,
@@ -220,7 +221,7 @@ export function filesRouter(deps: FilesModuleDeps): Hono<TenantEnv> {
   app.post('/uploads/:id/complete', async (c) => {
     const body = completeUploadSchema.parse(await jsonBody(c));
     const actor = await actorOf(c);
-    const content = Buffer.from(body.content_base64, 'base64');
+    const content = decodeUpload(body.content_base64);
     const file = await completeUpload(
       db,
       events,
@@ -228,7 +229,7 @@ export function filesRouter(deps: FilesModuleDeps): Hono<TenantEnv> {
       c.get('tenantId'),
       actor,
       c.req.param('id'),
-      new Uint8Array(content),
+      content,
     );
     return c.json({ data: filePublic(file) }, 201);
   });

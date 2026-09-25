@@ -17,7 +17,7 @@ import { createActiveInstallation, createRun, headers, setup } from './helpers';
 
 async function setupWithRegistry() {
   const base = await setup();
-  const registry = registerReadyFoundations(new ServiceFoundationRegistry());
+  const registry = registerReadyFoundations(new ServiceFoundationRegistry(), { workflow: base });
   const app = clientOpsRouter({ db: base.db, events: base.events, contracts: {} }, { registry });
   return { ...base, app, registry };
 }

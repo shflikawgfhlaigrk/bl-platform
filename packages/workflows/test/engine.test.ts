@@ -58,7 +58,10 @@ describe('template + condition helpers', () => {
 
 describe('trigger matching', () => {
   it('runs a matching enabled workflow and logs the execution', async () => {
-    const { db, events, tenant } = await setup();
+    const submitted: any[] = [];
+    const { db, events, tenant } = await setup({ sendMessage: { sendMessage: async (input) => {
+      submitted.push(input); return { id: 'fixture-message' };
+    } } });
     await createWorkflow(db, events, tenant.id, {
       name: 'greet lead',
       triggerEvent: 'crm.lead.created',
@@ -85,13 +88,13 @@ describe('trigger matching', () => {
     const detail = await getExecution(db, tenant.id, executions[0].id);
     expect(detail.actions?.length).toBe(1);
     expect(detail.actions?.[0].status).toBe('succeeded');
-    // Provider stub captured the rendered (templated) email.
-    expect(detail.actions?.[0].output).toEqual({
-      stub: true,
+    expect(detail.actions?.[0].output).toEqual({ messageId: 'fixture-message', via: 'contract' });
+    expect(submitted[0]).toMatchObject({
       channel: 'email',
       to: 'x@y.z',
       subject: 'Welcome L1',
       body: 'Thanks for reaching out.',
+      idempotencyKey: expect.stringContaining(`workflow:${executions[0].id}:`),
     });
   });
 
@@ -121,7 +124,7 @@ describe('trigger matching', () => {
 
 describe('condition filter', () => {
   it('runs only when the payload condition matches', async () => {
-    const { db, events, tenant } = await setup();
+    const { db, events, tenant } = await setup({ sendMessage: { sendMessage: async () => ({ id: 'fixture-message' }) } });
     await createWorkflow(db, events, tenant.id, {
       name: 'big invoices only',
       triggerEvent: 'billing.invoice.paid',
@@ -234,7 +237,7 @@ describe('actions', () => {
     );
   });
 
-  it('update_lead_stage records intent (stub per spec — no core contract yet)', async () => {
+  it('update_lead_stage fails when the CRM mutation is not connected', async () => {
     const { db, events, tenant } = await setup();
     await createWorkflow(db, events, tenant.id, {
       name: 'advance stage',
@@ -250,8 +253,8 @@ describe('actions', () => {
     });
     const [execution] = await listExecutions(db, tenant.id);
     const detail = await getExecution(db, tenant.id, execution.id);
-    expect(detail.actions?.[0].status).toBe('succeeded');
-    expect(detail.actions?.[0].output).toEqual({ stub: true, leadId: 'C7', stage: 'won' });
+    expect(detail.actions?.[0].status).toBe('failed');
+    expect(detail.actions?.[0].error).toContain('CRM lead updates are not connected');
   });
 
   it('create_appointment goes through the injected scheduling contract', async () => {

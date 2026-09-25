@@ -7,6 +7,7 @@ import {
 } from '@blacklabel/client-ops';
 import { asCoreDb, coreMigrations, createTenant, EventBus } from '@blacklabel/core';
 import { createTestDb, runMigrations } from '@blacklabel/db';
+import { workflowsMigrations, type WorkflowsDatabase } from '@blacklabel/workflows';
 import { createClientOpsHttpApp, withBearerAuth, withTenantGuard } from '../src/app';
 import { seedClientOpsProductStarter } from '../src/demo';
 
@@ -16,11 +17,14 @@ afterEach(async () => {
 });
 
 async function setup(options: { seedDemo?: boolean; registry?: ServiceFoundationRegistry } = { seedDemo: true }) {
-  const db = createTestDb<ClientOpsDatabase>();
+  const db = createTestDb<ClientOpsDatabase & WorkflowsDatabase>();
   databases.push(db);
-  await runMigrations(db, [...coreMigrations, ...clientOpsMigrations]);
+  await runMigrations(db, [...coreMigrations, ...clientOpsMigrations, ...workflowsMigrations]);
   const tenant = await createTenant(asCoreDb(db), { name: 'Demo Service Company' });
   const events = new EventBus();
+  if (options.registry && !options.registry.get('client_ops.workflow.execute')) {
+    registerReadyFoundations(options.registry, { workflow: { db, events } });
+  }
   if (options.seedDemo ?? true) await seedClientOpsProductStarter(db, events, tenant.id);
   const app = createClientOpsHttpApp({
     db, events, tenantId: tenant.id, tenantName: tenant.name, registry: options.registry,
@@ -133,7 +137,7 @@ describe('client-ops standalone HTTP app', () => {
   });
 
   it('executes a run end-to-end through the mounted engine: request → approval → receipt', async () => {
-    const registry = registerReadyFoundations(new ServiceFoundationRegistry());
+    const registry = new ServiceFoundationRegistry();
     const { app, db, tenant } = await setup({ seedDemo: true, registry });
     const fetch = withTenantGuard((request) => app.fetch(request));
     const api = (path: string, init?: RequestInit) => fetch(new Request(`http://localhost/api/client-ops${path}`, {
@@ -156,9 +160,9 @@ describe('client-ops standalone HTTP app', () => {
 
     const requested = await post('/runs', {
       installationId: wos.id,
-      workflowId: detail.workflows[0].id,
+      workflowId: detail.workflows.find((w: any) => w.templateId.endsWith('.scheduled_operation')).id,
       idempotencyKey: 'app-test:end-to-end:1',
-      input: { source: 'app-test' },
+      input: { steps: [{ id: 'followup', type: 'create_task', config: { title: 'Follow up on estimate' } }] },
     });
     expect(requested.status).toBe(201);
     const run = ((await requested.json()) as any).data;

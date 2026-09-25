@@ -1,0 +1,18 @@
+{
+  "data": {
+    "connected": true,
+    "mode": "live",
+    "readers": [
+      {
+        "id": "tmr_GnBFgwvZLDd9uj",
+        "label": "Livemode Reader",
+        "status": "offline",
+        "deviceType": "mobile_phone_reader",
+        "live": true,
+        "compatible": false
+      }
+    ],
+    "webhookConfigured": false,
+    "code": "connected"
+  }
+}

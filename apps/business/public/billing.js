@@ -1,0 +1,15 @@
+export function billingView(base,ui){
+ const {api,content,field,select,form,panel,table,bindForm,render,say,money,cents,when,customers,customerOptions}=ui;
+ return async()=>{
+  await base();const [cs,subscriptions,memberships]=await Promise.all([customers(),api('billing/subscriptions?limit=200'),api('billing/memberships?limit=200')]);
+  const statusButtons=(kind,row)=>['active','paused','canceled'].filter(s=>s!==row.status).map(s=>`<button class="quiet" data-billing-kind="${kind}" data-billing-id="${row.id}" data-billing-status="${s}">${s==='active'?'Resume':s==='paused'?'Pause':'Cancel'}</button>`).join('');
+  content.insertAdjacentHTML('beforeend',form('subscription-add','Recurring invoices',select('customerId','Customer',customerOptions(cs))+field('planName','Plan name','text','','required')+field('amount','Amount per invoice ($)','text','','required')+select('interval','Frequency',['daily','weekly','monthly','quarterly','yearly'].map(v=>[v,v]),false)+field('nextInvoiceAt','First invoice date','datetime-local','','required'),'Create subscription')
+   +panel('Subscriptions',`<p class="muted">Subscriptions generate invoices on their due dates. Payments are recorded separately.</p><button class="quiet" id="subscription-tick">Generate due invoices</button>`+table(subscriptions,[['Plan','plan_name'],['Amount',r=>money(r.amount_cents)],['Frequency','interval'],['Status','status'],['Next invoice',r=>when(r.next_invoice_at)]],r=>statusButtons('subscriptions',r)))
+   +form('membership-add','Add a membership',select('customerId','Customer',customerOptions(cs))+field('planKey','Membership plan','text','','required')+select('subscriptionId','Recurring invoice plan',[['','No recurring billing'],...subscriptions.map(s=>[s.id,s.plan_name])],false)+field('endsAt','Ends at (optional)','datetime-local'),'Create membership')
+   +panel('Memberships',table(memberships,[['Plan','plan_key'],['Status','status'],['Started',r=>when(r.started_at)],['Ends',r=>when(r.ends_at)]],r=>statusButtons('memberships',r))));
+  bindForm('subscription-add',d=>api('billing/subscriptions','POST',{customerId:d.customerId,planName:d.planName,amountCents:cents(d.amount),interval:d.interval,nextInvoiceAt:new Date(d.nextInvoiceAt).toISOString()}));
+  bindForm('membership-add',d=>api('billing/memberships','POST',{customerId:d.customerId,planKey:d.planKey,subscriptionId:d.subscriptionId||undefined,endsAt:d.endsAt?new Date(d.endsAt).toISOString():undefined}));
+  for(const b of content.querySelectorAll('[data-billing-kind]'))b.onclick=async()=>{b.disabled=true;try{await api(`billing/${b.dataset.billingKind}/${b.dataset.billingId}`,'PUT',{status:b.dataset.billingStatus});await render();say('Billing plan updated.');}catch(e){say(e.message,true);}finally{b.disabled=false;}};
+  document.querySelector('#subscription-tick').onclick=async()=>{try{const result=await api('billing/subscriptions/tick','POST',{});await render();say(`${result.count} due invoices generated.`);}catch(e){say(e.message,true);}};
+ };
+}

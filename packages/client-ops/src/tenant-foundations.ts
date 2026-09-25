@@ -54,9 +54,11 @@ export async function resolveTenantFoundations(
   lookup: OwnedSourceLookup,
   tenantId: string,
   registry: ServiceFoundationRegistry,
+  installationId?: string,
 ): Promise<TenantFoundationState[]> {
   const connections = new Map(
     (await lookup.listConnectedOwnedSources(tenantId))
+      .filter(connection => installationId === undefined || connection.installationId === installationId)
       .map((connection) => [connection.ownedSourceIdentifier, connection] as const),
   );
   return registry.list().map((state) => {
@@ -83,8 +85,9 @@ export async function resolveTenantFoundation(
   tenantId: string,
   capabilityId: string,
   registry: ServiceFoundationRegistry,
+  installationId?: string,
 ): Promise<TenantFoundationState | undefined> {
-  const all = await resolveTenantFoundations(lookup, tenantId, registry);
+  const all = await resolveTenantFoundations(lookup, tenantId, registry, installationId);
   return all.find((state) => state.capabilityId === capabilityId);
 }
 

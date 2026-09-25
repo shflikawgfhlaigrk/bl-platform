@@ -52,3 +52,6 @@ export type {
   ChecklistTemplateWithItems,
   DailySchedule,
 } from './service';
+
+// Composition may bind authenticated work photos to the shared file vault.
+export { authenticateEmployeeToken, getAssignmentForActor, addJobPhoto, listJobPhotos } from './service';
