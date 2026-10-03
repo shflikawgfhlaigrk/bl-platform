@@ -1,95 +1,40 @@
 # @blacklabel/reviews — Review Engine
 
-Request, track, and improve **genuine** customer reviews.
+Prepare neutral requests after completed customer work, collect optional private feedback, and offer the same enabled public-review destinations to every customer. Links appear before a rating, after every rating, and on completed or opted-out revisits. The module never posts a public review for a customer. Internal low-rating follow-up flags do not control access to public links.
 
-> **Integrity rule: this module NEVER fabricates reviews.** It only requests
-> real feedback from real customers, records what they actually submitted, and
-> routes happy customers to the tenant's public review platforms. Nothing here
-> writes a review on a customer's behalf, auto-posts to any platform, or
-> synthesizes ratings. Providers are read/deliver-only by contract.
+The business provider verifies tenant-owned completed CRM jobs or past completed appointments and usable customer email. One latest completed job per customer is eligible. Existing requests for that job, legacy requests prepared after its completion, customer-wide opt-outs, and missing contact details are excluded with visible reasons. `POST /campaigns/completed-jobs` prepares all eligible customers together, without a rating filter. Optional provider eligibility preserves the low-level service API and isolated fixtures; the installed business runtime must forward `listCompletedJobs` to enforce eligibility on manual request/campaign endpoints.
 
-Industry-neutral: platforms, campaigns, and copy carry no industry assumptions.
+Customer opt-out cancels all pending review requests and reminders for that customer within the business and suppresses future requests. Completed feedback stays recorded. Opt-out does not remove public destinations. Testimonials still require explicit customer consent.
 
-## Objects
+Delivery receipts distinguish `not_sent`, `sending`, `blocked`, `submitted` (provider accepted), `delivered`, and `needs_attention`. Requests and reminders are atomically claimed before submission; overlapping workers cannot submit the same operation twice. Uncertain outcomes remain held until read-only provider reconciliation. A failing recipient does not stop the rest of a batch. The installed email provider uses a stable messaging idempotency key for each request/reminder and saved message readback. Provider acceptance does not prove delivery.
 
-| Object | Table | Purpose |
-|---|---|---|
-| ReviewPlatform | `reviews_platforms` | Per-tenant configured review destinations with target URLs (e.g. a business profile page). `enabled` gates visibility to customers. |
-| ReviewCampaign | `reviews_campaigns` | A review-request push: audience (customer ids), optional `schedule_start_at`, per-UTC-day `throttle_per_day`, gating `rating_threshold`. |
-| ReviewRequest | `reviews_requests` | One per customer. Carries the secret public-link `token` and status: `pending → clicked → completed` or `opted_out`. |
-| ReviewResponse | `reviews_responses` | What the customer actually submitted (rating, comment, sentiment). Negative gates are `flagged_for_followup` until resolved. |
-| Testimonial | `reviews_testimonials` | A quotable snippet, stored **only with `consent: true`** — capture without explicit customer consent is rejected with 400. |
-| Reminder | `reviews_reminders` | Follow-up rows with `send_at`, delivered through the provider stub by `POST /reminders/process`. |
+Append-only migration `reviews.0002_eligibility_delivery_opt_out` preserves old tokens/submissions and carries old opt-outs into customer-wide preferences. Verified job references have a tenant-scoped unique index. Existing manually prepared requests remain visible as legacy requests.
 
-All tables carry `tenant_id` (indexed); every query is tenant-filtered.
-`customer_id` is a cross-module reference by id string only.
+## Endpoints
 
-## Endpoints (mounted by apps/api at `/api/reviews`)
-
-Tenant-scoped (require `x-tenant-id`; optional `x-user-id` becomes the audit actor):
+Tenant endpoints require the composition layer's company/user authentication and permissions:
 
 - `POST | GET /platforms`, `GET | PATCH | DELETE /platforms/:id`
-- `POST | GET /campaigns`, `GET /campaigns/:id` (includes request-status stats), `PATCH /campaigns/:id`
-- `POST /campaigns/:id/dispatch` — sends the next pending batch, honoring schedule + throttle. Returns `{ dispatched, reason }` (`not_started` / `throttled` / `no_pending` / `null`).
-- `POST | GET /requests`, `GET /requests/:id`
-- `GET /requests/:id/link` — per-customer link + **QR placeholder contract**: `{ requestId, token, url, qr: "placeholder" }` (clients render the QR from `url`).
-- `POST /requests/:id/reminders` (`{ sendAt }`), `GET /reminders`, `POST /reminders/process`
+- `GET /eligible-customers` — eligible completed-job customers and excluded reasons; 501 if verification is not connected
+- `POST /campaigns/completed-jobs` — prepare every eligible customer (`name`, optional `throttlePerDay`, `scheduleStartAt`)
+- `POST | GET /campaigns`, `GET | PATCH /campaigns/:id`, `POST /campaigns/:id/dispatch`
+- `POST | GET /requests`, `GET /requests/:id`, `GET /requests/:id/link`
+- `POST /requests/:id/delivery` — read-only delivery reconciliation; never sends a new message
+- `POST /requests/:id/reminders`, `GET /reminders`, `POST /reminders/process`
+- `POST /reminders/:id/delivery` — read-only reminder reconciliation
 - `GET /responses?flagged=true`, `POST /responses/:id/resolve`
-- `POST | GET /testimonials` — `consent: true` is mandatory.
-- `GET /dashboard` — `{ requests: {total, pending, clicked, completed, opted_out}, reviews: {volume, averageRating, positive, negative, flaggedOpen}, responseRate, testimonials }`
+- `POST | GET /testimonials`, `GET /dashboard`
 
-Public, token-authenticated (NO tenant header — the globally-unique secret
-token is the credential; an invalid token is always 404). Public payloads
-never contain internal ids (`tenant_id`, `customer_id`, `request_id`):
-`tenant_id` is the header credential for tenant-scoped routes and must never
-reach an unauthenticated response.
+Public endpoints use the secret request token, never a tenant header:
 
-- `GET /public/requests/:token` — landing view; marks `pending → clicked`.
-- `POST /public/requests/:token/submit` (`{ rating 1..5, comment? }`) — gating flow.
-- `POST /public/requests/:token/opt-out` — idempotent; cancels scheduled reminders.
+- `GET /public/requests/:token` — status, opt-out preference, and enabled destinations
+- `POST /public/requests/:token/submit` — optional private feedback (`rating` 1–5, optional `comment`)
+- `POST /public/requests/:token/opt-out` — customer-wide opt-out; repeat calls are idempotent
 
-## Positive/negative gating
+Public responses omit tenant, customer, and request identifiers. The legacy submit `gate` field classifies internal follow-up only; every value receives identical links and invitation wording.
 
-On submit, the rating is compared to the request's `rating_threshold`
-(copied from its campaign at creation; default 4):
+## Current boundaries
 
-- `rating >= threshold` → **positive**: the response is recorded, and the
-  customer is offered the tenant's *enabled* platform links. Posting publicly
-  stays the customer's choice — we never post for them.
-- `rating < threshold` → **negative**: the private feedback form is captured
-  as a ReviewResponse `flagged_for_followup`; **no platform links are shown**.
-  Resolve the follow-up via `POST /responses/:id/resolve`.
+The default `GoogleBusinessProvider` is a strict no-op delivery stub. External review import and QR rendering are still unimplemented. The installed business adapter supports email through the configured messaging provider; it requires a customer-reachable HTTPS company origin. It does not claim SMS, Google review synchronization, or email delivery without a provider receipt. Review-only purchase provisioning must include the basic customer/job records used by this provider; subscription boundaries are owned by composition.
 
-Both paths complete the request and emit `reviews.review.submitted`.
-
-## Events
-
-- `reviews.review.submitted` `{ reviewId, requestId, customerId, rating, sentiment }` — catalog event
-- `reviews.campaign.created` `{ campaignId, requestCount }`
-- `reviews.request.created` `{ requestId, customerId, campaignId }`
-- `reviews.request.opted_out` `{ requestId, customerId }`
-- `reviews.reminder.scheduled` `{ reminderId, requestId, sendAt }`
-- `reviews.testimonial.captured` `{ testimonialId, customerId }`
-
-## Provider interface
-
-`ReviewProvider` (exported) is the delivery/integration seam:
-`sendReviewRequest`, `sendReminder`, `syncExternalReviews`.
-`GoogleBusinessProvider` is the **Google-Business-ready no-op stub** — it
-satisfies the interface with zero network calls and never imports/invents
-reviews. apps/api can pass a real implementation as the second argument of
-`reviewsRouter(deps, provider)`. When a `sendMessage` contract is wired in
-`deps.contracts`, dispatch and reminders also deliver the tokenized link
-through messaging (best-effort; absent contract degrades gracefully).
-
-## Seed & tests
-
-- `seedReviews(db, tenantId)` — demo platforms, a campaign, requests in mixed
-  states, one positive + one flagged negative response, a consented testimonial,
-  and a scheduled reminder.
-- `npx vitest run packages/reviews` — 44 tests: migrations (idempotent), router
-  CRUD, gating both paths (incl. threshold boundary and disabled-platform
-  exclusion), token security, public-payload id-leak denial, opt-out,
-  throttle/schedule, reminder processing, consent enforcement, dashboard math,
-  audit entries, and tenant-isolation denial tests for every entity (incl.
-  cross-tenant campaign attachment).
+Focused checks: `npx vitest run packages/reviews apps/api/test/business-reviews.test.ts --maxWorkers=1 --minWorkers=1`. Fixtures are synthetic and databases are in memory; no live outbound messages are sent.

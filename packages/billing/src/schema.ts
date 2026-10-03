@@ -162,7 +162,26 @@ export interface BillingWebhookEventRow {
   created_at: string;
 }
 
+export interface BillingSourceReceiptRow {
+  id: string; tenant_id: string; source_entity_type: string; source_entity_id: string; input_hash: string; invoice_id: string; created_at: string;
+}
+export interface BillingPaymentReceiptRow {
+  id: string; tenant_id: string; receipt_ref: string; input_hash: string; invoice_id: string; payment_id: string; created_at: string;
+}
+export interface BillingCollectionPlanRow {
+  id: string; tenant_id: string; invoice_id: string; deposit_cents: number; deposit_due_at: string | null; balance_due_at: string | null;
+  reminders_enabled: number; opted_out: number; created_at: string; updated_at: string;
+}
+export interface BillingReminderRow {
+  id: string; tenant_id: string; invoice_id: string; operation_key: string; stage: 'deposit' | 'balance'; amount_cents: number;
+  status: 'prepared' | 'suppressed' | 'recorded'; message: string | null; reason: string | null; delivery_reference: string | null; created_at: string; updated_at: string;
+}
+
 export interface BillingDatabase extends CoreDatabase {
+  billing_source_receipts: BillingSourceReceiptRow;
+  billing_payment_receipts: BillingPaymentReceiptRow;
+  billing_collection_plans: BillingCollectionPlanRow;
+  billing_reminder_receipts: BillingReminderRow;
   billing_subscription_periods: { id: string; tenant_id: string; subscription_id: string; period_start: string; invoice_id: string; created_at: string };
   billing_accounts: BillingAccountRow;
   billing_invoices: BillingInvoiceRow;

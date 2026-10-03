@@ -87,10 +87,36 @@ export interface PortalCustomerUploadRow {
   created_at: string;
 }
 
+export type PortalServiceRequestKind = 'repeat' | 'reschedule';
+export type PortalServiceRequestStatus = 'pending' | 'acknowledged' | 'declined' | 'resolved';
+
+/** An owner-reviewed request; creating it never changes a job or booking. */
+export interface PortalCustomerServiceRequestRow {
+  id: string;
+  tenant_id: string;
+  account_id: string;
+  customer_id: string;
+  kind: PortalServiceRequestKind;
+  reference_id: string;
+  source_title: string;
+  requested_starts_at: string | null;
+  requested_ends_at: string | null;
+  requested_timezone: string;
+  note: string | null;
+  status: PortalServiceRequestStatus;
+  response: string | null;
+  version: number;
+  idempotency_key: string;
+  payload_hash: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface PortalCustomerDatabase extends CoreDatabase {
   portal_customer_accounts: PortalCustomerAccountRow;
   portal_customer_login_tokens: PortalCustomerLoginTokenRow;
   portal_customer_sessions: PortalCustomerSessionRow;
   portal_customer_messages: PortalCustomerMessageRow;
   portal_customer_uploads: PortalCustomerUploadRow;
+  portal_customer_service_requests: PortalCustomerServiceRequestRow;
 }

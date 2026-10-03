@@ -114,4 +114,18 @@ export const industriesMigrations: Migration[] = [
         .execute();
     },
   },
+  {
+    name: 'industries.0002_runtime_receipts',
+    up: async db => {
+      await db.schema.createTable('industries_runtime_receipts')
+        .addColumn('id','text',c=>c.primaryKey()).addColumn('tenant_id','text',c=>c.notNull())
+        .addColumn('industry_key','text',c=>c.notNull()).addColumn('component_key','text',c=>c.notNull())
+        .addColumn('target_type','text',c=>c.notNull()).addColumn('target_id','text')
+        .addColumn('href','text',c=>c.notNull()).addColumn('status','text',c=>c.notNull())
+        .addColumn('detail','text',c=>c.notNull()).addColumn('snapshot_json','text',c=>c.notNull())
+        .addColumn('created_at','text',c=>c.notNull()).addColumn('updated_at','text',c=>c.notNull()).execute();
+      await db.schema.createIndex('industries_runtime_receipts_tenant_component_idx').on('industries_runtime_receipts')
+        .columns(['tenant_id','industry_key','component_key']).unique().execute();
+    },
+  },
 ];

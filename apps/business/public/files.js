@@ -1,12 +1,14 @@
 export function filesView(ui){
  const {api,content,field,select,form,panel,table,action,bindForm,bindActions,render,say,esc,when,customers,customerOptions}=ui;let query={};
  return async()=>{
-  const [rows,folders,cs,people]=await Promise.all([api(`files/files?limit=200&${new URLSearchParams(query)}`),api('files/folders?limit=200'),customers(),api('business/users')]);
+  const [rows,folders,cs,people,evidenceJobs]=await Promise.all([api(`files/files?limit=200&${new URLSearchParams(query)}`),api('files/folders?limit=200'),customers(),api('business/users'),api('crm/jobs?limit=200')]);
   const folderOptions=[['','No folder'],...folders.map(f=>[f.id,f.name])],visibility=[['private','Private'],['tenant','Company team'],['public','Public visibility']];
   content.innerHTML=form('file-search','Find documents',field('name','File name','text',query.name||'')+field('tag','Tag','text',query.tag||'')+select('folder_id','Folder',folderOptions,false),'Search')
    +form('folder-add','Create a folder',field('name','Folder name','text','','required')+select('parent_id','Inside folder',folderOptions,false),'Create folder')
    +form('file-upload','Add a document',field('file','Choose file','file','','required')+select('folder_id','Folder',folderOptions,false)+field('tags','Tags — comma separated')+select('visibility','Visibility',visibility,false)+select('customer','Share with a customer',[['','Keep private'],...customerOptions(cs)],false),'Upload document')
+   +form('job-evidence','Export job evidence',select('job','Job',evidenceJobs.map(job=>[job.id,job.title]))+'<p class="muted wide">Download accessible originals with verified hashes in a portable JSON packet. Up to 100 files / 50 MB per packet.</p>','Download evidence')
    +panel('Documents',table(rows,[['File','name'],['Tags',r=>(r.tags||[]).join(', ')],['Visibility','visibility'],['Size',r=>`${r.size_bytes.toLocaleString()} bytes`],['Created',r=>when(r.created_at)]],r=>`<a class="button quiet" href="/api/files/files/${encodeURIComponent(r.id)}/content">Download</a>${action('details',r.id,'Manage')}`));
+  bindForm('job-evidence',async d=>{const response=await fetch(`/api/files/evidence?entity_type=crm.job&entity_id=${encodeURIComponent(d.job)}`);if(!response.ok){const body=await response.json();throw Error(body.error?.message||'Evidence export failed.');}const url=URL.createObjectURL(await response.blob());const link=document.createElement('a');link.href=url;link.download='job-evidence.json';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);say('Evidence packet downloaded with verified originals.');},false);
   document.querySelector('#file-search [name=folder_id]').value=query.folder_id||'';
   bindForm('file-search',d=>{query=Object.fromEntries(Object.entries(d).filter(([,v])=>v));});
   bindForm('folder-add',d=>api('files/folders','POST',{name:d.name,parent_id:d.parent_id||null}));

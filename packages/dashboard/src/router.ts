@@ -42,6 +42,7 @@ import {
 import { renderDashboardPage } from './html';
 import { collectOwnerDashboardData } from './owner';
 import { renderOwnerDashboardPage } from './owner-html';
+import { ownerExceptionQueue } from './exceptions';
 
 /* ------------------------------------------------------------------ *
  * Request schemas
@@ -122,6 +123,11 @@ export function dashboardRouter(deps: ModuleDeps<DashboardDatabase>): Hono<Tenan
   app.get('/owner.json', async (c) => {
     const data = await collectOwnerDashboardData(db, c.get('tenantId'));
     return c.json({ data });
+  });
+
+  app.get('/exceptions', async (c) => {
+    const page = parsePagination(c.req.query(), { defaultLimit: 25, maxLimit: 100 });
+    return c.json({ data: await ownerExceptionQueue(db, c.get('tenantId'), page, c.req.query('kind')) });
   });
 
   /* ---- KPI definitions (machine-readable, so the UI can explain numbers) ---- */

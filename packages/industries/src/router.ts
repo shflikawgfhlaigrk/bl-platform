@@ -12,6 +12,7 @@ import {
 import { getIndustryConfig, listIndustries } from './registry';
 import type { IndustriesDatabase } from './schema';
 import { applyIndustry, getAppliedIndustry, getTerminology } from './service';
+import type { IndustryRuntimeInstaller } from './runtime';
 
 const applyBodySchema = z
   .object({
@@ -29,7 +30,7 @@ const applyBodySchema = z
  *   GET  /:key              full config of one available industry
  *   POST /:key/apply        apply the industry's defaults to this tenant
  */
-export function industriesRouter(deps: ModuleDeps<IndustriesDatabase>): Hono<TenantEnv> {
+export function industriesRouter(deps: ModuleDeps<IndustriesDatabase>, options: {installRuntime?: IndustryRuntimeInstaller} = {}): Hono<TenantEnv> {
   const app = new Hono<TenantEnv>();
   app.onError(errorHandler);
   app.use('*', tenantMiddleware(asCoreDb(deps.db)));
@@ -81,6 +82,7 @@ export function industriesRouter(deps: ModuleDeps<IndustriesDatabase>): Hono<Ten
       events: deps.events,
       actor: body.actor,
       contracts: deps.contracts,
+      installRuntime: options.installRuntime,
     });
     return c.json({ data: applied });
   });

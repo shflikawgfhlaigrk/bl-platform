@@ -6,7 +6,7 @@ import { randomBytes, createCipheriv, createDecipheriv } from 'node:crypto';
 import { createServer as createHttpsServer } from 'node:https';
 import { serve } from '@hono/node-server';
 import { asCoreDb, createTenant, listTenants } from '@blacklabel/core';
-import { createDb, type Kysely } from '@blacklabel/db';
+import { createDb, runMigrations, type Kysely } from '@blacklabel/db';
 import { LocalDiskStorageProvider } from '@blacklabel/files';
 import { GoogleCalendarProvider, createSchedulingContext, runReminderQueue, type SchedulingDatabase } from '@blacklabel/scheduling';
 import { businessReminderDelivery } from '../../api/src/business-reminders';
@@ -21,6 +21,7 @@ import { createBusinessApp, type BusinessSettings } from './app';
 import { backupBusiness, restoreBusiness } from './recovery';
 import { businessTransport, businessRequest } from './transport';
 import { businessEmployeeFiles } from '../../api/src/business-wiring';
+import { businessIntegrationMigrations, customerRecordIntegration } from './integrations';
 
 const dataRoot = path.resolve(process.env.BLACKLABEL_BUSINESS_DATA ?? path.join(os.homedir(), '.blacklabel-business/data'));
 await fs.mkdir(dataRoot, { recursive: true, mode: 0o700 });
@@ -72,6 +73,8 @@ const calendarSync = new GoogleCalendarProvider({ connection: async id => id ===
 const storage = new LocalDiskStorageProvider(path.join(dataRoot, 'files'));
 const reviews: ReviewProvider = {
   key: 'business_email',
+  listCompletedJobs: tenant => businessReviewProvider(db, platform.events, { providers: { email } }, () => settings.publicOrigin).listCompletedJobs!(tenant),
+  getDeliveryStatus: context => businessReviewProvider(db, platform.events, { providers: { email } }, () => settings.publicOrigin).getDeliveryStatus!(context),
   sendReviewRequest: context => businessReviewProvider(db, platform.events, { providers: { email } }, () => settings.publicOrigin).sendReviewRequest(context),
   sendReminder: context => businessReviewProvider(db, platform.events, { providers: { email } }, () => settings.publicOrigin).sendReminder(context),
   syncExternalReviews: async () => { throw new Error('External review import is not connected.'); },
@@ -84,11 +87,13 @@ const tenants = await listTenants(asCoreDb(db));
 if (tenants.length > 1) throw new Error('Use a dedicated BlackLabel business data directory for this customer installation.');
 tenantId = tenants[0]?.id ?? (await createTenant(asCoreDb(db), { name: settings.companyName })).id;
 const owner = await platform.seedTenant(tenantId, { ownerName: 'Company owner' });
+await runMigrations(db, businessIntegrationMigrations);
 await fs.writeFile(path.join(dataRoot, 'identity.json'), JSON.stringify({ brand: 'BlackLabel', tenantId, ownerUserId: owner.ownerUserId }), { mode: 0o600 });
 const assets = process.env.BLACKLABEL_BUSINESS_WEB ?? fileURLToPath(new URL('./public/', import.meta.url));
 app = createBusinessApp({ platform, tenantId, ownerUserId: owner.ownerUserId, accessToken, settings: async () => settings,
   saveSettings, asset: (name) => fs.readFile(path.join(assets, name)), backup: () => backupBusiness(dataRoot),
-  version: packaged.version, buildId: packaged.buildId, installationId: tenantId, employeeFiles: businessEmployeeFiles(db, platform.events, storage) });
+  version: packaged.version, buildId: packaged.buildId, installationId: tenantId, employeeFiles: businessEmployeeFiles(db, platform.events, storage),
+  purchasedModules: packaged.purchasedModules ?? [], customerRecords: customerRecordIntegration(db, platform.events, tenantId, owner.ownerUserId) });
 // One queue covers API requests, scheduled retries, and a consistent database+vault backup.
 let tail: Promise<unknown> = Promise.resolve();
 const serial = <T>(work: () => Promise<T>) => { const result = tail.then(work); tail = result.catch(() => {}); return result; };

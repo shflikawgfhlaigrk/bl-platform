@@ -727,13 +727,37 @@ export async function readFileContent(
   file: FilesAssetRow,
 ): Promise<Uint8Array> {
   try {
-    return await storage.get(file.storage_key);
+    const bytes = await storage.get(file.storage_key);
+    if (bytes.byteLength !== file.size_bytes || createHash('sha256').update(bytes).digest('hex') !== file.sha256) {
+      throw ApiError.conflict('Stored file integrity check failed. Restore its verified original before using it.');
+    }
+    return bytes;
   } catch (err) {
     if (err instanceof StorageError && err.code === 'not_found') {
       throw ApiError.notFound(`stored content missing for file ${file.id}`);
     }
     throw err;
   }
+}
+
+/** Portable job/record packet of accessible originals, with no storage secrets. */
+export async function exportEvidence(db: Db, storage: StorageProvider, tenantId: string, actor: FilesActor,
+  entityType: string, entityId: string) {
+  assertEntityRef(entityType, entityId);
+  const rows = await listFiles(db,tenantId,actor,{entity_type:entityType,entity_id:entityId},
+    {limit:101,offset:0},{column:'created_at',direction:'asc'});
+  if (rows.length>100 || rows.reduce((total,row)=>total+row.size_bytes,0)>50*1024*1024) {
+    throw new ApiError(413,'Evidence packet exceeds 100 files or 50 MB. Export smaller record groups.');
+  }
+  const files=[];
+  for (const file of rows) {
+    await assertFileAccess(db,tenantId,actor,file,'read');
+    const bytes=await readFileContent(storage,file);
+    files.push({id:file.id,name:file.name,mime:file.mime,sizeBytes:file.size_bytes,sha256:file.sha256,
+      capturedAt:file.created_at,contentBase64:Buffer.from(bytes).toString('base64')});
+  }
+  return {format:'blacklabel-evidence-v1',entityType,entityId,exportedAt:nowIso(),accessScope:'files-readable-by-requesting-user',
+    originalBytesVerified:true,files};
 }
 
 /* ------------------------------------------------------------------ *

@@ -21,6 +21,8 @@ export interface WorkflowRow {
   enabled: number;
   /** Total runs allowed per execution (initial run + retries). */
   max_attempts: number;
+  /** A built-in recipe may be installed once per tenant. Null for custom workflows. */
+  recipe_key?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -47,6 +49,12 @@ export interface WorkflowExecutionRow {
   tenant_id: string;
   workflow_id: string;
   trigger_event: string;
+  trigger_event_id?: string | null;
+  /** Frozen actions and retry limit: editing a workflow cannot change an in-flight job. */
+  actions_snapshot_json?: string | null;
+  retry_limit?: number | null;
+  claim_token?: string | null;
+  claim_expires_at?: string | null;
   /** JSON copy of the triggering event payload. */
   trigger_payload_json: string;
   status: ExecutionStatus;
@@ -58,6 +66,19 @@ export interface WorkflowExecutionRow {
   failed_action_ids_json: string | null;
   started_at: string;
   finished_at: string | null;
+  created_at: string;
+}
+
+/** Committed in the same transaction as a local task, tag or notification. */
+export interface WorkflowActionReceiptRow {
+  id: string;
+  tenant_id: string;
+  execution_id: string;
+  action_id: string;
+  operation_key: string;
+  request_json: string;
+  status: 'succeeded' | 'skipped';
+  output_json: string | null;
   created_at: string;
 }
 
@@ -125,6 +146,7 @@ export interface WorkflowsDatabase extends CoreDatabase {
   workflows_workflow_actions: WorkflowActionRow;
   workflows_executions: WorkflowExecutionRow;
   workflows_execution_actions: WorkflowExecutionActionRow;
+  workflows_action_receipts: WorkflowActionReceiptRow;
   workflows_tasks: WorkflowTaskRow;
   workflows_notifications: WorkflowNotificationRow;
   workflows_tags: WorkflowTagRow;

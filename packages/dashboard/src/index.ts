@@ -35,6 +35,8 @@ export {
 // Owner dashboard (retail sales analytics + deterministic forecast)
 export { collectOwnerDashboardData } from './owner';
 export { renderOwnerDashboardPage } from './owner-html';
+export { ownerExceptionQueue, EXCEPTION_KINDS } from './exceptions';
+export type { OwnerException, OwnerExceptionQueue, ExceptionSourceStatus } from './exceptions';
 export type {
   OwnerDashboardData,
   OwnerForecast,

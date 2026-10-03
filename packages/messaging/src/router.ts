@@ -57,6 +57,7 @@ const statusSchema = z.object({
 const assignSchema = z.object({
   userId: z.string().min(1),
   note: z.string().optional(),
+  expectedRevision: z.number().int().min(0).optional(),
 });
 
 const outboundSchema = z.object({
@@ -66,9 +67,12 @@ const outboundSchema = z.object({
   body: z.string().optional(),
   templateId: z.string().optional(),
   variables: z.record(z.string()).optional(),
+  expectedRevision: z.number().int().min(0).optional(),
 });
 
 const inboundSchema = z.object({
+  provider: z.string().min(1).max(200).optional(),
+  providerEventId: z.string().min(1).max(255).optional(),
   channel: z.enum(CHANNEL_TYPES),
   from: z.string().min(1),
   to: z.string().optional(),
@@ -236,11 +240,16 @@ export function messagingRouter(
     return c.json({ data: message }, 201);
   });
 
-  /** Inbound webhook entry point (what a real provider webhook would call). */
+  /** Authenticated adapter ingestion; transport authentication is owned by composition. */
   app.post('/inbound', async (c) => {
     const body = inboundSchema.parse(await c.req.json());
     const result = await service.recordInbound(c.get('tenantId'), actorOf(c), body);
     return c.json({ data: { message: result.message, conversation: result.conversation } }, 201);
+  });
+
+  app.get('/inbound-receipts', async c => {
+    const page = parsePagination(c.req.query());
+    return c.json({ data: await service.listInboundReceipts(c.get('tenantId'), page), limit: page.limit, offset: page.offset });
   });
 
   app.get('/messages/:id', async (c) => c.json({ data: await service.getMessage(c.get('tenantId'), c.req.param('id')) }));

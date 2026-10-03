@@ -14,7 +14,7 @@ export type ReviewRequestStatus = 'pending' | 'clicked' | 'completed' | 'opted_o
 
 export type ReviewCampaignStatus = 'active' | 'paused' | 'completed';
 
-/** Gating outcome of a submitted rating. */
+/** Internal follow-up classification; never controls public-review access. */
 export type ReviewSentiment = 'positive' | 'negative';
 
 export type ReviewReminderStatus = 'scheduled' | 'sent' | 'canceled';
@@ -26,7 +26,7 @@ export interface ReviewPlatformRow {
   /** Machine key, /^[a-z][a-z0-9_]*$/, unique per tenant. */
   key: string;
   name: string;
-  /** Where a happy customer is sent to leave a public review. */
+  /** Public review destination offered equally to every customer. */
   target_url: string;
   /** Provider implementation key, e.g. "google_business" or "generic". */
   provider: string;
@@ -41,7 +41,7 @@ export interface ReviewCampaignRow {
   tenant_id: string;
   name: string;
   status: string; // ReviewCampaignStatus
-  /** Ratings >= threshold gate to public platform links; below → private feedback. */
+  /** Internal follow-up threshold only; never controls public-review access. */
   rating_threshold: number;
   /** Max requests dispatched per UTC day. */
   throttle_per_day: number;
@@ -69,12 +69,18 @@ export interface ReviewRequestRow {
   opted_out_at: string | null;
   created_at: string;
   updated_at: string;
+  source_job_id?: string | null;
+  source_job_type?: string | null;
+  source_job_completed_at?: string | null;
+  delivery_status?: string | null;
+  delivery_message_id?: string | null;
+  delivery_error?: string | null;
+  delivery_attempted_at?: string | null;
 }
 
 /**
- * A real customer's submitted rating/feedback. Positive gates record the
- * rating before hand-off to platform links; negative gates capture the
- * private feedback form and are flagged for follow-up.
+ * A real customer's submitted feedback. Lower ratings can be flagged for
+ * internal follow-up, while all customers retain the same public links.
  */
 export interface ReviewResponseRow {
   id: string;
@@ -112,6 +118,17 @@ export interface ReviewReminderRow {
   status: string; // ReviewReminderStatus
   sent_at: string | null;
   created_at: string;
+  delivery_status?: string | null;
+  delivery_message_id?: string | null;
+  delivery_error?: string | null;
+  delivery_attempted_at?: string | null;
+}
+
+export interface ReviewOptOutRow {
+  id: string;
+  tenant_id: string;
+  customer_id: string;
+  created_at: string;
 }
 
 export interface ReviewsDatabase extends CoreDatabase {
@@ -121,4 +138,5 @@ export interface ReviewsDatabase extends CoreDatabase {
   reviews_responses: ReviewResponseRow;
   reviews_testimonials: ReviewTestimonialRow;
   reviews_reminders: ReviewReminderRow;
+  reviews_opt_outs: ReviewOptOutRow;
 }

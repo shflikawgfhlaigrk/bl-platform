@@ -21,6 +21,7 @@
 import type { Context, MiddlewareHandler } from 'hono';
 import { ApiError, id } from '@blacklabel/core';
 import type { Logger } from '@blacklabel/admin';
+import { isIP } from 'node:net';
 
 const MUTATING = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 const FIVE_MB = 5 * 1024 * 1024;
@@ -101,9 +102,10 @@ const AUTH_ISH = /\/(credentials|invitations|accept|session-policy)\b/;
 
 
 export function clientIp(c: Context): string {
-  const fwd = c.req.header('x-forwarded-for');
-  if (fwd) return fwd.split(',')[0].trim();
-  return c.req.header('x-real-ip') ?? '127.0.0.1';
+  // Forwarded headers are caller-controlled without an explicitly trusted
+  // proxy boundary. Use the node server's socket identity, never those headers.
+  const peer = c.env?.incoming?.socket?.remoteAddress;
+  return typeof peer === 'string' && isIP(peer) ? peer : 'unknown';
 }
 
 export class RateLimiter {
@@ -242,7 +244,7 @@ export function bodyLimit(options: BodyLimitOptions = {}): MiddlewareHandler {
   return async (c, next) => {
     const original = c.req.raw;
     if (MUTATING.has(c.req.method) || original.body) {
-      const fileUpload = /^\/api\/(?:files\/uploads\/[^/]+\/complete|portal-customer\/me\/uploads)$/.test(c.req.path);
+      const fileUpload = /^\/api\/(?:files\/uploads\/[^/]+\/complete|portal-customer\/(?:me|ui)\/uploads)$/.test(c.req.path);
       const auth = /\/(?:auth|login)(?:\/|$)/.test(c.req.path);
       const cap = auth ? 64 * 1024 : fileUpload ? 15 * 1024 * 1024 : /import/.test(c.req.path) ? FIFTY_MB : FIVE_MB;
       const rawLength = c.req.header('content-length');

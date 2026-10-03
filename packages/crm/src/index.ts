@@ -9,6 +9,7 @@
  *   crm.deal.stage_changed   { dealId, from, to, valueCents }
  *   crm.job.created          { jobId }
  *   crm.task.completed       { taskId }
+ *   crm.lead.next_action_completed { leadId, receiptId }
  */
 export const MODULE_KEY = 'crm' as const;
 
@@ -29,6 +30,7 @@ export type {
   CrmContactRow,
   CrmLeadRow,
   CrmLeadStageRow,
+  CrmNextActionCompletionRow,
   CrmDealRow,
   CrmJobRow,
   CrmNoteRow,
@@ -47,6 +49,7 @@ export type {
 export { CRM_ENTITY_TYPES } from './schema';
 
 // Public constants/helpers other layers may need (id-string world only)
-export { DEFAULT_LEAD_STAGES, DEAL_STATUSES } from './service';
+export { DEFAULT_LEAD_STAGES, DEAL_STATUSES, listLeadStages, setLeadStages } from './service';
 export { ENTITY_DEFS, getEntity, listEntities, updateLead, addTimelineEvent, createJob } from './service';
-export { createCustomer, updateContact } from './service';
+export { createCustomer, updateCustomer, updateContact } from './service';
+export type { CustomerInput, LeadInput, SalesQueueBucket } from './service';

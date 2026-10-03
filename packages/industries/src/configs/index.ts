@@ -9,6 +9,7 @@ import { spaWellnessConfig } from './spa-wellness';
 import { smartHomeSecurityConfig } from './smart-home-security';
 import { tackRetailConfig } from './tack-retail';
 import { windowCleaningConfig } from './window-cleaning';
+import { serviceDeliveryConfig } from './service-delivery';
 
 /**
  * All shipped industry configs. Adding an industry = add ONE file here and
@@ -30,4 +31,5 @@ export const shippedIndustryConfigs: ReadonlyArray<{ source: string; raw: unknow
   { source: 'configs/spa-wellness.ts', raw: spaWellnessConfig },
   { source: 'configs/tack-retail.ts', raw: tackRetailConfig },
   { source: 'configs/window-cleaning.ts', raw: windowCleaningConfig },
+  { source: 'configs/service-delivery.ts', raw: serviceDeliveryConfig },
 ];

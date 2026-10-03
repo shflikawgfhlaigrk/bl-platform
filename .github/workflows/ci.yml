@@ -6,9 +6,23 @@ on:
   pull_request:
 
 jobs:
+  module-candidate:
+    name: focused module candidate controls
+    if: startsWith(github.head_ref, 'codex/module-outcomes-')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: node scripts/check-module-candidate.mjs
   test:
     name: typecheck + vitest (incl. confirmDoubleOptIn deadlock guard)
     runs-on: ubuntu-latest
+    if: "!startsWith(github.head_ref, 'codex/module-outcomes-')"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

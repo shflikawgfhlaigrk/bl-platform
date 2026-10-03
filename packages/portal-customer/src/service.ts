@@ -10,7 +10,8 @@
  * A missing provider degrades to 501 (or a skip where the spec allows it).
  */
 import type { Kysely } from 'kysely';
-import { DateTime } from 'luxon';
+import { createHash } from 'node:crypto';
+import { DateTime, IANAZone } from 'luxon';
 import {
   ApiError,
   asCoreDb,
@@ -28,6 +29,9 @@ import type {
   PortalCustomerMessageRow,
   PortalCustomerSessionRow,
   PortalCustomerUploadRow,
+  PortalCustomerServiceRequestRow,
+  PortalServiceRequestKind,
+  PortalServiceRequestStatus,
   PortalUploadKind,
 } from './schema';
 
@@ -48,6 +52,8 @@ export interface PortalAppointment {
   status: string;
   serviceKey?: string | null;
   notes?: string | null;
+  title?: string;
+  timezone?: string;
 }
 
 export interface PortalAppointmentsProvider {
@@ -71,6 +77,13 @@ export interface PortalQuote {
   title?: string | null;
   expiresAt?: string | null;
   lines?: PortalQuoteLine[];
+  notes?: string | null;
+  subtotalCents?: number;
+  discountCents?: number;
+  taxCents?: number;
+  revisionNumber?: number;
+  /** Exact displayed customer scope; required on decisions when the provider supplies it. */
+  payloadHash?: string;
 }
 
 export type QuoteDecision = 'approved' | 'declined';
@@ -81,6 +94,7 @@ export interface QuoteApprovalEventInput {
   customerId: string;
   decision: QuoteDecision;
   comment?: string;
+  expectedPayloadHash?: string;
   /** Who acted, e.g. "portal:<accountId>". */
   actor: string;
 }
@@ -101,12 +115,16 @@ export interface PortalInvoice {
   totalCents: number;
   /** Amount still due, integer cents. */
   balanceCents: number;
+  depositRemainingCents?: number;
+  depositDueAt?: string | null;
+  remindersOptedOut?: boolean;
   dueAt?: string | null;
 }
 
 export interface PortalInvoicesProvider {
   listForCustomer(tenantId: string, customerId: string): Promise<PortalInvoice[]>;
   getForCustomer(tenantId: string, customerId: string, invoiceId: string): Promise<PortalInvoice | undefined>;
+  setReminderOptOut?(tenantId: string, customerId: string, invoiceId: string, optedOut: boolean): Promise<void>;
 }
 
 /** Payment-intent placeholder returned by the billing provider interface. */
@@ -127,6 +145,7 @@ export interface PortalPaymentProvider {
     customerId: string;
     invoiceId: string;
     amountCents: number;
+    purpose?: 'deposit' | 'balance';
   }): Promise<PaymentIntentStub>;
 }
 
@@ -160,6 +179,7 @@ export interface PortalJobStatus {
 
 export interface PortalJobsProvider {
   listForCustomer(tenantId: string, customerId: string): Promise<PortalJobStatus[]>;
+  getForCustomer?(tenantId: string, customerId: string, jobId: string): Promise<PortalJobStatus | undefined>;
 }
 
 /** A pending review request surfaced from the reviews module. */
@@ -485,16 +505,20 @@ export async function decideQuote(
   quoteId: string,
   decision: QuoteDecision,
   comment?: string,
+  expectedPayloadHash?: string,
 ): Promise<{ quote: PortalQuote; approvalEventId: string }> {
   if (!quotes) throw notWired('quotes');
   const quote = await quotes.getForCustomer(tenantId, account.customer_id, quoteId);
   if (!quote) throw ApiError.notFound(`quote not found: ${quoteId}`);
+  if (quote.payloadHash && !expectedPayloadHash) throw ApiError.badRequest('Review the current quote before deciding; expectedPayloadHash is required.');
+  if (quote.payloadHash && expectedPayloadHash !== quote.payloadHash) throw ApiError.conflict('Quote scope changed; reload and review it.');
   const { id: approvalEventId } = await quotes.recordApprovalEvent({
     tenantId,
     quoteId,
     customerId: account.customer_id,
     decision,
     comment,
+    expectedPayloadHash,
     actor: `portal:${account.id}`,
   });
   const action = decision === 'approved' ? 'portal_customer.quote.approved' : 'portal_customer.quote.declined';
@@ -527,6 +551,7 @@ export async function createInvoicePaymentIntent(
   tenantId: string,
   account: PortalCustomerAccountRow,
   invoiceId: string,
+  purpose: 'deposit' | 'balance' = 'balance',
 ): Promise<PaymentIntentStub> {
   if (!invoices) throw notWired('invoices');
   const invoice = await invoices.getForCustomer(tenantId, account.customer_id, invoiceId);
@@ -534,13 +559,16 @@ export async function createInvoicePaymentIntent(
   if (invoice.balanceCents <= 0) {
     throw ApiError.badRequest('invoice has no outstanding balance');
   }
+  const amountCents = purpose === 'deposit' ? invoice.depositRemainingCents ?? 0 : invoice.balanceCents;
+  if (amountCents <= 0) throw ApiError.badRequest('There is no outstanding deposit.');
   if (!payments) throw notWired('payments');
   const provider = payments;
   const intent = await provider.createPaymentIntent({
     tenantId,
     customerId: account.customer_id,
     invoiceId,
-    amountCents: invoice.balanceCents,
+    amountCents,
+    purpose,
   });
   await audit(asCoreDb(db), tenantId, account.id, 'portal_customer.payment_intent.created', 'billing.invoice', invoiceId, {
     paymentIntentId: intent.id,
@@ -645,10 +673,14 @@ export async function recordUpload(
   },
 ): Promise<PortalCustomerUploadRow> {
   if (!files) throw notWired('files');
-  if (input.contentBase64 === undefined || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(input.contentBase64)) {
+  if (input.contentBase64 === undefined || input.contentBase64.length % 4 !== 0) {
     throw ApiError.badRequest('file content must be supplied as base64');
   }
-  if (Buffer.from(input.contentBase64, 'base64').byteLength !== input.sizeBytes) throw ApiError.badRequest('file size does not match its content');
+  // Canonical round-trip validation is linear and remains safe at the upload
+  // limit; a repeated-group regexp over multi-MB base64 overflows V8's stack.
+  const content = Buffer.from(input.contentBase64, 'base64');
+  if (content.toString('base64') !== input.contentBase64) throw ApiError.badRequest('file content must be supplied as canonical base64');
+  if (content.byteLength !== input.sizeBytes) throw ApiError.badRequest('file size does not match its content');
   const registered = await files.registerUpload({
       tenantId,
       customerId: account.customer_id,
@@ -707,4 +739,153 @@ export async function listUploads(
     .limit(page.limit)
     .offset(page.offset)
     .execute();
+}
+
+/* ---------------- customer requests, with owner-visible receipts ---------------- */
+
+export interface CreatePortalServiceRequestInput {
+  kind: PortalServiceRequestKind;
+  referenceId: string;
+  idempotencyKey: string;
+  requestedStartsAt?: string;
+  requestedEndsAt?: string;
+  timezone?: string;
+  note?: string;
+}
+
+function requestTime(value: string | undefined, zone: string): string | null {
+  if (value === undefined) return null;
+  const parsed = DateTime.fromISO(value, { zone });
+  if (!parsed.isValid) throw ApiError.badRequest('requested time must be a valid ISO timestamp');
+  const wallTime = /^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})(?::\d{2}(?:\.\d+)?)?$/.exec(value);
+  if (wallTime && parsed.toFormat("yyyy-MM-dd'T'HH:mm") !== `${wallTime[1]}T${wallTime[2]}:${wallTime[3]}`) {
+    throw ApiError.badRequest('preferred local time does not exist in this timezone; choose another time');
+  }
+  if (wallTime && parsed.getPossibleOffsets().length > 1) {
+    throw ApiError.badRequest('preferred local time occurs twice; supply an explicit UTC offset or choose another time');
+  }
+  return parsed.toUTC().toISO()!;
+}
+
+export async function createServiceRequest(
+  db: Db,
+  events: EventBus,
+  providers: PortalCustomerProviders,
+  tenantId: string,
+  account: PortalCustomerAccountRow,
+  input: CreatePortalServiceRequestInput,
+): Promise<{ request: PortalCustomerServiceRequestRow; replayed: boolean }> {
+  if (account.tenant_id !== tenantId) throw ApiError.notFound('portal account not found');
+  if (!input.referenceId.trim() || !input.idempotencyKey.trim()) throw ApiError.badRequest('reference and request key are required');
+  const zone = input.timezone ?? 'UTC';
+  if (!IANAZone.isValidZone(zone)) throw ApiError.badRequest('request timezone must be a valid IANA timezone');
+  const startsAt = requestTime(input.requestedStartsAt, zone);
+  const inputEndsAt = requestTime(input.requestedEndsAt, zone);
+  if (input.kind === 'reschedule' && startsAt === null) throw ApiError.badRequest('a reschedule request requires a preferred start time');
+  if (inputEndsAt !== null && (startsAt === null || Date.parse(inputEndsAt) <= Date.parse(startsAt))) throw ApiError.badRequest('preferred end must be after preferred start');
+  const note = input.note?.trim() || null;
+  const hash = createHash('sha256').update(JSON.stringify({ kind: input.kind, referenceId: input.referenceId, startsAt, endsAt: inputEndsAt, timezone: zone, note })).digest('hex');
+  const previous = await db.selectFrom('portal_customer_service_requests').selectAll()
+    .where('tenant_id', '=', tenantId).where('account_id', '=', account.id).where('idempotency_key', '=', input.idempotencyKey).executeTakeFirst();
+  if (previous) {
+    if (previous.payload_hash !== hash) throw ApiError.conflict('request key was already used for different details');
+    return { request: previous, replayed: true };
+  }
+  if (startsAt !== null && Date.parse(startsAt) <= Date.now()) throw ApiError.badRequest('preferred start must be in the future');
+  // Provider reads precede the module transaction: providers may use the
+  // shared DB connection. This is an owner-reviewed request, not a reservation.
+  let sourceTitle: string;
+  let endsAt = inputEndsAt;
+  if (input.kind === 'repeat') {
+    if (!providers.jobs) throw notWired('jobs');
+    const job = providers.jobs.getForCustomer
+      ? await providers.jobs.getForCustomer(tenantId, account.customer_id, input.referenceId)
+      : (await providers.jobs.listForCustomer(tenantId, account.customer_id)).find((row) => row.id === input.referenceId);
+    if (!job) throw ApiError.notFound('job not found');
+    if (job.status !== 'completed') throw ApiError.conflict('repeat service is available after the original job is completed');
+    sourceTitle = job.title;
+  } else {
+    if (!providers.appointments) throw notWired('appointments');
+    const appointment = (await providers.appointments.listForCustomer(tenantId, account.customer_id)).find((row) => row.id === input.referenceId);
+    if (!appointment) throw ApiError.notFound('appointment not found');
+    if (!['requested', 'confirmed'].includes(appointment.status)) throw ApiError.conflict(`cannot request a reschedule for a ${appointment.status} appointment`);
+    sourceTitle = appointment.title ?? 'Appointment';
+    if (endsAt === null) endsAt = DateTime.fromISO(startsAt!, { zone: 'UTC' }).plus({ milliseconds: Date.parse(appointment.endsAt) - Date.parse(appointment.startsAt) }).toISO();
+  }
+  const result = await db.transaction().execute(async (tx) => {
+    const saved = await tx.selectFrom('portal_customer_service_requests').selectAll()
+      .where('tenant_id', '=', tenantId).where('account_id', '=', account.id).where('idempotency_key', '=', input.idempotencyKey).executeTakeFirst();
+    if (saved) {
+      if (saved.payload_hash !== hash) throw ApiError.conflict('request key was already used for different details');
+      return { request: saved, replayed: true };
+    }
+    // Prevent a refreshed page or second click from opening another pending
+    // request for the same work. A changed request needs the owner to review it.
+    const open = await tx.selectFrom('portal_customer_service_requests').selectAll()
+      .where('tenant_id', '=', tenantId).where('account_id', '=', account.id)
+      .where('kind', '=', input.kind).where('reference_id', '=', input.referenceId)
+      .where('status', 'in', ['pending', 'acknowledged']).orderBy('created_at').orderBy('id').executeTakeFirst();
+    if (open) {
+      if (open.payload_hash === hash) return { request: open, replayed: true };
+      throw ApiError.conflict('an open request already exists for this work; message the business to change it', { requestId: open.id });
+    }
+    const now = nowIso();
+    const row: PortalCustomerServiceRequestRow = {
+      id: id(), tenant_id: tenantId, account_id: account.id, customer_id: account.customer_id,
+      kind: input.kind, reference_id: input.referenceId, source_title: sourceTitle,
+      requested_starts_at: startsAt, requested_ends_at: endsAt, requested_timezone: zone,
+      note, status: 'pending', response: null, version: 1, idempotency_key: input.idempotencyKey,
+      payload_hash: hash, created_at: now, updated_at: now,
+    };
+    await tx.insertInto('portal_customer_service_requests').values(row).execute();
+    await audit(asCoreDb(tx), tenantId, `portal:${account.id}`, 'portal_customer.request.created', 'portal_customer.request', row.id, { kind: row.kind, referenceId: row.reference_id });
+    return { request: row, replayed: false };
+  });
+  if (!result.replayed) await events.emit(tenantId, 'portal_customer.request.created', {
+    requestId: result.request.id, accountId: account.id, customerId: account.customer_id,
+    kind: input.kind, referenceId: input.referenceId,
+  });
+  return result;
+}
+
+export async function listServiceRequests(
+  db: Db,
+  tenantId: string,
+  filter: { accountId?: string; status?: PortalServiceRequestStatus },
+  page: Pagination,
+): Promise<PortalCustomerServiceRequestRow[]> {
+  let query = db.selectFrom('portal_customer_service_requests').selectAll().where('tenant_id', '=', tenantId);
+  if (filter.accountId) query = query.where('account_id', '=', filter.accountId);
+  if (filter.status) query = query.where('status', '=', filter.status);
+  return query.orderBy('created_at', 'desc').orderBy('id').limit(page.limit).offset(page.offset).execute();
+}
+
+export async function getServiceRequest(db: Db, tenantId: string, requestId: string): Promise<PortalCustomerServiceRequestRow> {
+  const row = await db.selectFrom('portal_customer_service_requests').selectAll().where('tenant_id', '=', tenantId).where('id', '=', requestId).executeTakeFirst();
+  if (!row) throw ApiError.notFound('service request not found');
+  return row;
+}
+
+export async function respondServiceRequest(
+  db: Db,
+  events: EventBus,
+  tenantId: string,
+  requestId: string,
+  actor: string,
+  input: { status: Exclude<PortalServiceRequestStatus, 'pending'>; response?: string; expectedVersion: number },
+): Promise<PortalCustomerServiceRequestRow> {
+  const response = input.response?.trim() || null;
+  if (['resolved', 'declined'].includes(input.status) && response === null) throw ApiError.badRequest('a customer-visible response is required to close a request');
+  const updated = await db.transaction().execute(async (tx) => {
+    const row = await getServiceRequest(tx, tenantId, requestId);
+    if (row.version !== input.expectedVersion) throw ApiError.conflict('request changed; reload before responding');
+    if (['resolved', 'declined'].includes(row.status)) throw ApiError.conflict('request is already closed');
+    const now = nowIso();
+    const next = { status: input.status, response, version: row.version + 1, updated_at: now };
+    await tx.updateTable('portal_customer_service_requests').set(next).where('tenant_id', '=', tenantId).where('id', '=', requestId).where('version', '=', row.version).execute();
+    await audit(asCoreDb(tx), tenantId, actor, 'portal_customer.request.updated', 'portal_customer.request', requestId, { before: row.status, after: input.status, response });
+    return { ...row, ...next };
+  });
+  await events.emit(tenantId, 'portal_customer.request.updated', { requestId, accountId: updated.account_id, customerId: updated.customer_id, status: updated.status });
+  return updated;
 }

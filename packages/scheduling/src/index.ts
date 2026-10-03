@@ -72,6 +72,7 @@ export type {
   SchedulingAppointmentStaffRow,
   SchedulingAppointmentResourceRow,
   SchedulingReminderRow,
+  SchedulingAppointmentReceiptRow,
   SchedulingDatabase,
 } from './schema';
 export type {

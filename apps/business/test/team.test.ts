@@ -43,7 +43,11 @@ describe('customer-installed team and review journeys', () => {
       await f.data('portal-customer/auth/request-link', 'POST', { email: 'form@example.test' });
       const token = await f.db.selectFrom('portal_customer_login_tokens').select('token').where('tenant_id', '=', f.tenantId).where('account_id', '=', account.id).where('used_at', 'is', null).orderBy('created_at', 'desc').orderBy('id').executeTakeFirstOrThrow();
       const session = await f.data('portal-customer/auth/exchange', 'POST', { token: token.token });
-      const response = await f.request(route, 'POST', undefined, `portal_session=${session.sessionToken}`);
+      const displayed=await f.request('portal-customer/ui','GET',undefined,`portal_session=${session.sessionToken}`);
+      const hidden=(await displayed.text()).match(/name="expectedPayloadHash" value="([a-f0-9]{64})"/);expect(hidden).not.toBeNull();
+      const response=await f.app.request(`https://team.example/api/${route}`,{method:'POST',headers:{cookie:`portal_session=${session.sessionToken}`,
+        host:'team.example',origin:'https://team.example','sec-fetch-site':'same-origin','content-type':'application/x-www-form-urlencoded'},
+        body:new URLSearchParams({expectedPayloadHash:hidden![1]}).toString()});
       expect(response.status, await response.clone().text()).toBe(302);
       expect(response.headers.get('referrer-policy')).toBe('strict-origin');
       expect((await f.data(`quoting/quotes/${quoteId}`)).quote.status).toBe('approved');
