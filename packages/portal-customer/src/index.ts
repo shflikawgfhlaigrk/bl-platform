@@ -15,6 +15,8 @@
  * - portal_customer.payment_intent.created { invoiceId, customerId, accountId, paymentIntentId, amountCents }
  * - portal_customer.message.sent           { messageId, accountId, customerId, relayedMessageId }
  * - portal_customer.upload.created         { uploadId, accountId, customerId, fileId, fileName }
+ * - portal_customer.request.created        { requestId, accountId, customerId, kind, referenceId }
+ * - portal_customer.request.updated        { requestId, accountId, customerId, status }
  */
 export const MODULE_KEY = 'portal-customer' as const;
 export { getAccount } from './service';
@@ -33,6 +35,9 @@ export type {
   PortalCustomerSessionRow,
   PortalCustomerMessageRow,
   PortalCustomerUploadRow,
+  PortalCustomerServiceRequestRow,
+  PortalServiceRequestKind,
+  PortalServiceRequestStatus,
   PortalCustomerDatabase,
   PortalUploadKind,
 } from './schema';

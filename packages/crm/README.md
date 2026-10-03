@@ -27,6 +27,41 @@ Every major entity has an `owner_user_id` (assigned user, id string) and a
 `custom_fields` JSON column whose keys are validated against the tenant's
 core `custom_field_definitions` (entity types `crm.customer`, `crm.lead`, ...).
 
+### Owned sales follow-up
+
+`GET /sales-queue` is CRM's included action queue and pipeline report. It returns
+`data.items`, full matching `data.summary` counts/value, and `data.generated_at`.
+Use `bucket=all|overdue|unowned|no_next_action|no_due_date`, optional
+`owner_user_id`, `q`, `limit`, and `offset`. Report totals cover every matching
+active lead, independent of pagination. Items include exception reasons, the
+company user's name, and `source_record.api_path` for drillthrough. Configured
+closed stages are excluded. Counts are point-in-time reads; refresh to see changes.
+
+Lead create/PATCH accepts `next_action` (1–500 characters or null),
+`next_action_due_at` (ISO timestamp with timezone or null), and `owner_user_id`
+(an existing company user or null). Dates normalize to UTC; a due date requires
+an action. Clearing an action clears its due date. Owners are listed through
+`GET /owners`. Assignment requires company setup to have provisioned users.
+CRM also includes its existing customers, jobs, notes, tasks, CSV export and
+activity history; this queue requires no Dashboard or Workflow purchase.
+
+PATCH can include `expected_next_action_revision` from the lead read to reject
+stale saves with 409. `POST /leads/:id/next-action/complete` requires
+`{ "idempotency_key": "unique-operation-key", "revision": 1, "note": "Outcome" }`.
+It records a receipt, audit and customer/lead timeline, then clears the action.
+Retrying the same operation returns the same receipt without clearing a newer
+action; a reused key with different input or a stale revision returns 409.
+The UI shows the recorded completion and asks for the next action or closure.
+
+`PUT /lead-stages` accepts optional `is_closed` per stage. Omission preserves the
+existing flag; won/lost default to closed. Removing a stage still used by leads
+returns 409 rather than stranding those leads. The UI marks closed stages with
+`| closed`. Migration `crm.0004_owned_next_action_queue` preserves existing data.
+
+This slice provides in-app due/ownership attention and completion receipts.
+External reminder delivery, role-specific sales access, and independent clean
+device validation remain product acceptance requirements outside this slice.
+
 ## Events emitted
 
 ```
@@ -37,6 +72,7 @@ crm.deal.created         { dealId }
 crm.deal.stage_changed   { dealId, from, to, valueCents }
 crm.job.created          { jobId }
 crm.task.completed       { taskId }
+crm.lead.next_action_completed { leadId, receiptId }
 ```
 
 Every mutation is audited via core `audit()` with entity types like

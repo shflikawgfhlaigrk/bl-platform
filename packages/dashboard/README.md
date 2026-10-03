@@ -174,3 +174,27 @@ idempotent), every aggregation against seeded data, date filtering, tenant
 isolation/denial, graceful degradation, event emission, config + alert CRUD
 through the router, export (JSON + CSV), KPI endpoint, HTML rendering and
 escaping.
+
+## Owner exception queue
+
+`GET /api/dashboard/exceptions?limit=25&offset=0&kind=all` reads local source records
+without performing actions. The selected page includes an exact total and `hasMore`;
+limit is bounded to 100 and the SQL query does not truncate each module to an initial scan.
+Categories cover recorded overdue balances, quotes unchanged for seven days without a
+decision, completed jobs lacking explicit invoice provenance, workflow failures/retries,
+unowned or unanswered conversations, and crew closeout exceptions/time/checklist gaps.
+Paid, draft, and void invoices do not become overdue balance items. Completed-job linkage
+checks require both direct `crm.job` provenance and the real quote-conversion ledger;
+missing linkage tables suppress that category rather than guessing.
+
+Every row includes a tenant-scoped source API, a valid workspace link, its source update
+timestamp, and an explicit next action. Crew checklist waivers follow the employee
+closeout rules. Resolving the underlying source removes the item on refresh; dashboard
+reads do not mark anything resolved, send a reminder, retry a workflow, or collect money.
+
+`sampledAt` and `staleAt` cover the local database snapshot only. The browser marks the
+view stale after five minutes. External provider freshness remains `not_verified`.
+Missing source tables/columns produce category `available:false`, `count:null` and a
+partial queue. An empty partial queue never means that unchecked categories are healthy.
+Source inspection is read-only; entity action drilldown and independent clean-device
+acceptance remain integration evidence beyond these focused service/UI tests.

@@ -169,3 +169,35 @@ approval flow (transitions, signer/hash capture, auto-expiry, event
 payloads), full router CRUD, template bundles (incl. cycle tolerance),
 conversion with/without the billing contract, and tenant-isolation denial
 tests for every entity.
+
+## Scope, versions and handoff integrity
+
+`GET /quotes/:id` returns `payloadHash`; customers submit that value as
+`expectedPayloadHash` when approving or declining. The connected customer portal
+requires it and displays work lines, scope notes, tax, discounts, expiry and
+version before acceptance. Outdated scope returns 409; absent portal preconditions
+return 400. An offered quote cannot change price, work, notes or attachment ids.
+New approval events retain an immutable full-scope JSON snapshot and SHA-256 hash.
+Legacy evidence keeps its original pricing-only hash and a null full-scope
+snapshot; old notes/files cannot be retroactively proved from that evidence.
+
+`POST /quotes/:id/revise` creates a separate editable draft version from an
+unaccepted offer, keeps the prior offer and evidence, and closes the prior offer.
+A repeated revision request returns the same replacement. Accepted or converted
+work cannot be revised through this route; it needs a separately approved change
+quote. Sharing needs at least one positive-quantity work line. Expiry is checked
+at the UTC instant, including the exact deadline.
+
+The business composition converts an accepted quote into one CRM job and one
+exact draft invoice in a single transaction. A failed local write rolls back the
+invoice, invoice number, job and receipt. Retries read the saved ids and verify
+invoice work lines, discounts, tax, amount and source linkage. The job retains a
+readable accepted-work summary linked to the original quote. Subscriber errors
+are returned as `eventDeliveryNeedsReview`; this is a review flag, not a durable
+outbox or proof of external delivery.
+
+The low-level module contract path claims a quote before invoking an opaque
+invoice provider, preventing duplicate concurrent calls. An ambiguous failure
+stays claimed for reconciliation instead of automatically issuing another
+invoice. The business composition owns transactional local recovery. No real
+payment or notification delivery is implied by these synthetic checks.

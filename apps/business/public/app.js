@@ -6,6 +6,10 @@ import { filesView } from './files.js';
 import { billingView } from './billing.js';
 import { messagingView } from './messaging.js';
 import { reviewsView } from './reviews.js';
+import { integrationView } from './integrations.js';
+import { exceptionQueueView } from './dashboard.js';
+import { portalCustomerView } from './portal-customer.js';
+import { employeeView } from './employee.js';
 import { industriesView } from './industries.js';
 const modules = [
   ['dashboard','Overview','Your current business activity.'],['crm','Customers & pipeline','Keep customers, prospects, and jobs connected.'],
@@ -23,7 +27,7 @@ const money = (c) => new Intl.NumberFormat('en-US',{style:'currency',currency:'U
 const cents = (s) => { if(!/^\d+(?:\.\d{1,2})?$/.test(String(s))) throw Error('Enter a positive amount with at most two decimal places.'); const [a,b='']=String(s).split('.'); const n=Number(a)*100+Number(b.padEnd(2,'0')); if(!Number.isSafeInteger(n)) throw Error('Amount is too large.'); return n; };
 const when = (v) => v ? new Date(v).toLocaleString() : '—';
 function say(text,error=false){ notice.textContent=text; notice.className=error?'error':''; }
-async function api(route,method='GET',body){ const r=await fetch(`/api/${route}`,{method,headers:body===undefined?{}:{'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)}); const j=await r.json().catch(()=>({})); if(!r.ok){const e=new Error(j.error?.message||`Request failed (${r.status})`);e.status=r.status;throw e;} return j.data; }
+async function api(route,method='GET',body){ const viewGeneration=generation;const r=await fetch(`/api/${route}`,{method,headers:body===undefined?{}:{'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)}); const j=await r.json().catch(()=>({}));if(method==='GET'&&viewGeneration!==generation){const e=new Error('');e.name='AbortError';throw e;} if(!r.ok){const e=new Error(j.error?.message||`Request failed (${r.status})`);e.status=r.status;throw e;} return j.data; }
 const field=(name,label,type='text',value='',attrs='')=>`<label>${esc(label)}<input name="${esc(name)}" type="${type}" value="${esc(value)}" ${attrs}></label>`;
 const area=(name,label,value='')=>`<label class="wide">${esc(label)}<textarea name="${name}" required>${esc(value)}</textarea></label>`;
 const select=(name,label,rows,blank=true)=>`<label>${esc(label)}<select name="${name}" ${blank?'required':''}>${blank?'<option value="">Choose…</option>':''}${rows.map(([v,l])=>`<option value="${esc(v)}">${esc(l)}</option>`).join('')}</select></label>`;
@@ -36,11 +40,12 @@ const customerOptions=(rows)=>rows.map(r=>[r.id,r.name]);
 function bindForm(id,handler,reload=true){const f=document.getElementById(id);if(!f)return;f.addEventListener('submit',async e=>{e.preventDefault();if(f.dataset.saving==='true')return;f.dataset.saving='true';const b=f.querySelector('button:not([type=button])');b.disabled=true;try{await handler(Object.fromEntries(new FormData(f)),f);if(reload){say('Saved.');await render();}}catch(error){say(error.message,true);}finally{b.disabled=false;f.dataset.saving='false';}});}
 function bindActions(handler){content.onclick=async e=>{const b=e.target.closest('[data-action]');if(!b)return;b.disabled=true;try{await handler(b.dataset.action,b.dataset.id,b); }catch(error){say(error.message,true);}finally{b.disabled=false;}};}
 async function signIn(){document.body.classList.add('signed-out');content.innerHTML=`<section class="panel login"><p class="eyebrow">BLACKLABEL BUSINESS</p><h2>Open your company workspace.</h2><p class="muted">Use the private access key created by your installer.</p><form id="login-form">${field('token','Company access key','password','','required autocomplete="off"')}<div class="actions"><button>Sign in</button></div></form></section>`;bindForm('login-form',async d=>{await api('business/login','POST',d);});}
+modules.push(['integrations','Connect existing records','Preview imports and keep your existing systems in place.']);
 document.querySelector('#navigation').innerHTML=modules.map(([key,label])=>`<a href="#/${key}" data-module="${key}">${label}</a>`).join('');
 document.querySelector('#logout').onclick=async()=>{await api('business/logout','POST',{});await signIn();};
 document.querySelector('#refresh').onclick=()=>render();
 window.addEventListener('hashchange',()=>{say('');render();});
-async function render(){const current=++generation;content.onclick=null;try{settings=await api('business/settings');document.body.classList.remove('signed-out');document.querySelector('#company-name').textContent=settings.companyName;const parts=location.hash.replace(/^#\/?/,'').split('/');let key=parts[0]||'dashboard';if(!settings.onboardingComplete)key='connections';const meta=modules.find(m=>m[0]===key)||modules[0];key=meta[0];document.querySelector('#title').textContent=meta[1];document.querySelector('#subtitle').textContent=meta[2];for(const a of document.querySelectorAll('nav a'))a.classList.toggle('active',a.dataset.module===key);await views[key](parts[1]);if(current!==generation)return;}catch(error){if(error.status===401)return signIn();say(error.message,true);}}
+async function render(){const current=++generation;content.onclick=null;try{settings=await api('business/settings');document.body.classList.remove('signed-out');document.querySelector('#company-name').textContent=settings.companyName;const parts=location.hash.replace(/^#\/?/,'').split('/');let key=parts[0]||'dashboard';if(!settings.onboardingComplete)key='connections';const meta=modules.find(m=>m[0]===key)||modules[0];key=meta[0];document.querySelector('#title').textContent=meta[1];document.querySelector('#subtitle').textContent=meta[2];for(const a of document.querySelectorAll('nav a'))a.classList.toggle('active',a.dataset.module===key);await views[key](parts[1]);if(current!==generation)return;}catch(error){if(current!==generation||error.name==='AbortError')return;if(error.status===401)return signIn();say(error.message,true);}}
 const views={};
 views.connections=async()=>{
   content.innerHTML=form('company','Company',field('companyName','Company name','text',settings.companyName==='Your company'?'':settings.companyName,'required'),'Save company')
@@ -118,5 +123,9 @@ views.files=filesView(featureUi);
 views.billing=billingView(views.billing,featureUi);
 views.messaging=messagingView(featureUi);
 views.reviews=reviewsView(featureUi);
+views.integrations=integrationView(featureUi);
+views.dashboard=exceptionQueueView({ ...featureUi, reports: views.dashboard });
+views['portal-customer']=portalCustomerView(featureUi);
+views['portal-employee']=employeeView(views['portal-employee'],featureUi);
 views.industries=industriesView(featureUi);
 render();

@@ -41,17 +41,31 @@ as empty string — nothing is ever executed).
 
 | Type | What it does | Config (after templating) |
 |---|---|---|
-| `send_email` | Provider stub. Routes through the messaging `sendMessage` contract when wired; otherwise records the composed email in the execution log. | `to, subject, body` |
-| `send_sms` | Provider stub, same contract fallback as above with `channel: "sms"`. | `to, body` |
+| `send_email` | Routes through the connected messaging contract with a stable execution/action operation key; missing messaging fails visibly. | `to, subject, body` |
+| `send_sms` | Same messaging contract operation with `channel: "sms"`; a real SMS adapter is required. | `to, body` |
 | `create_task` | Real: creates a `workflows_tasks` row (this module owns tasks and implements core's `CreateTaskContract`). | `title, description?, assigneeUserId?, dueAt? \| dueInHours?, relatedEntityType?, relatedEntityId?` |
-| `update_lead_stage` | **Stub per spec**: core defines no lead-stage contract and cross-module writes are banned, so it records `{ stub: true, leadId, stage }` for the CRM module to consume once a contract exists. | `leadId, stage` |
+| `update_lead_stage` | Uses the composition-owned CRM operation and verifies the resulting lead/stage. Missing binding fails visibly. | `leadId, stage` |
 | `add_tag` | Real: idempotent `workflows_tags` row keyed by (entityType, entityId, tag); entities referenced by id string only. | `entityType, entityId, tag` |
 | `notify_user` | Real: writes a `workflows_notifications` row (surfaced at `GET /notifications`). | `userId, title, body?` |
 | `create_appointment` | Via the injected scheduling contract; **skipped** gracefully when the contract isn't wired. | `customerId, startsAt? \| startsInHours?, durationMinutes?, assigneeUserId?, serviceKey?, notes?` |
-| `create_invoice` | Placeholder via the injected billing contract; skipped when absent. | `customerId, lines[], discountBps?, discountFixedCents?, taxBps?, dueAt?, memo?` |
+| `create_invoice` | Uses the injected billing contract and a stable `workflows.action` source reference; skipped when absent. The current Billing source receipt preserves the invoice across same-input retry. | `customerId, lines[], discountBps?, discountFixedCents?, taxBps?, dueAt?, memo?` |
 | `webhook` | **Real HTTP POST** with timeout (`AbortController`) and response capture (status + first 2 KB of body). Non-2xx responses throw and are retried. | `url, headers?, timeoutMs? (default 5000), includePayload? (default true), body?` |
 
 ## Execution, logging, retries
+
+- Platform `event.id` is retained and unique per company/workflow. Concurrent or
+  later replay of that **same event ID** produces one execution. A new event ID
+  is a new occurrence; the engine does not infer business identity from a payload.
+- Each execution freezes its actions, workflow template name and retry limit.
+  Editing the recipe affects future occurrences while existing work retains its
+  original inputs. Relative task/appointment dates remain anchored to its start.
+- A database claim admits one worker. Claims expire after one minute and renew
+  before each action; abandoned work can resume on the next due tick. Attempts
+  are counted before effects so a lost finalization cannot reset the retry budget.
+- Local task/tag/notification effects, audits and their result receipt commit in
+  one transaction. Recovery after the effect but before the attempt log returns
+  that receipt instead of duplicating the business record. Known successful
+  attempt logs also prevent replay of completed actions.
 
 - Every trigger match writes a `workflows_executions` row (trigger payload
   snapshot, status, attempts) plus one `workflows_execution_actions` row per
@@ -84,6 +98,8 @@ workflows. The tenant-less `runPending()` sweep iterates tenants via core's
 
 ```
 GET    /meta                     trigger + action vocabulary
+GET    /recipes                  three bounded local business recipes
+POST   /recipes/:key/install     install once with a company user and due window
 POST   /                         create workflow
 GET    /                         list workflows
 GET    /:id                      get workflow (with actions)
@@ -122,6 +138,32 @@ contracts.createTask = workflowsCreateTaskContract(db, events); // workflows -> 
 ```
 
 ---
+
+## Included recipe presets and recovery limits
+
+The owner workspace offers **Respond to a new lead**, **Prepare approved work**
+and **Check completed job closeout**. Each creates an assigned task, an in-app
+notification and a record tag, with three attempts and a due window of 1–168
+hours. They do not send messages, book appointments or charge customers. A
+repeat install returns the existing workflow and preserves owner edits. Company
+user validation prevents assignment to another tenant. The same stable
+`recipeKey` service seam lets industry composition install its own local recipes.
+
+`GET /executions/:id` exposes committed local receipts separately from attempt
+logs. This is local recovery evidence, not provider delivery evidence. Events
+lost before the in-process bus reaches this engine are not captured by a durable
+outbox. Appointment actions pass a stable execution/action key to Scheduling's
+atomic local booking receipt: an identical retry returns the saved appointment,
+and conflicting instructions using that key return a conflict. This preserves
+the booking after a crash between its commit and Workflow's attempt log, even
+when the owner edits the recipe for future bookings. Appointment event delivery
+and calendar-provider delivery still need separate recovery proof. Arbitrary
+webhooks can have an ambiguous remote outcome after interruption; their repeated
+remote writes are not covered by local receipts. Only use them after the
+destination's recovery contract is proved. Essential module
+handoffs/notifications must remain included in their standalone purchase.
+
+Focused verification: `npx vitest run packages/workflows --maxWorkers=1 --fileParallelism=false`.
 
 ## Worked examples
 

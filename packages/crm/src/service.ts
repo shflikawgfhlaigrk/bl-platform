@@ -6,11 +6,13 @@
  *   4. emits domain events AFTER the write.
  */
 import type { Kysely } from 'kysely';
+import { DateTime } from 'luxon';
 import {
   ApiError,
   asCoreDb,
   audit,
   id,
+  getUser,
   listCustomFields,
   nowIso,
   parseCsv,
@@ -28,6 +30,7 @@ import type {
   CrmJobRow,
   CrmLeadRow,
   CrmLeadStageRow,
+  CrmNextActionCompletionRow,
   CrmNoteRow,
   CrmSourceAttributionRow,
   CrmTaggableRow,
@@ -109,7 +112,7 @@ export const ENTITY_DEFS = {
     entityType: 'crm.lead',
     searchColumns: ['name', 'email', 'phone', 'source'],
     filterColumns: ['stage', 'source', 'customer_id', 'company_id', 'owner_user_id'],
-    sortColumns: ['name', 'stage', 'value_cents', 'created_at', 'updated_at'],
+    sortColumns: ['name', 'stage', 'value_cents', 'next_action_due_at', 'created_at', 'updated_at'],
     customerLink: 'customer_id',
     createdEvent: 'crm.lead.created',
     eventIdKey: 'leadId',
@@ -330,16 +333,19 @@ async function genericUpdate(
   def: CrmEntityDef,
   entityId: string,
   patch: Record<string, unknown>,
+  expectedNextActionRevision?: number,
 ): Promise<Record<string, unknown>> {
   const before = await genericMustGet(db, tenantId, def, entityId);
   const keys = Object.keys(patch);
   if (keys.length === 0) return before;
-  await anyDb(db)
+  let update = anyDb(db)
     .updateTable(def.table)
     .set({ ...patch, updated_at: nowIso() })
     .where('tenant_id', '=', tenantId)
-    .where('id', '=', entityId)
-    .execute();
+    .where('id', '=', entityId);
+  if (expectedNextActionRevision !== undefined) update = update.where('next_action_revision', '=', expectedNextActionRevision);
+  const result = await update.executeTakeFirst();
+  if (result.numUpdatedRows !== 1n) throw ApiError.conflict('The next action changed. Refresh this lead before saving');
   const after = await genericMustGet(db, tenantId, def, entityId);
   const changed: Record<string, { from: unknown; to: unknown }> = {};
   for (const key of keys) {
@@ -594,19 +600,20 @@ export interface LeadStage {
   key: string;
   label: string;
   sort_order: number;
+  is_closed: boolean;
 }
 
 /** The tenant's configured stage list, or the defaults if none configured. */
 export async function listLeadStages(db: Db, tenantId: string): Promise<LeadStage[]> {
   const rows = await db
     .selectFrom('crm_lead_stages')
-    .select(['key', 'label', 'sort_order'])
+    .select(['key', 'label', 'sort_order', 'is_closed'])
     .where('tenant_id', '=', tenantId)
     .orderBy('sort_order')
     .orderBy('id')
     .execute();
-  if (rows.length > 0) return rows;
-  return DEFAULT_LEAD_STAGES.map((key, i) => ({ key, label: key, sort_order: i }));
+  if (rows.length > 0) return rows.map((row) => ({ ...row, is_closed: row.is_closed === 1 }));
+  return DEFAULT_LEAD_STAGES.map((key, i) => ({ key, label: key, sort_order: i, is_closed: key === 'won' || key === 'lost' }));
 }
 
 export async function leadStageKeys(db: Db, tenantId: string): Promise<string[]> {
@@ -618,7 +625,7 @@ export async function setLeadStages(
   db: Db,
   tenantId: string,
   actor: string,
-  stages: { key: string; label?: string }[],
+  stages: { key: string; label?: string; is_closed?: boolean }[],
 ): Promise<LeadStage[]> {
   if (stages.length === 0) throw ApiError.badRequest('at least one lead stage is required');
   const seen = new Set<string>();
@@ -629,7 +636,13 @@ export async function setLeadStages(
     if (seen.has(s.key)) throw ApiError.badRequest(`duplicate stage key "${s.key}"`);
     seen.add(s.key);
   }
-  await db.deleteFrom('crm_lead_stages').where('tenant_id', '=', tenantId).execute();
+  const existing = await listLeadStages(db, tenantId);
+  // Omitting the new flag preserves callers' existing closed-stage configuration.
+  const closedByKey = new Map(existing.map((stage) => [stage.key, stage.is_closed]));
+  const referenced = await db.selectFrom('crm_leads').select('stage')
+    .where('tenant_id', '=', tenantId).distinct().execute();
+  const removedInUse = referenced.map((row) => row.stage).filter((key) => !seen.has(key));
+  if (removedInUse.length) throw ApiError.conflict('Move existing leads before removing their stage', { stages: removedInUse });
   const now = nowIso();
   const rows: CrmLeadStageRow[] = stages.map((s, i) => ({
     id: id(),
@@ -637,15 +650,17 @@ export async function setLeadStages(
     key: s.key,
     label: s.label ?? s.key,
     sort_order: i,
+    is_closed: (s.is_closed ?? closedByKey.get(s.key) ?? (s.key === 'won' || s.key === 'lost')) ? 1 : 0,
     created_at: now,
   }));
-  for (const row of rows) {
-    await db.insertInto('crm_lead_stages').values(row).execute();
-  }
-  await audit(asCoreDb(db), tenantId, actor, 'crm.lead_stages.replaced', 'crm.lead_stages', tenantId, {
-    stages: rows.map((r) => r.key),
+  await db.transaction().execute(async (trx) => {
+    await trx.deleteFrom('crm_lead_stages').where('tenant_id', '=', tenantId).execute();
+    for (const row of rows) await trx.insertInto('crm_lead_stages').values(row).execute();
+    await audit(asCoreDb(trx), tenantId, actor, 'crm.lead_stages.replaced', 'crm.lead_stages', tenantId, {
+      stages: rows.map((r) => ({ key: r.key, is_closed: r.is_closed === 1 })),
+    });
   });
-  return rows.map(({ key, label, sort_order }) => ({ key, label, sort_order }));
+  return rows.map(({ key, label, sort_order, is_closed }) => ({ key, label, sort_order, is_closed: is_closed === 1 }));
 }
 
 /* ------------------------------------------------------------------ *
@@ -663,6 +678,9 @@ export interface LeadInput {
   contact_id?: string | null;
   company_id?: string | null;
   owner_user_id?: string | null;
+  next_action?: string | null;
+  next_action_due_at?: string | null;
+  expected_next_action_revision?: number;
   custom_fields?: Record<string, unknown>;
 }
 
@@ -680,6 +698,33 @@ function assertValueCents(value: number | null | undefined): void {
   }
 }
 
+async function assertLeadOwner(db: Db, tenantId: string, ownerId: string | null | undefined): Promise<void> {
+  if (ownerId != null && !(await getUser(asCoreDb(db), tenantId, ownerId))) {
+    throw ApiError.notFound('Choose an owner from this company');
+  }
+}
+
+async function assertLeadLinks(db: Db, tenantId: string, input: LeadInput): Promise<void> {
+  for (const [field, type] of [['customer_id', 'crm.customer'], ['contact_id', 'crm.contact'], ['company_id', 'crm.company']] as const) {
+    if (input[field] != null) await assertEntityExists(db, tenantId, type, input[field]!);
+  }
+}
+
+function normalizeNextAction(value: string | null | undefined): string | null {
+  if (value == null) return null;
+  const action = value.trim();
+  if (!action || action.length > 500) throw ApiError.badRequest('next_action must contain 1–500 characters');
+  return action;
+}
+
+function normalizeActionDueAt(value: string | null | undefined): string | null {
+  if (value == null) return null;
+  if (!/T.*(?:Z|[+-]\d{2}:\d{2})$/.test(value)) throw ApiError.badRequest('next_action_due_at must include a time and timezone');
+  const at = DateTime.fromISO(value, { setZone: true });
+  if (!at.isValid) throw ApiError.badRequest('next_action_due_at must be a valid ISO timestamp');
+  return at.toUTC().toISO()!;
+}
+
 export async function createLead(
   db: Db,
   events: EventBus,
@@ -689,6 +734,11 @@ export async function createLead(
 ): Promise<CrmLeadRow> {
   if (!input.name?.trim()) throw ApiError.badRequest('lead name is required');
   assertValueCents(input.value_cents);
+  await assertLeadOwner(db, tenantId, input.owner_user_id);
+  await assertLeadLinks(db, tenantId, input);
+  const nextAction = normalizeNextAction(input.next_action);
+  const dueAt = normalizeActionDueAt(input.next_action_due_at);
+  if (dueAt && !nextAction) throw ApiError.badRequest('Set a next action before its due date');
   const keys = await leadStageKeys(db, tenantId);
   const stage = input.stage ?? keys[0];
   if (!keys.includes(stage)) {
@@ -706,6 +756,9 @@ export async function createLead(
     contact_id: nn(input.contact_id),
     company_id: nn(input.company_id),
     owner_user_id: nn(input.owner_user_id),
+    next_action: nextAction,
+    next_action_due_at: dueAt,
+    next_action_revision: nextAction ? 1 : 0,
     custom_fields: custom ?? null,
   })) as unknown as CrmLeadRow;
 }
@@ -718,12 +771,34 @@ export async function updateLead(
   leadId: string,
   patch: LeadInput,
 ): Promise<CrmLeadRow> {
+  const before = (await genericMustGet(db, tenantId, ENTITY_DEFS.lead, leadId)) as unknown as CrmLeadRow;
+  if (patch.expected_next_action_revision !== undefined && patch.expected_next_action_revision !== before.next_action_revision) {
+    throw ApiError.conflict('The next action changed. Refresh this lead before saving');
+  }
+  if (patch.stage !== undefined) await assertValidStage(db, tenantId, patch.stage);
+  await assertLeadLinks(db, tenantId, patch);
+  if (patch.owner_user_id !== undefined && patch.owner_user_id !== before.owner_user_id) {
+    await assertLeadOwner(db, tenantId, patch.owner_user_id);
+  }
   const set: Record<string, unknown> = {};
   if (patch.name !== undefined) {
     if (!patch.name.trim()) throw ApiError.badRequest('lead name cannot be blank');
     set.name = patch.name.trim();
   }
   assertValueCents(patch.value_cents);
+  const nextAction = patch.next_action === undefined ? before.next_action : normalizeNextAction(patch.next_action);
+  const dueAt = patch.next_action_due_at === undefined
+    ? (nextAction ? before.next_action_due_at : null)
+    : normalizeActionDueAt(patch.next_action_due_at);
+  if (dueAt && !nextAction) throw ApiError.badRequest('Set a next action before its due date');
+  if (patch.next_action !== undefined || patch.next_action_due_at !== undefined) {
+    set.next_action = nextAction;
+    set.next_action_due_at = dueAt;
+  }
+  if (nextAction !== before.next_action || dueAt !== before.next_action_due_at ||
+    (patch.owner_user_id !== undefined && patch.owner_user_id !== before.owner_user_id)) {
+    set.next_action_revision = before.next_action_revision + 1;
+  }
   for (const k of [
     'email',
     'phone',
@@ -739,11 +814,126 @@ export async function updateLead(
   const custom = await serializeCustomFields(db, tenantId, 'crm.lead', patch.custom_fields);
   if (custom !== undefined) set.custom_fields = custom;
 
-  let lead = (await genericUpdate(db, tenantId, actor, ENTITY_DEFS.lead, leadId, set)) as unknown as CrmLeadRow;
+  const actionPatch = patch.next_action !== undefined || patch.next_action_due_at !== undefined || patch.owner_user_id !== undefined;
+  let lead = (await genericUpdate(db, tenantId, actor, ENTITY_DEFS.lead, leadId, set,
+    actionPatch ? before.next_action_revision : undefined)) as unknown as CrmLeadRow;
   if (patch.stage !== undefined && patch.stage !== lead.stage) {
     lead = await changeLeadStage(db, events, tenantId, actor, leadId, patch.stage);
   }
   return lead;
+}
+
+export const SALES_QUEUE_BUCKETS = ['all', 'overdue', 'unowned', 'no_next_action', 'no_due_date'] as const;
+export type SalesQueueBucket = (typeof SALES_QUEUE_BUCKETS)[number];
+
+/** CRM's own actionable report: no Dashboard or Workflow subscription is needed. */
+export async function listSalesQueue(
+  db: Db,
+  tenantId: string,
+  params: { page: Pagination; bucket: SalesQueueBucket; owner_user_id?: string; q?: string },
+): Promise<{
+  items: (CrmLeadRow & { owner_name: string | null; exceptions: string[]; source_record: { entity_type: string; entity_id: string; api_path: string } })[];
+  summary: { active: number; overdue: number; unowned: number; no_next_action: number; no_due_date: number; pipeline_value_cents: number };
+  generated_at: string;
+}> {
+  const generatedAt = nowIso();
+  const closedKeys = (await listLeadStages(db, tenantId)).filter((stage) => stage.is_closed).map((stage) => stage.key);
+  let base = db.selectFrom('crm_leads').where('tenant_id', '=', tenantId);
+  if (closedKeys.length) base = base.where('stage', 'not in', closedKeys);
+  if (params.owner_user_id) base = base.where('owner_user_id', '=', params.owner_user_id);
+  if (params.q?.trim()) {
+    const needle = `%${params.q.trim().toLowerCase()}%`;
+    base = base.where((eb) => eb.or(['name', 'email', 'phone', 'source', 'next_action'].map((column) =>
+      eb(eb.fn('lower', [column as 'name']), 'like', needle))));
+  }
+  const summaryRow = await base.select((eb) => [
+    eb.fn.countAll<number>().as('active'),
+    eb.fn.sum<number>(eb.case().when(eb.and([
+      eb('next_action', 'is not', null), eb('next_action_due_at', '<', generatedAt),
+    ])).then(1).else(0).end()).as('overdue'),
+    eb.fn.sum<number>(eb.case().when('owner_user_id', 'is', null).then(1).else(0).end()).as('unowned'),
+    eb.fn.sum<number>(eb.case().when('next_action', 'is', null).then(1).else(0).end()).as('no_next_action'),
+    eb.fn.sum<number>(eb.case().when(eb.and([
+      eb('next_action', 'is not', null), eb('next_action_due_at', 'is', null),
+    ])).then(1).else(0).end()).as('no_due_date'),
+    eb.fn.sum<number>('value_cents').as('pipeline_value_cents'),
+  ]).executeTakeFirstOrThrow();
+  let queue = base;
+  if (params.bucket === 'overdue') queue = queue.where('next_action', 'is not', null).where('next_action_due_at', '<', generatedAt);
+  if (params.bucket === 'unowned') queue = queue.where('owner_user_id', 'is', null);
+  if (params.bucket === 'no_next_action') queue = queue.where('next_action', 'is', null);
+  if (params.bucket === 'no_due_date') queue = queue.where('next_action', 'is not', null).where('next_action_due_at', 'is', null);
+  const rows = await queue.selectAll()
+    .orderBy((eb) => eb.case()
+      .when(eb.and([eb('next_action', 'is not', null), eb('next_action_due_at', '<', generatedAt)])).then(0)
+      .when('owner_user_id', 'is', null).then(1)
+      .when('next_action', 'is', null).then(2)
+      .when('next_action_due_at', 'is', null).then(3).else(4).end())
+    .orderBy('next_action_due_at').orderBy('created_at').orderBy('id')
+    .limit(params.page.limit).offset(params.page.offset).execute();
+  const items = await Promise.all(rows.map(async (row) => ({
+    ...row,
+    owner_name: row.owner_user_id ? (await getUser(asCoreDb(db), tenantId, row.owner_user_id))?.name ?? null : null,
+    exceptions: [
+      row.next_action && row.next_action_due_at && row.next_action_due_at < generatedAt ? 'overdue' : null,
+      !row.owner_user_id ? 'unowned' : null,
+      !row.next_action ? 'no_next_action' : null,
+      row.next_action && !row.next_action_due_at ? 'no_due_date' : null,
+    ].filter((value): value is string => value !== null),
+    source_record: { entity_type: 'crm.lead', entity_id: row.id, api_path: `/api/crm/leads/${encodeURIComponent(row.id)}` },
+  })));
+  return {
+    items,
+    summary: {
+      active: Number(summaryRow.active), overdue: Number(summaryRow.overdue ?? 0),
+      unowned: Number(summaryRow.unowned ?? 0), no_next_action: Number(summaryRow.no_next_action ?? 0),
+      no_due_date: Number(summaryRow.no_due_date ?? 0), pipeline_value_cents: Number(summaryRow.pipeline_value_cents ?? 0),
+    },
+    generated_at: generatedAt,
+  };
+}
+
+/** Receipt and revision make completion safe to retry, including after replacement. */
+export async function completeLeadNextAction(
+  db: Db,
+  events: EventBus,
+  tenantId: string,
+  actor: string,
+  leadId: string,
+  input: { idempotency_key: string; revision: number; note?: string },
+): Promise<{ receipt: CrmNextActionCompletionRow; replayed: boolean }> {
+  const note = input.note?.trim() || null;
+  const result = await db.transaction().execute(async (trx) => {
+    const prior = await trx.selectFrom('crm_next_action_completions').selectAll()
+      .where('tenant_id', '=', tenantId).where('idempotency_key', '=', input.idempotency_key).executeTakeFirst();
+    const lead = (await genericMustGet(trx, tenantId, ENTITY_DEFS.lead, leadId)) as unknown as CrmLeadRow;
+    if (prior) {
+      if (prior.lead_id !== leadId || prior.revision !== input.revision || prior.note !== note) {
+        throw ApiError.conflict('This completion key was already used for another action');
+      }
+      return { receipt: prior, replayed: true };
+    }
+    if (!lead.next_action || lead.next_action_revision !== input.revision) {
+      throw ApiError.conflict('The next action changed. Refresh this lead before completing it');
+    }
+    const completedAt = nowIso();
+    const changed = await trx.updateTable('crm_leads')
+      .set({ next_action: null, next_action_due_at: null, next_action_revision: lead.next_action_revision + 1, updated_at: completedAt })
+      .where('tenant_id', '=', tenantId).where('id', '=', leadId).where('next_action_revision', '=', input.revision).executeTakeFirst();
+    if (changed.numUpdatedRows !== 1n) throw ApiError.conflict('The next action changed. Refresh this lead before completing it');
+    const receipt: CrmNextActionCompletionRow = {
+      id: id(), tenant_id: tenantId, lead_id: leadId, idempotency_key: input.idempotency_key,
+      revision: input.revision, action: lead.next_action, due_at: lead.next_action_due_at,
+      owner_user_id: lead.owner_user_id, note, actor, created_at: completedAt,
+    };
+    await trx.insertInto('crm_next_action_completions').values(receipt).execute();
+    await audit(asCoreDb(trx), tenantId, actor, 'crm.lead.next_action_completed', 'crm.lead', leadId, { receipt });
+    await timelineWithMirror(trx, tenantId, ENTITY_DEFS.lead, lead as unknown as Record<string, unknown>,
+      'next_action_completed', actor, { receiptId: receipt.id, action: receipt.action, dueAt: receipt.due_at, note });
+    return { receipt, replayed: false };
+  });
+  if (!result.replayed) await events.emit(tenantId, 'crm.lead.next_action_completed', { leadId, receiptId: result.receipt.id });
+  return result;
 }
 
 /** Move a lead to a new stage. Emits crm.lead.stage_changed. */
@@ -1640,6 +1830,8 @@ export const CSV_COLUMNS: Record<CsvKind, readonly string[]> = {
     'contact_id',
     'company_id',
     'owner_user_id',
+    'next_action',
+    'next_action_due_at',
     'created_at',
   ],
 };
@@ -1676,6 +1868,8 @@ const IMPORTABLE: Record<CsvKind, readonly string[]> = {
     'contact_id',
     'company_id',
     'owner_user_id',
+    'next_action',
+    'next_action_due_at',
   ],
 };
 

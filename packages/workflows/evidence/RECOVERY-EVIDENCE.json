@@ -1,0 +1,39 @@
+{
+  "status": "NOT DONE",
+  "scope": "Workflow recovery/presets candidate; full product acceptance outstanding",
+  "checkedAt": "2026-10-03T18:30:54.975447+00:00",
+  "focusedChecks": {
+    "passedTests": 60,
+    "testFiles": 7,
+    "success": true,
+    "typecheck": "passed: narrowed workflow sources/tests and imported dependencies",
+    "uiSyntax": "passed",
+    "diffWhitespace": "passed"
+  },
+  "sourceSha256": {
+    "packages/workflows/src/contract.ts": "308aac7b6e64910f06faef3b33631b63122ae5264af7c818cbb7205aedce42ae",
+    "packages/workflows/src/engine.ts": "2a69f8f3090fcf73b4978a883e246961807512cd3441b2dd1193e7459dcb143a",
+    "packages/workflows/src/index.ts": "12f182418350c8bf311e5eeee7116b3e19ecbf3c006644f1072434319a2b727e",
+    "packages/workflows/src/migrations.ts": "85cf56611fc7c9c305882b1269d3c8b06f96ccacb737941f189470c00431604e",
+    "packages/workflows/src/recipes.ts": "159fe199ac87370d65e3a57628b3ae26eeceb994c44b9c9f63efba41d6551897",
+    "packages/workflows/src/router.ts": "8a3e4641d329da53d165d866e48c197636eb11035e29935950b609dee3647b60",
+    "packages/workflows/src/schema.ts": "e553fc0f598ac7a805810285f9c95c834100576f5454b4d3e3c9ff546d3f7b9a",
+    "packages/workflows/src/seed.ts": "24be85a12d9e0b487d218c9cd6f6604587622cab34b98fb39c6cb5299f370522",
+    "packages/workflows/src/service.ts": "7ac54ea37c34092ca155025880bf5dd3c5f9713d2396d383d2aec730a654b93a",
+    "packages/workflows/test/recovery-receipts.test.ts": "81622765c02e1e86890caf8fe26c265d9ebdada8750d9afd8e6b9c4060ad5966",
+    "apps/business/public/workflows.js": "06ba938f14bad9eb93f9764d3d4a9ff4329ee6c3659b06fb38857a0f62b38200",
+    "packages/workflows/README.md": "596a48d461c41b2b0c29b243a6b85b5acf43ca7c9e41a7fc03dde4b7af76df5f",
+    "packages/core/src/contracts.ts": "dd624961cc343507d9d69b8f483b03aaca087937621fdfdcb3fdf5229fd80293",
+    "packages/scheduling/src/service.ts": "c8cde1cc5dbac7c1181bc6d07d88c8ca2903ff9ee666e1d036583329169b1999",
+    "packages/scheduling/src/migrations.ts": "27e9ef2f8afd89d940114acbee8043f9a23673e254aebecfe010799f9c82a175",
+    "packages/scheduling/src/schema.ts": "b0a9065adff88c66cb7b603bac3c7ac3f0e6f30476bbf6a38fc8004bcee74837",
+    "packages/billing/src/service.ts": "3747ae1203b07779bf8844b32ce87d1fef2add9eeb94646ee9d6a837a80af82a"
+  },
+  "remaining": [
+    "Independent browser/device acceptance of preset UI",
+    "Durable delivery for source events lost before engine admission",
+    "Appointment event/calendar-provider delivery and arbitrary webhook remote crash/retry outcomes",
+    "Scale and exact artifact founder acceptance"
+  ],
+  "appointmentRecovery": "Real Scheduling contract: commit-before-attempt-log interruption; changed payload/key reuse409; subsequent owner recipe edits preserved; restarted retry returns single original appointment ID."
+}

@@ -10,7 +10,7 @@ import {
   nowIso,
   type Contracts,
   type Discount,
-  type EventBus,
+  EventBus,
   type Pagination,
   type Sort,
   type TotalsLine,
@@ -128,6 +128,8 @@ export interface QuoteWithDetails {
   quote: QuoteRow;
   lines: QuoteLineRow[];
   approvalEvents: ApprovalEventRow[];
+  /** Browser precondition for the exact customer scope currently displayed. */
+  payloadHash: string;
 }
 
 export interface ConvertQuoteResult {
@@ -157,6 +159,46 @@ export interface ConvertQuoteResult {
 /* ------------------------------------------------------------------ *
  * Internal helpers
  * ------------------------------------------------------------------ */
+
+class QuoteExpiredError extends ApiError {
+  constructor() { super(409, 'quote has expired', 'conflict'); }
+}
+
+async function withQuoteTransaction<T>(ctx: QuotingCtx, operation: (txCtx: QuotingCtx) => Promise<T>): Promise<T> {
+  const pending: { tenantId: string; type: string; payload: any }[] = [];
+  const deferred = new EventBus();
+  deferred.on('*', event => { pending.push(event); });
+  const outcome = await ctx.db.transaction().execute(async db => {
+    try { return { value: await operation({ ...ctx, db, events: deferred }) }; }
+    catch (error) {
+      // Expiration is durable even though the attempted customer action is denied.
+      if (error instanceof QuoteExpiredError) return { expired: error };
+      throw error;
+    }
+  });
+  for (const event of pending) await ctx.events.emit(event.tenantId, event.type, event.payload);
+  if ('expired' in outcome) throw outcome.expired;
+  return outcome.value as T;
+}
+
+// Keep all money-producing percentage intermediates within exact integer range.
+const MAX_MONEY_CENTS = Math.floor(Number.MAX_SAFE_INTEGER / 10000);
+function assertCents(value: number | null | undefined, label: string): void {
+  if (value != null && (!Number.isSafeInteger(value) || value < 0 || value > MAX_MONEY_CENTS)) throw ApiError.badRequest(`${label} must be safe non-negative integer cents`);
+}
+function assertBps(value: number | null | undefined, label: string): void {
+  if (value != null && (!Number.isSafeInteger(value) || value < 0 || value > 10000)) throw ApiError.badRequest(`${label} must be integer basis points from 0 to 10000`);
+}
+function validateQuoteAmounts(input: CreateQuoteInput | UpdateQuoteInput): void {
+  assertBps(input.discountBps, 'discountBps'); assertBps(input.taxBps, 'taxBps'); assertCents(input.discountFixedCents, 'discountFixedCents');
+  if (input.validUntil != null && !Number.isFinite(Date.parse(input.validUntil))) throw ApiError.badRequest('validUntil must be a valid date');
+}
+function validateLine(input: QuoteLineInput | UpdateQuoteLineInput): void {
+  assertCents(input.unitPriceCents, 'unitPriceCents'); assertCents(input.unitCostCents, 'unitCostCents');
+  assertCents(input.discountFixedCents, 'discountFixedCents'); assertBps(input.discountBps, 'discountBps');
+  if (input.quantity !== undefined && (!Number.isFinite(input.quantity) || input.quantity < 0)) throw ApiError.badRequest('quantity must be finite and non-negative');
+  if (input.description !== undefined && !input.description.trim()) throw ApiError.badRequest('line description is required');
+}
 
 async function getQuoteRow(ctx: QuotingCtx, quoteId: string): Promise<QuoteRow> {
   const quote = await ctx.db
@@ -228,6 +270,12 @@ async function loadActiveRules(ctx: QuotingCtx): Promise<ParsedPricingRule[]> {
 async function recomputeQuote(ctx: QuotingCtx, quoteId: string): Promise<QuoteRow> {
   const quote = await getQuoteRow(ctx, quoteId);
   const lines = await getQuoteLines(ctx, quoteId);
+  validateQuoteAmounts({ discountBps: quote.discount_bps, discountFixedCents: quote.discount_fixed_cents, taxBps: quote.tax_bps });
+  for (const line of lines) {
+    validateLine({ quantity: line.quantity, description: line.description, unitPriceCents: line.unit_price_cents, unitCostCents: line.unit_cost_cents, discountBps: line.discount_bps, discountFixedCents: line.discount_fixed_cents });
+    assertCents(Math.round(line.quantity * line.unit_price_cents), 'line amount');
+    assertCents(Math.round(line.quantity * line.unit_cost_cents), 'line cost');
+  }
   const rules = await loadActiveRules(ctx);
   const lineRules = rules.filter((r) => r.scope === 'line');
   const quoteRules = rules.filter((r) => r.scope === 'quote');
@@ -249,6 +297,8 @@ async function recomputeQuote(ctx: QuotingCtx, quoteId: string): Promise<QuoteRo
         effective = applyLineAction(effective, rule.action);
       }
     }
+    assertCents(effective, 'effective unit price');
+    assertCents(Math.round(line.quantity * effective), 'effective line amount');
     return effective;
   });
 
@@ -261,6 +311,7 @@ async function recomputeQuote(ctx: QuotingCtx, quoteId: string): Promise<QuoteRo
   // Post-line-discount subtotal (needed for quote-scope rule evaluation).
   const preTotals = computeTotals(totalsLines);
   const subtotalCents = preTotals.subtotalCents;
+  assertCents(subtotalCents, 'subtotal');
 
   // 2. quote-scope rules -> extra fixed discount cents.
   const quoteAttrs: RuleAttributes = {
@@ -278,6 +329,7 @@ async function recomputeQuote(ctx: QuotingCtx, quoteId: string): Promise<QuoteRo
   }
 
   const fixedCents = (quote.discount_fixed_cents ?? 0) + ruleDiscountCents;
+  assertCents(fixedCents, 'combined discount');
   const quoteDiscount: Discount | undefined =
     quote.discount_bps === null && fixedCents === 0
       ? undefined
@@ -293,6 +345,7 @@ async function recomputeQuote(ctx: QuotingCtx, quoteId: string): Promise<QuoteRo
     (a, l) => a + Math.round(l.quantity * l.unit_cost_cents),
     0,
   );
+  assertCents(totalCostCents, 'total cost');
   const revenueCents = totals.subtotalCents - totals.discountCents;
   const marginCents = revenueCents - totalCostCents;
   const marginBps = revenueCents > 0 ? Math.round((marginCents * 10000) / revenueCents) : 0;
@@ -334,11 +387,12 @@ async function recomputeQuote(ctx: QuotingCtx, quoteId: string): Promise<QuoteRo
  * so an approval can later be verified against exactly what was approved
  * (e-signature-ready).
  */
-export function quotePayloadHash(quote: QuoteRow, lines: QuoteLineRow[]): string {
+function quotePayload(quote: QuoteRow, lines: QuoteLineRow[], fullScope = true) {
   const payload = {
     id: quote.id,
     customer_id: quote.customer_id,
     title: quote.title,
+    ...(fullScope ? { notes: quote.notes, attachments: JSON.parse(quote.attachments), revision_number: quote.revision_number, supersedes_quote_id: quote.supersedes_quote_id } : {}),
     valid_until: quote.valid_until,
     discount_bps: quote.discount_bps,
     discount_fixed_cents: quote.discount_fixed_cents,
@@ -357,7 +411,32 @@ export function quotePayloadHash(quote: QuoteRow, lines: QuoteLineRow[]): string
       total_cents: l.total_cents,
     })),
   };
-  return createHash('sha256').update(JSON.stringify(payload)).digest('hex');
+  return payload;
+}
+
+export function quotePayloadHash(quote: QuoteRow, lines: QuoteLineRow[]): string {
+  return createHash('sha256').update(JSON.stringify(quotePayload(quote, lines))).digest('hex');
+}
+
+async function assertScopeEvidence(ctx: QuotingCtx, quote: QuoteRow, eventType: 'sent' | 'approved', expectedPayloadHash?: string): Promise<void> {
+  if (quote.superseded_by_quote_id) throw ApiError.conflict('Quote was superseded; review its replacement.');
+  const lines = await getQuoteLines(ctx, quote.id);
+  const currentHash = quotePayloadHash(quote, lines);
+  if (expectedPayloadHash !== undefined && expectedPayloadHash !== currentHash) throw ApiError.conflict('Quote scope changed; reload and review before deciding.');
+  const event = await ctx.db.selectFrom('quoting_approval_events').selectAll().where('tenant_id', '=', ctx.tenantId).where('quote_id', '=', quote.id)
+    .where('event_type', '=', eventType).orderBy('seq', 'desc').orderBy('id').executeTakeFirst();
+  const evidenceHash = event?.payload_schema_version === 2 ? currentHash : createHash('sha256').update(JSON.stringify(quotePayload(quote, lines, false))).digest('hex');
+  if (!event || event.payload_hash !== evidenceHash || (event.payload_schema_version === 2 && event.payload_json !== JSON.stringify(quotePayload(quote, lines)))) {
+    throw ApiError.conflict(`Quote differs from its ${eventType} scope; review is required.`);
+  }
+}
+
+/** Proves handoff still uses exactly the accepted customer scope, including notes/files. */
+export async function assertApprovedQuote(ctx: QuotingCtx, quoteId: string): Promise<QuoteWithDetails> {
+  const details = await getQuote(ctx, quoteId);
+  if (details.quote.status !== 'approved') throw ApiError.conflict('Only approved quotes can be handed off.');
+  await assertScopeEvidence(ctx, details.quote, 'approved');
+  return details;
 }
 
 async function recordApprovalEvent(
@@ -385,6 +464,8 @@ async function recordApprovalEvent(
     signer_name: extra.signerName ?? null,
     signer_ip: extra.signerIp ?? null,
     payload_hash: quotePayloadHash(quote, lines),
+    payload_schema_version: 2,
+    payload_json: JSON.stringify(quotePayload(quote, lines)),
     note: extra.note ?? null,
     created_at: nowIso(),
   };
@@ -393,12 +474,15 @@ async function recordApprovalEvent(
 }
 
 async function setQuoteStatus(ctx: QuotingCtx, quoteId: string, status: QuoteStatus): Promise<QuoteRow> {
-  await ctx.db
+  const current = await getQuoteRow(ctx, quoteId);
+  const changed = await ctx.db
     .updateTable('quoting_quotes')
     .set({ status, updated_at: nowIso() })
     .where('tenant_id', '=', ctx.tenantId)
     .where('id', '=', quoteId)
-    .execute();
+    .where('status', '=', current.status)
+    .executeTakeFirst();
+  if (changed.numUpdatedRows !== 1n) throw ApiError.conflict('Quote changed during decision; reload it.');
   return getQuoteRow(ctx, quoteId);
 }
 
@@ -407,6 +491,9 @@ async function setQuoteStatus(ctx: QuotingCtx, quoteId: string, status: QuoteSta
  * ------------------------------------------------------------------ */
 
 export async function createQuote(ctx: QuotingCtx, input: CreateQuoteInput): Promise<QuoteWithDetails> {
+  if (!ctx.db.isTransaction) return withQuoteTransaction(ctx, txCtx => createQuote(txCtx, input));
+  validateQuoteAmounts(input);
+  for (const line of input.lines ?? []) validateLine(line);
   const now = nowIso();
   const quote: QuoteRow = {
     id: id(),
@@ -431,6 +518,9 @@ export async function createQuote(ctx: QuotingCtx, input: CreateQuoteInput): Pro
     margin_bps: 0,
     converted_at: null,
     invoice_id: null,
+    revision_number: 1,
+    supersedes_quote_id: null,
+    superseded_by_quote_id: null,
     created_at: now,
     updated_at: now,
   };
@@ -477,7 +567,7 @@ export async function createQuote(ctx: QuotingCtx, input: CreateQuoteInput): Pro
     quoteId: quote.id,
     customerId: quote.customer_id,
   });
-  return { quote: updated, lines: await getQuoteLines(ctx, quote.id), approvalEvents: [] };
+  return getQuote(ctx, quote.id);
 }
 
 export async function getQuote(ctx: QuotingCtx, quoteId: string): Promise<QuoteWithDetails> {
@@ -491,7 +581,7 @@ export async function getQuote(ctx: QuotingCtx, quoteId: string): Promise<QuoteW
     .orderBy('seq')
     .orderBy('id')
     .execute();
-  return { quote, lines, approvalEvents };
+  return { quote, lines, approvalEvents, payloadHash: quotePayloadHash(quote, lines) };
 }
 
 export async function listQuotes(
@@ -522,8 +612,10 @@ export async function updateQuote(
   quoteId: string,
   patch: UpdateQuoteInput,
 ): Promise<QuoteWithDetails> {
+  if (!ctx.db.isTransaction) return withQuoteTransaction(ctx, txCtx => updateQuote(txCtx, quoteId, patch));
   const quote = await getQuoteRow(ctx, quoteId);
   assertEditable(quote);
+  validateQuoteAmounts(patch);
   const set: Partial<QuoteRow> = {};
   if (patch.customerId !== undefined) set.customer_id = patch.customerId;
   if (patch.title !== undefined) {
@@ -555,10 +647,11 @@ export async function updateQuote(
   }
   const updated = await recomputeQuote(ctx, quoteId);
   await audit(asCoreDb(ctx.db), ctx.tenantId, ctx.actor, 'quoting.quote.updated', 'quoting.quote', quoteId, patch);
-  return { quote: updated, lines: await getQuoteLines(ctx, quoteId), approvalEvents: [] };
+  return getQuote(ctx, quoteId);
 }
 
 export async function deleteQuote(ctx: QuotingCtx, quoteId: string): Promise<void> {
+  if (!ctx.db.isTransaction) return withQuoteTransaction(ctx, txCtx => deleteQuote(txCtx, quoteId));
   const quote = await getQuoteRow(ctx, quoteId);
   assertEditable(quote);
   await ctx.db
@@ -588,8 +681,10 @@ export async function addQuoteLine(
   quoteId: string,
   input: QuoteLineInput,
 ): Promise<QuoteWithDetails> {
+  if (!ctx.db.isTransaction) return withQuoteTransaction(ctx, txCtx => addQuoteLine(txCtx, quoteId, input));
   const quote = await getQuoteRow(ctx, quoteId);
   assertEditable(quote);
+  validateLine(input);
   const existing = await getQuoteLines(ctx, quoteId);
   const position = existing.length === 0 ? 0 : Math.max(...existing.map((l) => l.position)) + 1;
   const row: QuoteLineRow = {
@@ -614,7 +709,7 @@ export async function addQuoteLine(
     quoteId,
     description: row.description,
   });
-  return { quote: updated, lines: await getQuoteLines(ctx, quoteId), approvalEvents: [] };
+  return getQuote(ctx, quoteId);
 }
 
 export async function updateQuoteLine(
@@ -623,8 +718,10 @@ export async function updateQuoteLine(
   lineId: string,
   patch: UpdateQuoteLineInput,
 ): Promise<QuoteWithDetails> {
+  if (!ctx.db.isTransaction) return withQuoteTransaction(ctx, txCtx => updateQuoteLine(txCtx, quoteId, lineId, patch));
   const quote = await getQuoteRow(ctx, quoteId);
   assertEditable(quote);
+  validateLine(patch);
   const set: Partial<QuoteLineRow> = {};
   if (patch.description !== undefined) set.description = patch.description;
   if (patch.quantity !== undefined) set.quantity = patch.quantity;
@@ -653,7 +750,7 @@ export async function updateQuoteLine(
   }
   const updated = await recomputeQuote(ctx, quoteId);
   await audit(asCoreDb(ctx.db), ctx.tenantId, ctx.actor, 'quoting.quote_line.updated', 'quoting.quote_line', lineId, patch);
-  return { quote: updated, lines: await getQuoteLines(ctx, quoteId), approvalEvents: [] };
+  return getQuote(ctx, quoteId);
 }
 
 export async function deleteQuoteLine(
@@ -661,6 +758,7 @@ export async function deleteQuoteLine(
   quoteId: string,
   lineId: string,
 ): Promise<QuoteWithDetails> {
+  if (!ctx.db.isTransaction) return withQuoteTransaction(ctx, txCtx => deleteQuoteLine(txCtx, quoteId, lineId));
   const quote = await getQuoteRow(ctx, quoteId);
   assertEditable(quote);
   const result = await ctx.db
@@ -674,7 +772,7 @@ export async function deleteQuoteLine(
   await audit(asCoreDb(ctx.db), ctx.tenantId, ctx.actor, 'quoting.quote_line.deleted', 'quoting.quote_line', lineId, {
     quoteId,
   });
-  return { quote: updated, lines: await getQuoteLines(ctx, quoteId), approvalEvents: [] };
+  return getQuote(ctx, quoteId);
 }
 
 /* ------------------------------------------------------------------ *
@@ -835,6 +933,7 @@ export async function applyTemplateToQuote(
   quoteId: string,
   templateId: string,
 ): Promise<QuoteWithDetails> {
+  if (!ctx.db.isTransaction) return withQuoteTransaction(ctx, txCtx => applyTemplateToQuote(txCtx, quoteId, templateId));
   const quote = await getQuoteRow(ctx, quoteId);
   assertEditable(quote);
   const lines = await expandTemplate(ctx, templateId);
@@ -866,7 +965,7 @@ export async function applyTemplateToQuote(
     templateId,
     linesAdded: lines.length,
   });
-  return { quote: updated, lines: await getQuoteLines(ctx, quoteId), approvalEvents: [] };
+  return getQuote(ctx, quoteId);
 }
 
 /* ------------------------------------------------------------------ *
@@ -1020,6 +1119,7 @@ export async function applyDiscountToQuote(
   quoteId: string,
   discountId: string,
 ): Promise<QuoteWithDetails> {
+  if (!ctx.db.isTransaction) return withQuoteTransaction(ctx, txCtx => applyDiscountToQuote(txCtx, quoteId, discountId));
   const quote = await getQuoteRow(ctx, quoteId);
   assertEditable(quote);
   const discount = await ctx.db
@@ -1045,7 +1145,7 @@ export async function applyDiscountToQuote(
   await audit(asCoreDb(ctx.db), ctx.tenantId, ctx.actor, 'quoting.quote.discount_applied', 'quoting.quote', quoteId, {
     discountId,
   });
-  return { quote: updated, lines: await getQuoteLines(ctx, quoteId), approvalEvents: [] };
+  return getQuote(ctx, quoteId);
 }
 
 export async function createTax(ctx: QuotingCtx, input: TaxInput): Promise<TaxRow> {
@@ -1093,6 +1193,7 @@ export async function applyTaxToQuote(
   quoteId: string,
   taxId: string,
 ): Promise<QuoteWithDetails> {
+  if (!ctx.db.isTransaction) return withQuoteTransaction(ctx, txCtx => applyTaxToQuote(txCtx, quoteId, taxId));
   const quote = await getQuoteRow(ctx, quoteId);
   assertEditable(quote);
   const tax = await ctx.db
@@ -1113,7 +1214,7 @@ export async function applyTaxToQuote(
   await audit(asCoreDb(ctx.db), ctx.tenantId, ctx.actor, 'quoting.quote.tax_applied', 'quoting.quote', quoteId, {
     taxId,
   });
-  return { quote: updated, lines: await getQuoteLines(ctx, quoteId), approvalEvents: [] };
+  return getQuote(ctx, quoteId);
 }
 
 /* ------------------------------------------------------------------ *
@@ -1121,7 +1222,9 @@ export async function applyTaxToQuote(
  * ------------------------------------------------------------------ */
 
 export async function addAttachment(ctx: QuotingCtx, quoteId: string, fileId: string): Promise<QuoteRow> {
+  if (!ctx.db.isTransaction) return withQuoteTransaction(ctx, txCtx => addAttachment(txCtx, quoteId, fileId));
   const quote = await getQuoteRow(ctx, quoteId);
+  assertEditable(quote);
   const attachments = JSON.parse(quote.attachments) as string[];
   if (!attachments.includes(fileId)) attachments.push(fileId);
   await ctx.db
@@ -1137,7 +1240,9 @@ export async function addAttachment(ctx: QuotingCtx, quoteId: string, fileId: st
 }
 
 export async function removeAttachment(ctx: QuotingCtx, quoteId: string, fileId: string): Promise<QuoteRow> {
+  if (!ctx.db.isTransaction) return withQuoteTransaction(ctx, txCtx => removeAttachment(txCtx, quoteId, fileId));
   const quote = await getQuoteRow(ctx, quoteId);
+  assertEditable(quote);
   const attachments = (JSON.parse(quote.attachments) as string[]).filter((f) => f !== fileId);
   await ctx.db
     .updateTable('quoting_quotes')
@@ -1179,12 +1284,14 @@ async function expireQuote(ctx: QuotingCtx, quote: QuoteRow, note: string): Prom
 }
 
 function isPastValidUntil(quote: QuoteRow): boolean {
-  return quote.valid_until !== null && nowIso() > quote.valid_until;
+  return quote.valid_until !== null && (!Number.isFinite(Date.parse(quote.valid_until)) || Date.now() >= Date.parse(quote.valid_until));
 }
 
 export async function sendQuote(ctx: QuotingCtx, quoteId: string): Promise<QuoteWithDetails> {
+  if (!ctx.db.isTransaction) return withQuoteTransaction(ctx, txCtx => sendQuote(txCtx, quoteId));
   let quote = await getQuoteRow(ctx, quoteId);
   assertTransition(quote, 'sent');
+  if (!(await getQuoteLines(ctx, quoteId)).some(line => line.quantity > 0)) throw ApiError.badRequest('A quote needs at least one work line with a positive quantity before sharing.');
   // Final recompute so the sent snapshot reflects current rules/prices.
   await recomputeQuote(ctx, quoteId);
   quote = await setQuoteStatus(ctx, quoteId, 'sent');
@@ -1203,10 +1310,11 @@ export async function markQuoteViewed(
   quoteId: string,
   extra: { signerIp?: string } = {},
 ): Promise<QuoteWithDetails> {
+  if (!ctx.db.isTransaction) return withQuoteTransaction(ctx, txCtx => markQuoteViewed(txCtx, quoteId, extra));
   let quote = await getQuoteRow(ctx, quoteId);
   if (isPastValidUntil(quote) && (quote.status === 'sent' || quote.status === 'viewed')) {
     await expireQuote(ctx, quote, 'auto-expired on view (valid_until passed)');
-    throw ApiError.conflict('quote has expired');
+    throw new QuoteExpiredError();
   }
   assertTransition(quote, 'viewed');
   quote = await setQuoteStatus(ctx, quoteId, 'viewed');
@@ -1219,14 +1327,16 @@ export async function markQuoteViewed(
 export async function approveQuote(
   ctx: QuotingCtx,
   quoteId: string,
-  input: { signerName: string; signerIp?: string; note?: string },
+  input: { signerName: string; signerIp?: string; note?: string; expectedPayloadHash?: string },
 ): Promise<QuoteWithDetails> {
+  if (!ctx.db.isTransaction) return withQuoteTransaction(ctx, txCtx => approveQuote(txCtx, quoteId, input));
   let quote = await getQuoteRow(ctx, quoteId);
   if (isPastValidUntil(quote) && (quote.status === 'sent' || quote.status === 'viewed')) {
     await expireQuote(ctx, quote, 'auto-expired on approval attempt (valid_until passed)');
-    throw ApiError.conflict('quote has expired');
+    throw new QuoteExpiredError();
   }
   assertTransition(quote, 'approved');
+  await assertScopeEvidence(ctx, quote, 'sent', input.expectedPayloadHash);
   if (!input.signerName || input.signerName.trim() === '') {
     throw ApiError.badRequest('signerName is required to approve a quote');
   }
@@ -1250,10 +1360,16 @@ export async function approveQuote(
 export async function declineQuote(
   ctx: QuotingCtx,
   quoteId: string,
-  input: { signerName?: string; signerIp?: string; note?: string } = {},
+  input: { signerName?: string; signerIp?: string; note?: string; expectedPayloadHash?: string } = {},
 ): Promise<QuoteWithDetails> {
+  if (!ctx.db.isTransaction) return withQuoteTransaction(ctx, txCtx => declineQuote(txCtx, quoteId, input));
   let quote = await getQuoteRow(ctx, quoteId);
+  if (isPastValidUntil(quote) && (quote.status === 'sent' || quote.status === 'viewed')) {
+    await expireQuote(ctx, quote, 'auto-expired on decline attempt (valid_until passed)');
+    throw new QuoteExpiredError();
+  }
   assertTransition(quote, 'declined');
+  await assertScopeEvidence(ctx, quote, 'sent', input.expectedPayloadHash);
   quote = await setQuoteStatus(ctx, quoteId, 'declined');
   await recordApprovalEvent(ctx, quote, 'declined', input);
   await audit(asCoreDb(ctx.db), ctx.tenantId, ctx.actor, 'quoting.quote.declined', 'quoting.quote', quoteId, {
@@ -1267,10 +1383,34 @@ export async function declineQuote(
 }
 
 export async function expireQuoteManually(ctx: QuotingCtx, quoteId: string): Promise<QuoteWithDetails> {
+  if (!ctx.db.isTransaction) return withQuoteTransaction(ctx, txCtx => expireQuoteManually(txCtx, quoteId));
   const quote = await getQuoteRow(ctx, quoteId);
   assertTransition(quote, 'expired');
   await expireQuote(ctx, quote, 'manually expired');
   return getQuote(ctx, quoteId);
+}
+
+/** Start a new draft without changing a previously offered or accepted scope. */
+export async function reviseQuote(ctx: QuotingCtx, quoteId: string): Promise<QuoteWithDetails> {
+  if (!ctx.db.isTransaction) return withQuoteTransaction(ctx, txCtx => reviseQuote(txCtx, quoteId));
+  const { quote, lines } = await getQuote(ctx, quoteId);
+  if (quote.superseded_by_quote_id) return getQuote(ctx, quote.superseded_by_quote_id);
+  if (quote.status === 'draft' || quote.status === 'approved' || quote.converted_at) throw ApiError.conflict('Only unaccepted offered quotes can be revised. Accepted work needs a separate change quote.');
+  const replacement = await createQuote(ctx, { customerId: quote.customer_id, title: quote.title, notes: quote.notes ?? undefined,
+    validUntil: quote.valid_until ?? undefined, discountBps: quote.discount_bps ?? undefined,
+    discountFixedCents: quote.discount_fixed_cents ?? undefined, taxBps: quote.tax_bps ?? undefined,
+    lines: lines.map(line => ({ description: line.description, quantity: line.quantity, unitPriceCents: line.unit_price_cents,
+      unitCostCents: line.unit_cost_cents, discountBps: line.discount_bps ?? undefined,
+      discountFixedCents: line.discount_fixed_cents ?? undefined, serviceTemplateId: line.service_template_id ?? undefined })) });
+  await ctx.db.updateTable('quoting_quotes').set({ revision_number: quote.revision_number + 1, supersedes_quote_id: quote.id,
+    attachments: quote.attachments, discount_id: quote.discount_id, tax_id: quote.tax_id })
+    .where('tenant_id', '=', ctx.tenantId).where('id', '=', replacement.quote.id).execute();
+  if (quote.status === 'sent' || quote.status === 'viewed') await expireQuote(ctx, quote, 'Superseded by a new draft revision.');
+  await ctx.db.updateTable('quoting_quotes').set({ superseded_by_quote_id: replacement.quote.id, updated_at: nowIso() })
+    .where('tenant_id', '=', ctx.tenantId).where('id', '=', quote.id).execute();
+  await audit(asCoreDb(ctx.db), ctx.tenantId, ctx.actor, 'quoting.quote.revised', 'quoting.quote', quote.id, { replacementQuoteId: replacement.quote.id, revision: quote.revision_number + 1 });
+  await ctx.events.emit(ctx.tenantId, 'quoting.quote.revised', { quoteId, replacementQuoteId: replacement.quote.id });
+  return getQuote(ctx, replacement.quote.id);
 }
 
 /* ------------------------------------------------------------------ *
@@ -1299,6 +1439,7 @@ export async function convertQuote(ctx: QuotingCtx, quoteId: string): Promise<Co
   if (quote.converted_at !== null) {
     throw ApiError.conflict('quote has already been converted');
   }
+  await assertScopeEvidence(ctx, quote, 'approved');
   const lines = await getQuoteLines(ctx, quoteId);
 
   // The stored discount_cents already folds in quote-scope rule discounts,
@@ -1323,6 +1464,14 @@ export async function convertQuote(ctx: QuotingCtx, quoteId: string): Promise<Co
     totalCents: quote.total_cents,
   };
 
+  // Claim before invoking an opaque contract. A composition-owned transaction
+  // rolls this back on failure; standalone opaque failures remain stopped for
+  // reconciliation rather than risking a second invoice on automatic retry.
+  const claimedAt = nowIso();
+  const claimed = await ctx.db.updateTable('quoting_quotes').set({ converted_at: claimedAt, updated_at: claimedAt })
+    .where('tenant_id', '=', ctx.tenantId).where('id', '=', quoteId).where('status', '=', 'approved').where('converted_at', 'is', null).executeTakeFirst();
+  if (claimed.numUpdatedRows !== 1n) throw ApiError.conflict('Quote conversion is already claimed; read its receipt before retrying.');
+  await audit(asCoreDb(ctx.db), ctx.tenantId, ctx.actor, 'quoting.quote.conversion_started', 'quoting.quote', quoteId, { payloadHash: quotePayloadHash(quote, lines) });
   let invoiceId: string | null = null;
   if (ctx.contracts.createInvoice) {
     const invoice = await ctx.contracts.createInvoice.createInvoice({
@@ -1340,7 +1489,7 @@ export async function convertQuote(ctx: QuotingCtx, quoteId: string): Promise<Co
 
   await ctx.db
     .updateTable('quoting_quotes')
-    .set({ converted_at: nowIso(), invoice_id: invoiceId, updated_at: nowIso() })
+    .set({ invoice_id: invoiceId, updated_at: nowIso() })
     .where('tenant_id', '=', ctx.tenantId)
     .where('id', '=', quoteId)
     .execute();

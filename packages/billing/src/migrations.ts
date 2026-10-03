@@ -219,4 +219,31 @@ export const billingMigrations: Migration[] = [
         .columns(['tenant_id', 'subscription_id', 'period_start']).unique().execute();
     },
   },
+  {
+    name: 'billing.0003_collection_receipts',
+    up: async db => {
+      await db.schema.createTable('billing_source_receipts')
+        .addColumn('id', 'text', c => c.primaryKey()).addColumn('tenant_id', 'text', c => c.notNull())
+        .addColumn('source_entity_type', 'text', c => c.notNull()).addColumn('source_entity_id', 'text', c => c.notNull())
+        .addColumn('input_hash', 'text', c => c.notNull()).addColumn('invoice_id', 'text', c => c.notNull()).addColumn('created_at', 'text', c => c.notNull()).execute();
+      await db.schema.createIndex('billing_source_receipts_tenant_source_idx').on('billing_source_receipts').columns(['tenant_id', 'source_entity_type', 'source_entity_id']).unique().execute();
+      await db.schema.createTable('billing_payment_receipts')
+        .addColumn('id', 'text', c => c.primaryKey()).addColumn('tenant_id', 'text', c => c.notNull())
+        .addColumn('receipt_ref', 'text', c => c.notNull()).addColumn('input_hash', 'text', c => c.notNull())
+        .addColumn('invoice_id', 'text', c => c.notNull()).addColumn('payment_id', 'text', c => c.notNull()).addColumn('created_at', 'text', c => c.notNull()).execute();
+      await db.schema.createIndex('billing_payment_receipts_tenant_reference_idx').on('billing_payment_receipts').columns(['tenant_id', 'receipt_ref']).unique().execute();
+      await db.schema.createTable('billing_collection_plans')
+        .addColumn('id', 'text', c => c.primaryKey()).addColumn('tenant_id', 'text', c => c.notNull()).addColumn('invoice_id', 'text', c => c.notNull())
+        .addColumn('deposit_cents', 'integer', c => c.notNull()).addColumn('deposit_due_at', 'text').addColumn('balance_due_at', 'text')
+        .addColumn('reminders_enabled', 'integer', c => c.notNull()).addColumn('opted_out', 'integer', c => c.notNull())
+        .addColumn('created_at', 'text', c => c.notNull()).addColumn('updated_at', 'text', c => c.notNull()).execute();
+      await db.schema.createIndex('billing_collection_plans_tenant_invoice_idx').on('billing_collection_plans').columns(['tenant_id', 'invoice_id']).unique().execute();
+      await db.schema.createTable('billing_reminder_receipts')
+        .addColumn('id', 'text', c => c.primaryKey()).addColumn('tenant_id', 'text', c => c.notNull()).addColumn('invoice_id', 'text', c => c.notNull())
+        .addColumn('operation_key', 'text', c => c.notNull()).addColumn('stage', 'text', c => c.notNull()).addColumn('amount_cents', 'integer', c => c.notNull())
+        .addColumn('status', 'text', c => c.notNull()).addColumn('message', 'text').addColumn('reason', 'text').addColumn('delivery_reference', 'text')
+        .addColumn('created_at', 'text', c => c.notNull()).addColumn('updated_at', 'text', c => c.notNull()).execute();
+      await db.schema.createIndex('billing_reminder_receipts_tenant_operation_idx').on('billing_reminder_receipts').columns(['tenant_id', 'operation_key']).unique().execute();
+    },
+  },
 ];

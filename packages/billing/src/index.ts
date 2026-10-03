@@ -17,7 +17,7 @@
  */
 
 export const MODULE_KEY = 'billing' as const;
-export { getInvoice, listInvoices, createPaymentIntent } from './service';
+export { getInvoice, listInvoices, createPaymentIntent, getCollectionPlan, setCollectionPlan, prepareCollectionReminder, recordCollectionReminder, listCollectionReminders, exportPaymentsCsv } from './service';
 
 // Migrations
 export { billingMigrations } from './migrations';
@@ -67,6 +67,8 @@ export {
 } from './service';
 export type {
   BillingCtx,
+  CollectionPlanInput,
+  CollectionPlanDetails,
   InvoiceDto,
   InvoiceWithLines,
   InvoiceLineInputSvc,

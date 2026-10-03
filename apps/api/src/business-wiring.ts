@@ -1,9 +1,9 @@
 import type { Kysely } from 'kysely';
 import { ApiError, type Contracts, type EventBus } from '@blacklabel/core';
 import { ENTITY_DEFS, getEntity, listEntities, updateLead, type CrmDatabase } from '@blacklabel/crm';
-import { createSchedulingContext, listAppointments, getAppointment, type SchedulingDatabase, type SchedulingRouterOptions } from '@blacklabel/scheduling';
-import { getQuote, listQuotes, approveQuote, declineQuote, type QuotingDatabase, type QuoteWithDetails } from '@blacklabel/quoting';
-import { listInvoices, getInvoice, createPaymentIntent, defaultPaymentProviders, type BillingDatabase, type BillingRouterOptions, type InvoiceDto } from '@blacklabel/billing';
+import { createSchedulingContext, listAppointments, getAppointment, getCalendar, type SchedulingDatabase, type SchedulingRouterOptions } from '@blacklabel/scheduling';
+import { getQuote, listQuotes, approveQuote, declineQuote, quotePayloadHash, type QuotingDatabase, type QuoteWithDetails } from '@blacklabel/quoting';
+import { listInvoices, getInvoice, getCollectionPlan, setCollectionPlan, createPaymentIntent, defaultPaymentProviders, type BillingDatabase, type BillingRouterOptions, type InvoiceDto } from '@blacklabel/billing';
 import { listRequests, getRequestLink, type ReviewsDatabase } from '@blacklabel/reviews';
 import { initUpload, completeUpload, attachLink, listFiles, getFileOrThrow, readFileContent, SYSTEM_ACTOR, type FilesDatabase, type StorageProvider } from '@blacklabel/files';
 import { getAccount, type PortalCustomerProviders, type PortalQuote, type PortalCustomerDatabase } from '@blacklabel/portal-customer';
@@ -24,9 +24,15 @@ async function collect<T>(load: (page: { limit: number; offset: number }) => Pro
 const visibleQuote = (status: string) => status !== 'draft';
 const quoteView = ({ quote, lines }: QuoteWithDetails): PortalQuote => ({ id: quote.id, customerId: quote.customer_id,
   status: quote.status, totalCents: quote.total_cents, title: quote.title, expiresAt: quote.valid_until,
+  notes: quote.notes, subtotalCents: quote.subtotal_cents, discountCents: quote.discount_cents, taxCents: quote.tax_cents,
+  revisionNumber: quote.revision_number, payloadHash: quotePayloadHash(quote, lines),
   lines: lines.map((line) => ({ description: line.description, quantity: line.quantity, unitPriceCents: line.effective_unit_price_cents, totalCents: line.total_cents })) });
-const invoiceView = (invoice: InvoiceDto) => ({ id: invoice.id, customerId: invoice.customer_id, status: invoice.status,
-  totalCents: invoice.total_cents, balanceCents: Math.max(0, invoice.total_cents - invoice.paid_cents), dueAt: invoice.due_at });
+const invoiceView = async (db: Kysely<BillingDatabase>, tenantId: string, invoice: InvoiceDto) => {
+  const collection = await getCollectionPlan(db, tenantId, invoice.id);
+  return { id: invoice.id, customerId: invoice.customer_id, status: invoice.status, totalCents: invoice.total_cents,
+    balanceCents: collection.balanceCents, depositRemainingCents: collection.depositRemainingCents, depositDueAt: collection.plan?.deposit_due_at ?? null, remindersOptedOut: !!collection.plan?.opted_out,
+    dueAt: collection.plan?.balance_due_at ?? invoice.due_at };
+};
 
 /** Cross-module bindings live at composition; each module retains its own tenant-scoped storage. */
 export function businessPortalProviders(db: Kysely<any>, events: EventBus, contracts: Contracts, storage: StorageProvider,
@@ -41,14 +47,15 @@ export function businessPortalProviders(db: Kysely<any>, events: EventBus, contr
   };
   const customerInvoice = async (tenantId: string, customerId: string, invoiceId: string) => {
     const result = await getInvoice(db as Kysely<BillingDatabase>, tenantId, invoiceId);
-    return result?.invoice.customer_id === customerId && result.invoice.portal_visible && result.invoice.status !== 'draft' ? invoiceView(result.invoice) : undefined;
+    return result?.invoice.customer_id === customerId && result.invoice.portal_visible && result.invoice.status !== 'draft' ? invoiceView(db as Kysely<BillingDatabase>, tenantId, result.invoice) : undefined;
   };
   // An explicit portal.customer link is a sharing decision. A CRM link alone never exposes an internal file.
   const customerFiles = (tenantId: string, customerId: string) => collect((page) => listFiles(db as Kysely<FilesDatabase>, tenantId,
     SYSTEM_ACTOR, { entity_type: 'portal.customer', entity_id: customerId }, page, { column: 'created_at', direction: 'desc' }));
   return {
-    appointments: { listForCustomer: async (tenantId, customerId) => (await collect((page) => listAppointments(schedulingCtx, tenantId, { customerId }, page)))
-      .map((row) => ({ id: row.id, startsAt: row.starts_at, endsAt: row.ends_at, status: row.status, serviceKey: row.appointment_type_id })) },
+    appointments: { listForCustomer: async (tenantId, customerId) => Promise.all((await collect((page) => listAppointments(schedulingCtx, tenantId, { customerId }, page)))
+      .map(async (row) => ({ id: row.id, startsAt: row.starts_at, endsAt: row.ends_at, status: row.status, title: row.title,
+        timezone: (await getCalendar(schedulingCtx, tenantId, row.calendar_id)).timezone, serviceKey: row.appointment_type_id }))) },
     quotes: {
       listForCustomer: async (tenantId, customerId) => {
         const rows = await collect((page) => listQuotes(quotingCtx(tenantId), { page, filters: { customer_id: customerId } }));
@@ -60,25 +67,38 @@ export function businessPortalProviders(db: Kysely<any>, events: EventBus, contr
         const account = await getAccount(db as Kysely<PortalCustomerDatabase>, input.tenantId, input.actor.replace(/^portal:/, ''));
         if (!account || account.customer_id !== input.customerId) throw ApiError.notFound('portal account not found');
         const ctx = quotingCtx(input.tenantId, input.actor);
-        const result = input.decision === 'approved' ? await approveQuote(ctx, input.quoteId, { signerName: account.name, note: input.comment })
-          : await declineQuote(ctx, input.quoteId, { signerName: account.name, note: input.comment });
+        const result = input.decision === 'approved' ? await approveQuote(ctx, input.quoteId, { signerName: account.name, note: input.comment, expectedPayloadHash: input.expectedPayloadHash })
+          : await declineQuote(ctx, input.quoteId, { signerName: account.name, note: input.comment, expectedPayloadHash: input.expectedPayloadHash });
         const approval = result.approvalEvents.filter((event) => event.event_type === input.decision).at(-1);
         if (!approval || result.quote.status !== input.decision) throw ApiError.conflict('quote decision readback did not match');
         return { id: approval.id };
       },
     },
-    invoices: { listForCustomer: async (tenantId, customerId) => (await collect((page) => listInvoices(db as Kysely<BillingDatabase>, tenantId,
-      page, { customer_id: customerId, portal_visible: 'true' }))).filter((row) => row.status !== 'draft').map(invoiceView), getForCustomer: customerInvoice },
+    invoices: { listForCustomer: async (tenantId, customerId) => Promise.all((await collect((page) => listInvoices(db as Kysely<BillingDatabase>, tenantId,
+      page, { customer_id: customerId, portal_visible: 'true' }))).filter((row) => row.status !== 'draft').map(row => invoiceView(db as Kysely<BillingDatabase>, tenantId, row))), getForCustomer: customerInvoice,
+      setReminderOptOut: async (tenantId, customerId, invoiceId, optedOut) => {
+        if (!await customerInvoice(tenantId, customerId, invoiceId)) throw ApiError.notFound('Invoice not found.');
+        const collection = await getCollectionPlan(db as Kysely<BillingDatabase>, tenantId, invoiceId);
+        await setCollectionPlan({ db: db as Kysely<BillingDatabase>, events }, tenantId, `customer:${customerId}`, invoiceId, {
+          depositCents: collection.plan?.deposit_cents ?? 0, depositDueAt: collection.plan?.deposit_due_at ?? null,
+          balanceDueAt: collection.plan?.balance_due_at ?? null, optedOut });
+      } },
     payments: { createPaymentIntent: async (input) => {
       if (!await customerInvoice(input.tenantId, input.customerId, input.invoiceId)) throw ApiError.notFound('invoice not found');
       const registry = new Map((billing.providers ?? defaultPaymentProviders).map((provider) => [provider.key, provider]));
-      const result = await createPaymentIntent({ db: db as Kysely<BillingDatabase>, events }, registry, input.tenantId, input.invoiceId, 'manual');
+      const result = await createPaymentIntent({ db: db as Kysely<BillingDatabase>, events }, registry, input.tenantId, input.invoiceId, 'manual', input.purpose ?? 'balance');
       if (result.amountCents !== input.amountCents) throw ApiError.conflict('invoice balance changed; reload it before payment');
       return { id: result.intentId, provider: result.provider, invoiceId: input.invoiceId, amountCents: result.amountCents,
         currency: 'usd', status: result.status, clientSecret: result.clientSecret, instructions: result.instructions };
     } },
-    jobs: { listForCustomer: async (tenantId, customerId) => (await collect((page) => listEntities(db as Kysely<CrmDatabase>, tenantId,
-      ENTITY_DEFS.job, { page, filters: { customer_id: customerId } }))).map((row) => ({ id: String(row.id), title: String(row.title), status: String(row.status), updatedAt: String(row.updated_at) })) },
+    jobs: {
+      listForCustomer: async (tenantId, customerId) => (await collect((page) => listEntities(db as Kysely<CrmDatabase>, tenantId,
+        ENTITY_DEFS.job, { page, filters: { customer_id: customerId } }))).map((row) => ({ id: String(row.id), title: String(row.title), status: String(row.status), updatedAt: String(row.updated_at) })),
+      getForCustomer: async (tenantId, customerId, jobId) => {
+        const row = await getEntity(db as Kysely<CrmDatabase>, tenantId, ENTITY_DEFS.job, jobId);
+        return row?.customer_id === customerId ? { id: String(row.id), title: String(row.title), status: String(row.status), updatedAt: String(row.updated_at) } : undefined;
+      },
+    },
     reviews: { listPendingForCustomer: async (tenantId, customerId) => {
       const rows = await collect((page) => listRequests(db as Kysely<ReviewsDatabase>, tenantId, { customerId }, page));
       return Promise.all(rows.filter((row) => !['completed', 'opted_out'].includes(row.status)).map(async (row) => ({ id: row.id,

@@ -69,6 +69,8 @@ export interface MessagingConversationRow {
   last_message_at: string | null;
   created_at: string;
   updated_at: string;
+  /** Optimistic ownership/composer revision; defaults to zero for old rows. */
+  revision?: number;
 }
 
 export interface MessagingMessageRow {
@@ -141,6 +143,18 @@ export interface MessagingAssignmentRow {
   created_at: string;
 }
 
+export interface MessagingInboundReceiptRow {
+  id: string;
+  tenant_id: string;
+  provider: string;
+  channel: ChannelType;
+  provider_event_id: string;
+  request_hash: string;
+  message_id: string | null;
+  conversation_id: string | null;
+  created_at: string;
+}
+
 export interface MessagingDatabase extends CoreDatabase {
   messaging_operations: {
     id: string;
@@ -155,4 +169,5 @@ export interface MessagingDatabase extends CoreDatabase {
   messaging_templates: MessagingTemplateRow;
   messaging_participants: MessagingParticipantRow;
   messaging_assignments: MessagingAssignmentRow;
+  messaging_inbound_receipts: MessagingInboundReceiptRow;
 }

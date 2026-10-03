@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { DateTime } from 'luxon';
 import type { Kysely } from 'kysely';
 import {
@@ -12,7 +13,7 @@ import {
   type CreateInvoiceContract,
   type CreateInvoiceInput,
   type Discount,
-  type EventBus,
+  EventBus,
   type Pagination,
   type Sort,
 } from '@blacklabel/core';
@@ -25,6 +26,8 @@ import type {
   BillingPaymentRow,
   BillingSubscriptionRow,
   BillingWebhookEventRow,
+  BillingCollectionPlanRow,
+  BillingReminderRow,
   InvoiceStatus,
   MembershipStatus,
   SubscriptionInterval,
@@ -41,6 +44,30 @@ export interface BillingCtx {
   events: EventBus;
   deferredEvents?: { type: string; payload: Record<string, unknown> }[];
 }
+
+async function withBillingTransaction<T>(ctx: BillingCtx, tenantId: string, operation: (txCtx: BillingCtx) => Promise<T>): Promise<T> {
+  const pending: { type: string; payload: any }[] = [];
+  const deferred = new EventBus(); deferred.on('*', event => { pending.push(event); });
+  const result = await ctx.db.transaction().execute(async db => operation({ ...ctx, db, events: deferred }));
+  for (const event of pending) await ctx.events.emit(tenantId, event.type, event.payload);
+  return result;
+}
+const MAX_CENTS = Math.floor(Number.MAX_SAFE_INTEGER / 10000);
+function validateCents(value: number | undefined | null, label: string): void {
+  if (value != null && (!Number.isSafeInteger(value) || value < 0 || value > MAX_CENTS)) throw ApiError.badRequest(`${label} must be safe non-negative integer cents`);
+}
+function validateBps(value: number | undefined | null, label: string): void {
+  if (value != null && (!Number.isSafeInteger(value) || value < 0 || value > 10000)) throw ApiError.badRequest(`${label} must be integer basis points from 0 to 10000`);
+}
+function validateInvoiceAmounts(lines: InvoiceLineInputSvc[], discountBps?: number | null, fixedCents?: number | null, taxBps?: number | null): void {
+  validateBps(discountBps, 'discountBps'); validateBps(taxBps, 'taxBps'); validateCents(fixedCents, 'discountFixedCents');
+  for (const line of lines) {
+    if (!line.description?.trim() || !Number.isFinite(line.quantity) || line.quantity <= 0) throw ApiError.badRequest('Work lines require a description and positive finite quantity.');
+    validateCents(line.unitPriceCents, 'unitPriceCents'); validateBps(line.discountBps, 'line discountBps'); validateCents(line.discountFixedCents, 'line discountFixedCents');
+    validateCents(Math.round(line.quantity * line.unitPriceCents), 'line amount');
+  }
+}
+const fingerprint = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 
 /** Invoice with the 0/1 portal flag converted to a boolean at the service boundary. */
 export type InvoiceDto = Omit<BillingInvoiceRow, 'portal_visible'> & { portal_visible: boolean };
@@ -152,6 +179,7 @@ export async function createInvoice(
   actor: string,
   input: CreateInvoiceInputSvc,
 ): Promise<InvoiceWithLines> {
+  if (!ctx.db.isTransaction) return withBillingTransaction(ctx, tenantId, txCtx => createInvoice(txCtx, tenantId, actor, input));
   if (!input.customerId || input.customerId.trim() === '') {
     throw ApiError.badRequest('customerId is required');
   }
@@ -160,9 +188,10 @@ export async function createInvoice(
   }
   if (input.billingAccountId) {
     const account = await getBillingAccount(ctx.db, tenantId, input.billingAccountId);
-    if (!account) throw ApiError.badRequest(`unknown billing account: ${input.billingAccountId}`);
+    if (!account || account.customer_id !== input.customerId) throw ApiError.badRequest(`billing account does not belong to this customer: ${input.billingAccountId}`);
   }
 
+  validateInvoiceAmounts(input.lines, input.discountBps, input.discountFixedCents, input.taxBps);
   // Shared math with quoting: core computeTotals (line discounts -> invoice
   // discount -> tax; Math.round each step; never below 0).
   const totals = computeTotals(
@@ -177,6 +206,7 @@ export async function createInvoice(
     },
   );
 
+  validateCents(totals.subtotalCents, 'subtotal');
   const now = nowIso();
   const invoice: BillingInvoiceRow = {
     id: id(),
@@ -326,17 +356,19 @@ export async function updateInvoice(
   invoiceId: string,
   patch: UpdateInvoiceInputSvc,
 ): Promise<InvoiceWithLines> {
+  if (!ctx.db.isTransaction) return withBillingTransaction(ctx, tenantId, txCtx => updateInvoice(txCtx, tenantId, actor, invoiceId, patch));
   const existing = await getInvoiceRow(ctx.db, tenantId, invoiceId);
   if (!existing) throw ApiError.notFound(`invoice not found: ${invoiceId}`);
   if (existing.status !== 'draft') {
     throw ApiError.conflict(`only draft invoices can be edited (status: ${existing.status})`);
   }
+  if (existing.source_entity_type === 'quoting.quote' && [patch.lines, patch.discountBps, patch.discountFixedCents, patch.taxBps].some(value => value !== undefined)) throw ApiError.conflict('Accepted quote pricing requires a separately approved change quote.');
   if (patch.lines !== undefined && patch.lines.length === 0) {
     throw ApiError.badRequest('an invoice needs at least one line item');
   }
   if (patch.billingAccountId) {
     const account = await getBillingAccount(ctx.db, tenantId, patch.billingAccountId);
-    if (!account) throw ApiError.badRequest(`unknown billing account: ${patch.billingAccountId}`);
+    if (!account || account.customer_id !== existing.customer_id) throw ApiError.badRequest(`billing account does not belong to this customer: ${patch.billingAccountId}`);
   }
 
   const now = nowIso();
@@ -366,6 +398,7 @@ export async function updateInvoice(
     }));
   }
 
+  validateInvoiceAmounts(lineInputs, discountBps, discountFixedCents, taxBps);
   const totals = computeTotals(
     lineInputs.map((l) => ({
       quantity: l.quantity,
@@ -375,6 +408,7 @@ export async function updateInvoice(
     { discount: toDiscount(discountBps, discountFixedCents), taxBps: taxBps ?? undefined },
   );
 
+  validateCents(totals.subtotalCents, 'subtotal');
   if (patch.lines !== undefined) {
     await ctx.db
       .deleteFrom('billing_invoice_lines')
@@ -442,6 +476,7 @@ export async function deleteInvoice(
   actor: string,
   invoiceId: string,
 ): Promise<void> {
+  if (!ctx.db.isTransaction) return withBillingTransaction(ctx, tenantId, txCtx => deleteInvoice(txCtx, tenantId, actor, invoiceId));
   const existing = await getInvoiceRow(ctx.db, tenantId, invoiceId);
   if (!existing) throw ApiError.notFound(`invoice not found: ${invoiceId}`);
   if (existing.status !== 'draft') {
@@ -469,6 +504,7 @@ export async function sendInvoice(
   actor: string,
   invoiceId: string,
 ): Promise<InvoiceDto> {
+  if (!ctx.db.isTransaction) return withBillingTransaction(ctx, tenantId, txCtx => sendInvoice(txCtx, tenantId, actor, invoiceId));
   const existing = await getInvoiceRow(ctx.db, tenantId, invoiceId);
   if (!existing) throw ApiError.notFound(`invoice not found: ${invoiceId}`);
   if (existing.status !== 'draft') {
@@ -501,9 +537,10 @@ export async function voidInvoice(
   actor: string,
   invoiceId: string,
 ): Promise<InvoiceDto> {
+  if (!ctx.db.isTransaction) return withBillingTransaction(ctx, tenantId, txCtx => voidInvoice(txCtx, tenantId, actor, invoiceId));
   const existing = await getInvoiceRow(ctx.db, tenantId, invoiceId);
   if (!existing) throw ApiError.notFound(`invoice not found: ${invoiceId}`);
-  if (existing.status === 'paid') throw ApiError.conflict('a paid invoice cannot be voided');
+  if (existing.paid_cents > 0) throw ApiError.conflict('Reconcile recorded payments before voiding this invoice.');
   if (existing.status === 'void') throw ApiError.conflict('invoice is already void');
   const now = nowIso();
   await ctx.db
@@ -515,6 +552,7 @@ export async function voidInvoice(
   await audit(asCoreDb(ctx.db), tenantId, actor, 'billing.invoice.voided', 'billing.invoice', invoiceId, {
     number: existing.number,
   });
+  await suppressPreparedReminders(ctx, tenantId, actor, invoiceId, 'void');
   await ctx.events.emit(tenantId, 'billing.invoice.voided', {
     invoiceId,
     customerId: existing.customer_id,
@@ -564,11 +602,14 @@ export interface RecordPaymentInputSvc {
   providerRef?: string;
   note?: string;
   receivedAt?: string;
+  /** Stable reference from the actual offline receipt; retries cannot count it twice. */
+  receiptRef?: string;
 }
 
 export interface RecordPaymentResult {
   payment: BillingPaymentRow;
   invoice: InvoiceDto;
+  replayed?: boolean;
 }
 
 interface RecordPaymentOptions {
@@ -588,14 +629,27 @@ export async function recordPayment(
   input: RecordPaymentInputSvc,
   options: RecordPaymentOptions = {},
 ): Promise<RecordPaymentResult> {
+  if (!ctx.db.isTransaction) return withBillingTransaction(ctx, tenantId, txCtx => recordPayment(txCtx, tenantId, actor, invoiceId, input, options));
   const invoice = await getInvoiceRow(ctx.db, tenantId, invoiceId);
   if (!invoice) throw ApiError.notFound(`invoice not found: ${invoiceId}`);
+  const receiptRef = input.receiptRef?.trim();
+  if (input.receiptRef !== undefined && !receiptRef) throw ApiError.badRequest('receiptRef cannot be blank');
+  const inputHash = fingerprint({ invoiceId, amountCents: input.amountCents, method: input.method ?? 'manual', note: input.note ?? null, receivedAt: input.receivedAt ?? null });
+  if (receiptRef) {
+    const prior = await ctx.db.selectFrom('billing_payment_receipts').selectAll().where('tenant_id', '=', tenantId).where('receipt_ref', '=', receiptRef).executeTakeFirst();
+    if (prior) {
+      if (prior.invoice_id !== invoiceId || prior.input_hash !== inputHash) throw ApiError.conflict('Receipt reference already belongs to a different payment.');
+      const payment = await ctx.db.selectFrom('billing_payments').selectAll().where('tenant_id', '=', tenantId).where('id', '=', prior.payment_id).executeTakeFirst();
+      if (!payment || payment.invoice_id !== invoiceId || payment.amount_cents !== input.amountCents) throw ApiError.conflict('Payment receipt readback needs review.');
+      return { payment, invoice: toInvoiceDto(invoice), replayed: true };
+    }
+  }
   if (invoice.status === 'void') throw ApiError.conflict('cannot record a payment on a void invoice');
   if (invoice.status === 'draft') {
     throw ApiError.conflict('invoice must be sent before payments can be recorded');
   }
   if (invoice.status === 'paid') throw ApiError.conflict('invoice is already paid in full');
-  if (!Number.isInteger(input.amountCents) || input.amountCents <= 0) {
+  if (!Number.isSafeInteger(input.amountCents) || input.amountCents <= 0 || input.amountCents > MAX_CENTS) {
     throw ApiError.badRequest('amountCents must be a positive integer');
   }
 
@@ -616,6 +670,7 @@ export async function recordPayment(
   await ctx.db.insertInto('billing_payments').values(payment).execute();
 
   const paidCents = invoice.paid_cents + input.amountCents;
+  validateCents(paidCents, 'reconciled paid amount');
   const next: BillingInvoiceRow = { ...invoice, paid_cents: paidCents };
   next.status = computeInvoiceStatus(next, now);
   next.paid_at = next.status === 'paid' ? (invoice.paid_at ?? now) : invoice.paid_at;
@@ -637,7 +692,11 @@ export async function recordPayment(
     amountCents: input.amountCents,
     status: next.status,
   });
-  const result = { payment, invoice: toInvoiceDto(next) };
+  if (receiptRef) {
+    await ctx.db.insertInto('billing_payment_receipts').values({ id: id(), tenant_id: tenantId, receipt_ref: receiptRef, input_hash: inputHash, invoice_id: invoiceId, payment_id: payment.id, created_at: now }).execute();
+  }
+  await suppressPreparedReminders(ctx, tenantId, actor, invoiceId, next.status === 'paid' ? 'paid' : 'balance_changed');
+  const result = { payment, invoice: toInvoiceDto(next), replayed: false };
   if (options.emitEvents !== false) {
     await emitPaymentEvents(ctx.events, tenantId, result);
   }
@@ -670,17 +729,19 @@ export async function listPayments(
   tenantId: string,
   page: Pagination = { limit: 50, offset: 0 },
   filters: { invoice_id?: string } = {},
-): Promise<BillingPaymentRow[]> {
+): Promise<Array<BillingPaymentRow & { receipt_ref: string | null }>> {
   let query = db.selectFrom('billing_payments').selectAll().where('tenant_id', '=', tenantId);
   if (filters.invoice_id !== undefined) {
     query = query.where('invoice_id', '=', filters.invoice_id);
   }
-  return query
+  const rows = await query
     .orderBy('received_at')
     .orderBy('id')
     .limit(page.limit)
     .offset(page.offset)
     .execute();
+  const receipts = await db.selectFrom('billing_payment_receipts').selectAll().where('tenant_id', '=', tenantId).orderBy('created_at').orderBy('id').execute();
+  return rows.map(row => ({ ...row, receipt_ref: receipts.find(receipt => receipt.payment_id === row.id)?.receipt_ref ?? null }));
 }
 
 /* ------------------------------------------------------------------ *
@@ -710,6 +771,7 @@ export async function createPaymentIntent(
   tenantId: string,
   invoiceId: string,
   providerKey: string,
+  purpose: 'deposit' | 'balance' = 'balance',
 ): Promise<PaymentIntent> {
   const provider = requireProvider(providers, providerKey);
   const invoice = await getInvoiceRow(ctx.db, tenantId, invoiceId);
@@ -719,10 +781,13 @@ export async function createPaymentIntent(
   }
   const remaining = Math.max(invoice.total_cents - invoice.paid_cents, 0);
   if (remaining <= 0) throw ApiError.conflict('invoice has no remaining balance');
+  const collection = await getCollectionPlan(ctx.db, tenantId, invoiceId);
+  const amountCents = purpose === 'deposit' ? collection.depositRemainingCents : remaining;
+  if (amountCents <= 0) throw ApiError.conflict('No deposit is outstanding.');
   return provider.createPaymentIntent({
     tenantId,
     invoiceId,
-    amountCents: remaining,
+    amountCents,
     metadata: { invoiceId, invoiceNumber: invoice.number },
   });
 }
@@ -863,10 +928,11 @@ export async function convertQuoteToInvoice(
   actor: string,
   input: QuoteToInvoiceInput,
 ): Promise<InvoiceWithLines> {
+  if (!ctx.db.isTransaction) return withBillingTransaction(ctx, tenantId, txCtx => convertQuoteToInvoice(txCtx, tenantId, actor, input));
   if (!input.quoteId || input.quoteId.trim() === '') {
     throw ApiError.badRequest('quoteId is required');
   }
-  const result = await createInvoice(ctx, tenantId, actor, {
+  const result = await createInvoiceOnce(ctx, tenantId, actor, {
     customerId: input.customerId,
     billingAccountId: input.billingAccountId,
     lines: input.lines,
@@ -886,6 +952,42 @@ export async function convertQuoteToInvoice(
   return result;
 }
 
+async function createInvoiceOnce(ctx: BillingCtx, tenantId: string, actor: string, input: CreateInvoiceInputSvc): Promise<InvoiceWithLines> {
+  if (!ctx.db.isTransaction) return withBillingTransaction(ctx, tenantId, txCtx => createInvoiceOnce(txCtx, tenantId, actor, input));
+  if (!input.sourceEntityType || !input.sourceEntityId) return createInvoice(ctx, tenantId, actor, input);
+  const inputHash = fingerprint({ customerId: input.customerId, billingAccountId: input.billingAccountId ?? null,
+    lines: input.lines.map(line => ({ description: line.description, quantity: line.quantity, unitPriceCents: line.unitPriceCents, discountBps: line.discountBps ?? null, discountFixedCents: line.discountFixedCents ?? null })),
+    discountBps: input.discountBps ?? null, discountFixedCents: input.discountFixedCents ?? null, taxBps: input.taxBps ?? null,
+    dueAt: input.dueAt ?? null, memo: input.memo ?? null, portalVisible: input.portalVisible ?? false });
+  const prior = await ctx.db.selectFrom('billing_source_receipts').selectAll().where('tenant_id', '=', tenantId)
+    .where('source_entity_type', '=', input.sourceEntityType).where('source_entity_id', '=', input.sourceEntityId).executeTakeFirst();
+  if (prior) {
+    if (prior.input_hash !== inputHash) throw ApiError.conflict('Invoice source was replayed with different scope or amounts.');
+    const invoice = await getInvoice(ctx.db, tenantId, prior.invoice_id);
+    if (!invoice || invoice.invoice.customer_id !== input.customerId || invoice.invoice.source_entity_type !== input.sourceEntityType || invoice.invoice.source_entity_id !== input.sourceEntityId) throw ApiError.conflict('Invoice source receipt readback needs review.');
+    const expectedTotals = computeTotals(input.lines.map(line => ({ quantity: line.quantity, unitPriceCents: line.unitPriceCents, discount: toDiscount(line.discountBps, line.discountFixedCents) })), { discount: toDiscount(input.discountBps, input.discountFixedCents), taxBps: input.taxBps });
+    const expectedLines = input.lines.map(line => ({ description: line.description, quantity: line.quantity, unitPriceCents: line.unitPriceCents, discountBps: line.discountBps ?? null, discountFixedCents: line.discountFixedCents ?? null }));
+    const actualLines = invoice.lines.map(line => ({ description: line.description, quantity: line.quantity, unitPriceCents: line.unit_price_cents, discountBps: line.discount_bps, discountFixedCents: line.discount_fixed_cents }));
+    if (JSON.stringify(actualLines) !== JSON.stringify(expectedLines) || invoice.invoice.total_cents !== expectedTotals.totalCents || invoice.invoice.subtotal_cents !== expectedTotals.subtotalCents || invoice.invoice.discount_cents !== expectedTotals.discountCents || invoice.invoice.tax_cents !== expectedTotals.taxCents) throw ApiError.conflict('Invoice source receipt scope changed; review before retrying.');
+    return invoice;
+  }
+  const legacy = await ctx.db.selectFrom('billing_invoices').select('id').where('tenant_id', '=', tenantId)
+    .where('source_entity_type', '=', input.sourceEntityType).where('source_entity_id', '=', input.sourceEntityId).orderBy('created_at').orderBy('id').execute();
+  if (legacy.length > 1) throw ApiError.conflict('Multiple invoices already use this source; reconcile them before retrying.');
+  const result = legacy.length ? await getInvoice(ctx.db, tenantId, legacy[0].id) : await createInvoice(ctx, tenantId, actor, input);
+  if (!result) throw ApiError.conflict('Invoice source is missing.');
+  if (legacy.length) {
+    const expected = computeTotals(input.lines.map(line => ({ quantity: line.quantity, unitPriceCents: line.unitPriceCents, discount: toDiscount(line.discountBps, line.discountFixedCents) })), { discount: toDiscount(input.discountBps, input.discountFixedCents), taxBps: input.taxBps });
+    const expectedLines = input.lines.map(line => [line.description, line.quantity, line.unitPriceCents, line.discountBps ?? null, line.discountFixedCents ?? null]);
+    const actualLines = result.lines.map(line => [line.description, line.quantity, line.unit_price_cents, line.discount_bps, line.discount_fixed_cents]);
+    if (result.invoice.customer_id !== input.customerId || result.invoice.total_cents !== expected.totalCents || result.invoice.subtotal_cents !== expected.subtotalCents || result.invoice.discount_cents !== expected.discountCents || result.invoice.tax_cents !== expected.taxCents || JSON.stringify(expectedLines) !== JSON.stringify(actualLines)) throw ApiError.conflict('Earlier source invoice differs from the requested work; review before retrying.');
+  }
+  await ctx.db.insertInto('billing_source_receipts').values({ id: id(), tenant_id: tenantId, source_entity_type: input.sourceEntityType,
+    source_entity_id: input.sourceEntityId, input_hash: inputHash, invoice_id: result.invoice.id, created_at: nowIso() }).execute();
+  await audit(asCoreDb(ctx.db), tenantId, actor, 'billing.invoice.source_verified', 'billing.invoice', result.invoice.id, { sourceEntityType: input.sourceEntityType, sourceEntityId: input.sourceEntityId });
+  return result;
+}
+
 /** CreateInvoiceContract implementation (wired by apps/api into deps.contracts). */
 export function billingCreateInvoiceContract(
   db: Kysely<BillingDatabase>,
@@ -893,7 +995,7 @@ export function billingCreateInvoiceContract(
 ): CreateInvoiceContract {
   return {
     async createInvoice(input: CreateInvoiceInput): Promise<{ id: string }> {
-      const { invoice } = await createInvoice({ db, events }, input.tenantId, 'system', {
+      const { invoice } = await createInvoiceOnce({ db, events }, input.tenantId, 'system', {
         customerId: input.customerId,
         lines: input.lines.map((l) => ({
           description: l.description,
@@ -928,6 +1030,9 @@ export const INVOICE_CSV_COLUMNS = [
   'tax_cents',
   'total_cents',
   'paid_cents',
+  'balance_cents',
+  'source_entity_type',
+  'source_entity_id',
   'due_at',
   'sent_at',
   'paid_at',
@@ -947,7 +1052,7 @@ export async function exportInvoicesCsv(
     .orderBy('id')
     .execute();
   return serializeCsv(
-    rows.map((r) => ({ ...r })),
+    rows.map((r) => ({ ...r, balance_cents: Math.max(0, r.total_cents - r.paid_cents) })),
     INVOICE_CSV_COLUMNS,
   );
 }
@@ -1425,3 +1530,115 @@ export async function deleteBillingAccount(
 
 // applyDiscount is re-exported so callers see the exact shared math in one place.
 export { applyDiscount };
+
+/* ------------------------------------------------------------------ *
+ * Deposit/balance collection plans and deliberate reminder drafts
+ * ------------------------------------------------------------------ */
+export interface CollectionPlanInput {
+  depositCents: number;
+  depositDueAt?: string | null;
+  balanceDueAt?: string | null;
+  remindersEnabled?: boolean;
+  optedOut?: boolean;
+}
+export interface CollectionPlanDetails {
+  invoiceId: string;
+  plan: BillingCollectionPlanRow | null;
+  totalCents: number;
+  paidCents: number;
+  balanceCents: number;
+  depositRemainingCents: number;
+  overpaidCents: number;
+  stage: 'deposit' | 'balance' | 'settled' | 'stopped' | 'draft';
+  dueAt: string | null;
+  reminderStopReason: string | null;
+}
+export async function getCollectionPlan(db: Kysely<BillingDatabase>, tenantId: string, invoiceId: string): Promise<CollectionPlanDetails> {
+  const invoice = await getInvoiceRow(db, tenantId, invoiceId);
+  if (!invoice) throw ApiError.notFound('Invoice not found.');
+  const plan = await db.selectFrom('billing_collection_plans').selectAll().where('tenant_id', '=', tenantId).where('invoice_id', '=', invoiceId).executeTakeFirst();
+  const balanceCents = Math.max(0, invoice.total_cents - invoice.paid_cents);
+  const depositRemainingCents = Math.min(balanceCents, Math.max(0, (plan?.deposit_cents ?? 0) - invoice.paid_cents));
+  const stage = invoice.status === 'void' ? 'stopped' : balanceCents === 0 ? 'settled' : invoice.status === 'draft' ? 'draft' : depositRemainingCents > 0 ? 'deposit' : 'balance';
+  const dueAt = stage === 'deposit' ? plan?.deposit_due_at ?? null : plan?.balance_due_at ?? invoice.due_at;
+  const reminderStopReason = stage === 'stopped' ? 'void' : stage === 'settled' ? 'paid' : stage === 'draft' ? 'draft'
+    : !plan?.reminders_enabled ? 'disabled' : plan.opted_out ? 'opted_out' : null;
+  return { invoiceId, plan: plan ?? null, totalCents: invoice.total_cents, paidCents: invoice.paid_cents, balanceCents, depositRemainingCents,
+    overpaidCents: Math.max(0, invoice.paid_cents - invoice.total_cents), stage, dueAt, reminderStopReason };
+}
+
+export async function setCollectionPlan(ctx: BillingCtx, tenantId: string, actor: string, invoiceId: string, input: CollectionPlanInput): Promise<CollectionPlanDetails> {
+  if (!ctx.db.isTransaction) return withBillingTransaction(ctx, tenantId, txCtx => setCollectionPlan(txCtx, tenantId, actor, invoiceId, input));
+  const details = await getCollectionPlan(ctx.db, tenantId, invoiceId);
+  validateCents(input.depositCents, 'depositCents');
+  if (input.depositCents > details.totalCents) throw ApiError.badRequest('Deposit exceeds the approved invoice total.');
+  for (const date of [input.depositDueAt, input.balanceDueAt]) if (date != null && !Number.isFinite(Date.parse(date))) throw ApiError.badRequest('Collection due dates must be valid UTC dates.');
+  if (input.depositDueAt && input.balanceDueAt && Date.parse(input.depositDueAt) > Date.parse(input.balanceDueAt)) throw ApiError.badRequest('Balance due date must not precede the deposit.');
+  if (details.paidCents > 0 && (input.depositCents !== (details.plan?.deposit_cents ?? 0)
+    || (input.depositDueAt ?? null) !== (details.plan?.deposit_due_at ?? null) || (input.balanceDueAt ?? null) !== (details.plan?.balance_due_at ?? null))) {
+    throw ApiError.conflict('Reconciled payment terms cannot be changed; reminder preferences may still be updated.');
+  }
+  const now = nowIso();
+  const values = { deposit_cents: input.depositCents, deposit_due_at: input.depositDueAt ?? null, balance_due_at: input.balanceDueAt ?? null,
+    reminders_enabled: input.remindersEnabled === undefined ? details.plan?.reminders_enabled ?? 0 : input.remindersEnabled ? 1 : 0,
+    opted_out: input.optedOut === undefined ? details.plan?.opted_out ?? 0 : input.optedOut ? 1 : 0, updated_at: now };
+  if (details.plan) await ctx.db.updateTable('billing_collection_plans').set(values).where('tenant_id', '=', tenantId).where('id', '=', details.plan.id).execute();
+  else await ctx.db.insertInto('billing_collection_plans').values({ ...values, id: id(), tenant_id: tenantId, invoice_id: invoiceId, created_at: now }).execute();
+  await suppressPreparedReminders(ctx, tenantId, actor, invoiceId, values.opted_out ? 'opted_out' : !values.reminders_enabled ? 'disabled' : 'terms_changed');
+  await audit(asCoreDb(ctx.db), tenantId, actor, 'billing.collection.configured', 'billing.invoice', invoiceId, { depositCents: input.depositCents, remindersEnabled: !!values.reminders_enabled, optedOut: !!values.opted_out });
+  return getCollectionPlan(ctx.db, tenantId, invoiceId);
+}
+
+async function suppressPreparedReminders(ctx: BillingCtx, tenantId: string, actor: string, invoiceId: string, reason: string): Promise<void> {
+  const result = await ctx.db.updateTable('billing_reminder_receipts').set({ status: 'suppressed', reason, updated_at: nowIso() })
+    .where('tenant_id', '=', tenantId).where('invoice_id', '=', invoiceId).where('status', '=', 'prepared').executeTakeFirst();
+  if (result.numUpdatedRows) await audit(asCoreDb(ctx.db), tenantId, actor, 'billing.reminder.stopped', 'billing.invoice', invoiceId, { reason, count: Number(result.numUpdatedRows) });
+}
+
+/** Creates an inspectable draft only; never contacts the customer or claims delivery. */
+export async function prepareCollectionReminder(ctx: BillingCtx, tenantId: string, actor: string, invoiceId: string, operationKey: string): Promise<BillingReminderRow> {
+  if (!ctx.db.isTransaction) return withBillingTransaction(ctx, tenantId, txCtx => prepareCollectionReminder(txCtx, tenantId, actor, invoiceId, operationKey));
+  if (!operationKey?.trim() || operationKey.length > 160) throw ApiError.badRequest('A bounded reminder operation key is required.');
+  const details = await getCollectionPlan(ctx.db, tenantId, invoiceId);
+  const prior = await ctx.db.selectFrom('billing_reminder_receipts').selectAll().where('tenant_id', '=', tenantId).where('operation_key', '=', operationKey).executeTakeFirst();
+  if (prior) { if (prior.invoice_id !== invoiceId) throw ApiError.conflict('Reminder operation belongs to another invoice.'); return prior; }
+  const invoice = await getInvoiceRow(ctx.db, tenantId, invoiceId);
+  const amount = details.stage === 'deposit' ? details.depositRemainingCents : details.balanceCents;
+  const reason = details.reminderStopReason ?? (!details.dueAt ? 'no_due_date' : Date.parse(details.dueAt) > Date.now() ? 'not_due' : null);
+  const now = nowIso();
+  const row: BillingReminderRow = { id: id(), tenant_id: tenantId, invoice_id: invoiceId, operation_key: operationKey,
+    stage: details.stage === 'deposit' ? 'deposit' : 'balance', amount_cents: amount, status: reason ? 'suppressed' : 'prepared', reason,
+    message: reason ? null : `Invoice ${invoice!.number}: ${details.stage === 'deposit' ? 'deposit' : 'remaining balance'} of $${(amount / 100).toFixed(2)} is due. Please contact us if you need help with payment.`,
+    delivery_reference: null, created_at: now, updated_at: now };
+  await ctx.db.insertInto('billing_reminder_receipts').values(row).execute();
+  await audit(asCoreDb(ctx.db), tenantId, actor, 'billing.reminder.prepared', 'billing.reminder', row.id, { invoiceId, status: row.status, reason });
+  return row;
+}
+
+/** Explicit manual readback receipt; this operation itself does not send anything. */
+export async function recordCollectionReminder(ctx: BillingCtx, tenantId: string, actor: string, invoiceId: string, reminderId: string, deliveryReference: string): Promise<BillingReminderRow> {
+  if (!ctx.db.isTransaction) return withBillingTransaction(ctx, tenantId, txCtx => recordCollectionReminder(txCtx, tenantId, actor, invoiceId, reminderId, deliveryReference));
+  if (!deliveryReference?.trim() || deliveryReference.length > 200) throw ApiError.badRequest('Actual delivery reference is required.');
+  const row = await ctx.db.selectFrom('billing_reminder_receipts').selectAll().where('tenant_id', '=', tenantId).where('invoice_id', '=', invoiceId).where('id', '=', reminderId).executeTakeFirst();
+  if (!row) throw ApiError.notFound('Reminder not found.');
+  if (row.status === 'recorded') { if (row.delivery_reference !== deliveryReference) throw ApiError.conflict('Delivery reference already recorded.'); return row; }
+  const current = await getCollectionPlan(ctx.db, tenantId, invoiceId);
+  if (row.status !== 'prepared' || current.reminderStopReason || current.stage !== row.stage || (row.stage === 'deposit' ? current.depositRemainingCents : current.balanceCents) !== row.amount_cents) throw ApiError.conflict('Reminder stopped or its amount changed; reconcile it before recording delivery.');
+  const updated: BillingReminderRow = { ...row, status: 'recorded', delivery_reference: deliveryReference, updated_at: nowIso() };
+  await ctx.db.updateTable('billing_reminder_receipts').set({ status: updated.status, delivery_reference: deliveryReference, updated_at: updated.updated_at })
+    .where('tenant_id', '=', tenantId).where('id', '=', reminderId).execute();
+  await audit(asCoreDb(ctx.db), tenantId, actor, 'billing.reminder.recorded', 'billing.reminder', reminderId, { invoiceId, deliveryReference });
+  return updated;
+}
+
+export async function listCollectionReminders(db: Kysely<BillingDatabase>, tenantId: string, invoiceId: string): Promise<BillingReminderRow[]> {
+  await getCollectionPlan(db, tenantId, invoiceId);
+  return db.selectFrom('billing_reminder_receipts').selectAll().where('tenant_id', '=', tenantId).where('invoice_id', '=', invoiceId).orderBy('created_at').orderBy('id').execute();
+}
+
+export async function exportPaymentsCsv(db: Kysely<BillingDatabase>, tenantId: string): Promise<string> {
+  const payments = await db.selectFrom('billing_payments').selectAll().where('tenant_id', '=', tenantId).orderBy('received_at').orderBy('id').execute();
+  const receipts = await db.selectFrom('billing_payment_receipts').selectAll().where('tenant_id', '=', tenantId).orderBy('created_at').orderBy('id').execute();
+  return serializeCsv(payments.map(payment => ({ ...payment, receipt_ref: receipts.find(receipt => receipt.payment_id === payment.id)?.receipt_ref ?? null })),
+    ['id', 'invoice_id', 'amount_cents', 'method', 'status', 'receipt_ref', 'provider', 'provider_ref', 'received_at']);
+}

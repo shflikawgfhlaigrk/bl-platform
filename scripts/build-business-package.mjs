@@ -7,7 +7,7 @@ import { build } from 'esbuild';
 const root=fileURLToPath(new URL('../',import.meta.url));
 execFileSync(path.join(root,'node_modules/.bin/tsc'),['-b'],{cwd:root,stdio:'pipe'});
 const sha=b=>crypto.createHash('sha256').update(b).digest('hex');
-const {fetchNode}=await import(new URL('../../blacklabel-systems/product/scripts/fetch-node.mjs',import.meta.url));
+const {fetchNode}=await import(new URL('./runtime-node.mjs',import.meta.url));
 const node=await fetchNode('darwin-arm64');
 const sqliteVersion=JSON.parse(await fs.readFile(path.join(root,'node_modules/better-sqlite3/package.json'),'utf8')).version;
 if(sqliteVersion!=='12.11.1')throw Error('Review and pin the new SQLite native runtime before packaging.');

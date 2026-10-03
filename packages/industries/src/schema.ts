@@ -93,6 +93,11 @@ export interface IndustriesWorkflowDefinitionRow {
 }
 
 export interface IndustriesDatabase extends CoreDatabase {
+  industries_runtime_receipts: {
+    id: string; tenant_id: string; industry_key: string; component_key: string;
+    target_type: string; target_id: string | null; href: string; status: string;
+    detail: string; snapshot_json: string; created_at: string; updated_at: string;
+  };
   industries_tenant_settings: IndustriesTenantSettingsRow;
   industries_lead_stages: IndustriesLeadStageRow;
   industries_quote_templates: IndustriesQuoteTemplateRow;

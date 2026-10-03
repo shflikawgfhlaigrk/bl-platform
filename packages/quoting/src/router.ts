@@ -23,7 +23,7 @@ import * as svc from './service';
  * ------------------------------------------------------------------ */
 
 const bpsSchema = z.number().int().min(0).max(10000);
-const centsSchema = z.number().int().min(0);
+const centsSchema = z.number().int().min(0).max(Math.floor(Number.MAX_SAFE_INTEGER / 10000));
 const quantitySchema = z.number().finite().min(0);
 
 const lineInputSchema = z.object({
@@ -77,7 +77,7 @@ const pricingRuleSchema = z
     name: z.string().min(1),
     scope: z.enum(['line', 'quote']),
     conditions: z.array(ruleConditionSchema),
-    action: z.object({ type: z.string().min(1), amount: z.number().int() }),
+    action: z.object({ type: z.string().min(1), amount: z.number().int().min(-Math.floor(Number.MAX_SAFE_INTEGER / 10000)).max(Math.floor(Number.MAX_SAFE_INTEGER / 10000)) }),
     active: z.boolean().optional(),
     priority: z.number().int().optional(),
   })
@@ -137,12 +137,14 @@ const approveSchema = z.object({
   signerName: z.string().min(1),
   signerIp: z.string().optional(),
   note: z.string().optional(),
+  expectedPayloadHash: z.string().regex(/^[0-9a-f]{64}$/).optional(),
 });
 
 const declineSchema = z.object({
   signerName: z.string().optional(),
   signerIp: z.string().optional(),
   note: z.string().optional(),
+  expectedPayloadHash: z.string().regex(/^[0-9a-f]{64}$/).optional(),
 });
 
 const viewSchema = z.object({ signerIp: z.string().optional() });
@@ -270,6 +272,11 @@ export function quotingRouter(
   });
 
   /* ---------------- approval flow ---------------- */
+
+  app.post('/quotes/:id/revise', async (c) => {
+    const data = await svc.reviseQuote(ctxOf(c), c.req.param('id'));
+    return c.json({ data }, 201);
+  });
 
   app.post('/quotes/:id/send', async (c) => {
     const data = await svc.sendQuote(ctxOf(c), c.req.param('id'));

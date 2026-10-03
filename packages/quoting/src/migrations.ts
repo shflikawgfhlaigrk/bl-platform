@@ -165,4 +165,16 @@ export const quotingMigrations: Migration[] = [
       await db.schema.createIndex('quoting_conversions_tenant_quote_idx').on('quoting_conversions').columns(['tenant_id', 'quote_id']).unique().execute();
     },
   },
+  {
+    name: 'quoting.0003_immutable_scope_revisions',
+    up: async (db) => {
+      await db.schema.alterTable('quoting_quotes').addColumn('revision_number', 'integer', c => c.notNull().defaultTo(1)).execute();
+      await db.schema.alterTable('quoting_quotes').addColumn('supersedes_quote_id', 'text').execute();
+      await db.schema.alterTable('quoting_quotes').addColumn('superseded_by_quote_id', 'text').execute();
+      await db.schema.createIndex('quoting_quotes_tenant_revision_idx').on('quoting_quotes').columns(['tenant_id', 'supersedes_quote_id']).unique().execute();
+      await db.schema.alterTable('quoting_approval_events').addColumn('payload_schema_version', 'integer', c => c.notNull().defaultTo(1)).execute();
+      // Legacy hashes are preserved as legacy evidence; never invent an old scope snapshot.
+      await db.schema.alterTable('quoting_approval_events').addColumn('payload_json', 'text').execute();
+    },
+  },
 ];

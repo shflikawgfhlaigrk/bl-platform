@@ -276,4 +276,19 @@ export const schedulingMigrations: Migration[] = [
       await db.schema.createIndex('scheduling_reminders_retry_idx').on('scheduling_reminders').columns(['tenant_id', 'status', 'next_attempt_at']).execute();
     },
   },
+  {
+    name: 'scheduling.0007_appointment_contract_receipts',
+    up: async (db) => {
+      await db.schema.createTable('scheduling_appointment_receipts')
+        .addColumn('id', 'text', (c) => c.primaryKey())
+        .addColumn('tenant_id', 'text', (c) => c.notNull())
+        .addColumn('idempotency_key', 'text', (c) => c.notNull())
+        .addColumn('payload_hash', 'text', (c) => c.notNull())
+        .addColumn('appointment_id', 'text', (c) => c.notNull())
+        .addColumn('created_at', 'text', (c) => c.notNull())
+        .execute();
+      await db.schema.createIndex('scheduling_receipts_tenant_key_uq')
+        .unique().on('scheduling_appointment_receipts').columns(['tenant_id', 'idempotency_key']).execute();
+    },
+  },
 ];

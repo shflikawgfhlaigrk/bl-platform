@@ -7,6 +7,7 @@ import type {
 } from './config';
 import { getIndustryConfig } from './registry';
 import type { IndustriesDatabase } from './schema';
+import { industryRuntimeReport, type IndustryRuntimeInstaller, type IndustryRuntimeReport } from './runtime';
 
 /**
  * Tenant-scoped industry application logic.
@@ -60,6 +61,7 @@ export interface AppliedWorkflow {
 
 /** The materialized industry state for a tenant. */
 export interface AppliedIndustry {
+  runtime: IndustryRuntimeReport;
   industryKey: string;
   appliedAt: string;
   terminology: Record<string, string>;
@@ -71,6 +73,8 @@ export interface AppliedIndustry {
 }
 
 export interface ApplyIndustryOptions {
+  /** Actual module provisioning supplied by the composition root, with per-component receipts. */
+  installRuntime?: IndustryRuntimeInstaller;
   /** Emits `industries.industry.applied` after the write when provided. */
   events?: EventBus;
   /** Audit actor — a user id or "system" (default). */
@@ -136,7 +140,7 @@ async function syncKeyedTable(
  * Emits `industries.industry.applied` when `options.events` is provided and
  * writes an audit entry for every application.
  */
-export async function applyIndustry(
+async function applyIndustryOnce(
   db: Kysely<IndustriesDatabase>,
   tenantId: string,
   industryKey: string,
@@ -149,14 +153,16 @@ export async function applyIndustry(
   const actor = options.actor ?? 'system';
   const appliedAt = nowIso();
   let settingsId = '';
+  let previousIndustryKey: string | undefined;
 
   await db.transaction().execute(async (trx) => {
     const existing = await trx
       .selectFrom('industries_tenant_settings')
-      .select(['id'])
+      .select(['id','industry_key'])
       .where('tenant_id', '=', tenantId)
       .executeTakeFirst();
     if (existing) {
+      previousIndustryKey=existing.industry_key;
       settingsId = existing.id;
       await trx
         .updateTable('industries_tenant_settings')
@@ -257,6 +263,8 @@ export async function applyIndustry(
     }
   }
 
+  if(options.installRuntime)await options.installRuntime({tenantId,actor,config,previousIndustryKey});
+
   await audit(
     asCoreDb(db),
     tenantId,
@@ -276,6 +284,15 @@ export async function applyIndustry(
   const applied = await getAppliedIndustry(db, tenantId);
   // Just written inside this call — always present.
   return applied as AppliedIndustry;
+}
+
+const applications=new WeakMap<object,Set<string>>();
+/** Concurrent applies fail explicitly instead of racing or duplicating module targets. */
+export async function applyIndustry(db:Kysely<IndustriesDatabase>,tenantId:string,industryKey:string,options:ApplyIndustryOptions={}):Promise<AppliedIndustry>{
+  let active=applications.get(db);if(!active){active=new Set();applications.set(db,active);}
+  if(active.has(tenantId))throw ApiError.conflict('Industry setup is already being applied for this company.');
+  active.add(tenantId);
+  try{return await applyIndustryOnce(db,tenantId,industryKey,options);}finally{active.delete(tenantId);}
 }
 
 /** The applied industry state for a tenant, or undefined if none applied. */
@@ -327,6 +344,7 @@ export async function getAppliedIndustry(
     .execute();
 
   return {
+    runtime: await industryRuntimeReport(db,tenantId,settings.industry_key),
     industryKey: settings.industry_key,
     appliedAt: settings.applied_at,
     terminology: JSON.parse(settings.terminology) as Record<string, string>,

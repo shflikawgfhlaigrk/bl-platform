@@ -6,7 +6,7 @@ import {
   listTenants,
   nowIso,
   type Contracts,
-  type EventBus,
+  EventBus,
   type ModuleDeps,
   type PlatformEvent,
 } from '@blacklabel/core';
@@ -295,7 +295,7 @@ const ACTION_REGISTRY: Record<ActionType, ActionDefinition> = {
     run: async (config: z.infer<typeof createTaskConfig>, ctx) => {
       let dueAt = config.dueAt;
       if (!dueAt && config.dueInHours !== undefined) {
-        dueAt = DateTime.fromISO(ctx.now(), { zone: 'utc' })
+        dueAt = DateTime.fromISO(ctx.occurredAt, { zone: 'utc' })
           .plus({ hours: config.dueInHours })
           .toISO()!;
       }
@@ -370,10 +370,11 @@ const ACTION_REGISTRY: Record<ActionType, ActionDefinition> = {
       }
       const start = config.startsAt
         ? DateTime.fromISO(config.startsAt, { zone: 'utc' })
-        : DateTime.fromISO(ctx.now(), { zone: 'utc' }).plus({ hours: config.startsInHours ?? 24 });
+        : DateTime.fromISO(ctx.occurredAt, { zone: 'utc' }).plus({ hours: config.startsInHours ?? 24 });
       const end = start.plus({ minutes: config.durationMinutes });
       const result = await ctx.contracts.createAppointment.createAppointment({
         tenantId: ctx.tenantId,
+        idempotencyKey: `workflow:${ctx.executionId}:${ctx.actionId}`,
         customerId: config.customerId,
         startsAt: start.toISO()!,
         endsAt: end.toISO()!,
@@ -404,6 +405,9 @@ const ACTION_REGISTRY: Record<ActionType, ActionDefinition> = {
         taxBps: config.taxBps,
         dueAt: config.dueAt,
         memo: config.memo,
+        // Core exposes a source seam, not a processor idempotency guarantee.
+        sourceEntityType: 'workflows.action',
+        sourceEntityId: `workflow:${ctx.executionId}:${ctx.actionId}`,
       });
       return { status: 'succeeded', output: { invoiceId: result.id } };
     },
@@ -486,6 +490,7 @@ export function createWorkflowEngine(
   const contracts = deps.contracts;
   const baseBackoffMs = options.baseBackoffMs ?? 60_000;
   const clock = options.clock ?? nowIso;
+  const leaseUntil = (at = clock()) => DateTime.fromISO(at, { zone: 'utc' }).plus({ minutes: 1 }).toISO()!;
   const fetchImpl: FetchLike =
     options.fetchImpl ?? ((globalThis as { fetch?: unknown }).fetch as FetchLike);
 
@@ -515,6 +520,8 @@ export function createWorkflowEngine(
     payload: unknown,
     attempt: number,
     onlyActionIds: Set<string> | null,
+    claimToken: string,
+    claimTime: string,
   ): Promise<ActionRunReport> {
     const failedActionIds: string[] = [];
     const templateCtx: Record<string, unknown> = {
@@ -540,6 +547,11 @@ export function createWorkflowEngine(
 
     for (const action of actions) {
       if (onlyActionIds && !onlyActionIds.has(action.id)) continue;
+      const renewed = await db.updateTable('workflows_executions').set({ claim_expires_at: leaseUntil(clock() > claimTime ? clock() : claimTime) })
+        .where('tenant_id', '=', workflow.tenant_id).where('id', '=', execution.id)
+        .where('status', '=', 'retrying')
+        .where('claim_token', '=', claimToken).executeTakeFirst();
+      if (!renewed.numUpdatedRows) throw new Error('Workflow execution ownership changed; recovery will resume its saved receipts.');
       const base = {
         tenant_id: workflow.tenant_id,
         execution_id: execution.id,
@@ -556,7 +568,40 @@ export function createWorkflowEngine(
         const rawConfig = JSON.parse(action.config_json) as unknown;
         const rendered = renderConfig(rawConfig, templateCtx);
         const config = definition.configSchema.parse(rendered);
-        const outcome = await definition.run(config as never, { ...ctx, actionId: action.id });
+        // A success log can survive a crash before header finalization. Never
+        // repeat a destination operation whose committed success is already known.
+        const completed = await db.selectFrom('workflows_execution_actions').selectAll()
+          .where('tenant_id', '=', workflow.tenant_id).where('execution_id', '=', execution.id)
+          .where('action_id', '=', action.id).where('status', 'in', ['succeeded', 'skipped'])
+          .orderBy('attempt', 'desc').orderBy('id').executeTakeFirst();
+        let outcome: ActionOutcome;
+        if (completed) {
+          outcome = { status: completed.status as ActionOutcome['status'], output: completed.output_json ? JSON.parse(completed.output_json) : null };
+        } else if (['create_task', 'notify_user', 'add_tag'].includes(action.type)) {
+          const buffered = new EventBus(), emitted: PlatformEvent[] = [];
+          buffered.on('*', event => { emitted.push(event); });
+          const operationKey = `workflow:${execution.id}:${action.id}`;
+          const request = JSON.stringify({ type: action.type, config });
+          // The local business write, audit and result receipt commit together.
+          // If the process stops before the attempt log, the next worker reads
+          // this receipt rather than creating a second task/notification/tag.
+          outcome = await db.transaction().execute(async trx => {
+            const receipt = await trx.selectFrom('workflows_action_receipts').selectAll()
+              .where('tenant_id', '=', workflow.tenant_id).where('operation_key', '=', operationKey).executeTakeFirst();
+            if (receipt) {
+              if (receipt.request_json !== request) throw new Error('Saved action identity belongs to different input.');
+              return { status: receipt.status, output: receipt.output_json ? JSON.parse(receipt.output_json) : null };
+            }
+            const result = await definition.run(config as never, { ...ctx, db: trx, events: buffered, actionId: action.id });
+            await trx.insertInto('workflows_action_receipts').values({ id: id(), tenant_id: workflow.tenant_id,
+              execution_id: execution.id, action_id: action.id, operation_key: operationKey, request_json: request,
+              status: result.status, output_json: JSON.stringify(result.output ?? null), created_at: clock() }).execute();
+            return result;
+          });
+          for (const event of emitted) await events.emit(event.tenantId, event.type, event.payload);
+        } else {
+          outcome = await definition.run(config as never, { ...ctx, actionId: action.id });
+        }
         await logActionRow({
           ...base,
           status: outcome.status,
@@ -577,10 +622,12 @@ export function createWorkflowEngine(
     executionId: string,
     attempt: number,
     failedActionIds: string[],
+    claimToken: string,
+    runTime: string,
   ): Promise<void> {
-    const now = clock();
+    const now = clock() > runTime ? clock() : runTime;
     if (failedActionIds.length === 0) {
-      await db
+      const updated = await db
         .updateTable('workflows_executions')
         .set({
           status: 'succeeded',
@@ -588,10 +635,15 @@ export function createWorkflowEngine(
           next_retry_at: null,
           failed_action_ids_json: null,
           finished_at: now,
+          claim_token: null,
+          claim_expires_at: null,
         })
         .where('tenant_id', '=', workflow.tenant_id)
         .where('id', '=', executionId)
-        .execute();
+        .where('claim_token', '=', claimToken)
+        .where('status', '=', 'retrying')
+        .executeTakeFirst();
+      if (!updated.numUpdatedRows) return;
       await events.emit(workflow.tenant_id, 'workflows.execution.succeeded', {
         executionId,
         workflowId: workflow.id,
@@ -599,7 +651,7 @@ export function createWorkflowEngine(
       return;
     }
     if (attempt >= workflow.max_attempts) {
-      await db
+      const updated = await db
         .updateTable('workflows_executions')
         .set({
           status: 'failed',
@@ -607,10 +659,15 @@ export function createWorkflowEngine(
           next_retry_at: null,
           failed_action_ids_json: JSON.stringify(failedActionIds),
           finished_at: now,
+          claim_token: null,
+          claim_expires_at: null,
         })
         .where('tenant_id', '=', workflow.tenant_id)
         .where('id', '=', executionId)
-        .execute();
+        .where('claim_token', '=', claimToken)
+        .where('status', '=', 'retrying')
+        .executeTakeFirst();
+      if (!updated.numUpdatedRows) return;
       await events.emit(workflow.tenant_id, 'workflows.execution.failed', {
         executionId,
         workflowId: workflow.id,
@@ -626,9 +683,13 @@ export function createWorkflowEngine(
         next_retry_at: backoffAt(now, attempt),
         failed_action_ids_json: JSON.stringify(failedActionIds),
         finished_at: null,
+        claim_token: null,
+        claim_expires_at: null,
       })
       .where('tenant_id', '=', workflow.tenant_id)
       .where('id', '=', executionId)
+      .where('claim_token', '=', claimToken)
+      .where('status', '=', 'retrying')
       .execute();
   }
 
@@ -638,34 +699,40 @@ export function createWorkflowEngine(
       : null;
     if (!evaluateCondition(condition, event.payload)) return;
 
+    const existing = await db.selectFrom('workflows_executions').selectAll().where('tenant_id', '=', workflow.tenant_id)
+      .where('workflow_id', '=', workflow.id).where('trigger_event_id', '=', event.id).executeTakeFirst();
+    if (existing) return; // A new bus event ID is a new occurrence; replay retains the original ID.
+    const actions = await db.selectFrom('workflows_workflow_actions').selectAll()
+      .where('tenant_id', '=', workflow.tenant_id).where('workflow_id', '=', workflow.id)
+      .orderBy('position').orderBy('id').execute();
+
     const now = clock();
     const execution: WorkflowExecutionRow = {
       id: id(),
       tenant_id: workflow.tenant_id,
       workflow_id: workflow.id,
       trigger_event: event.type,
+      trigger_event_id: event.id,
+      actions_snapshot_json: JSON.stringify({ actions, name: workflow.name }),
+      retry_limit: workflow.max_attempts,
+      claim_token: null,
+      claim_expires_at: null,
       trigger_payload_json: JSON.stringify(event.payload ?? null),
       status: 'retrying', // provisional; finalizeRun sets the real status
       attempts: 0,
-      next_retry_at: null,
-      failed_action_ids_json: null,
+      next_retry_at: now,
+      failed_action_ids_json: JSON.stringify(actions.map(action => action.id)),
       started_at: now,
       finished_at: null,
       created_at: now,
     };
-    await db.insertInto('workflows_executions').values(execution).execute();
-
-    const actions = await db
-      .selectFrom('workflows_workflow_actions')
-      .selectAll()
-      .where('tenant_id', '=', workflow.tenant_id)
-      .where('workflow_id', '=', workflow.id)
-      .orderBy('position')
-      .orderBy('id')
-      .execute();
-
-    const report = await runActions(workflow, execution, actions, event.payload, 1, null);
-    await finalizeRun(workflow, execution.id, 1, report.failedActionIds);
+    try { await db.insertInto('workflows_executions').values(execution).execute(); }
+    catch (error) {
+      const winner = await db.selectFrom('workflows_executions').select('id').where('tenant_id', '=', workflow.tenant_id)
+        .where('workflow_id', '=', workflow.id).where('trigger_event_id', '=', event.id).executeTakeFirst();
+      if (winner) return; throw error;
+    }
+    await retryExecution(execution);
   }
 
   async function handleEvent(event: PlatformEvent): Promise<void> {
@@ -688,7 +755,7 @@ export function createWorkflowEngine(
   }
 
   /** Returns true when the execution was processed (retried or closed out). */
-  async function retryExecution(execution: WorkflowExecutionRow): Promise<boolean> {
+  async function retryExecution(execution: WorkflowExecutionRow, claimTime = clock()): Promise<boolean> {
     const workflow = await db
       .selectFrom('workflows_workflows')
       .selectAll()
@@ -699,7 +766,7 @@ export function createWorkflowEngine(
       // Workflow deleted since the failure — close the execution out.
       await db
         .updateTable('workflows_executions')
-        .set({ status: 'failed', next_retry_at: null, finished_at: clock() })
+        .set({ status: 'failed', next_retry_at: null, finished_at: claimTime, claim_token: null, claim_expires_at: null })
         .where('tenant_id', '=', execution.tenant_id)
         .where('id', '=', execution.id)
         .execute();
@@ -711,12 +778,31 @@ export function createWorkflowEngine(
       // re-enabled.
       return false;
     }
+    const claimToken = id();
+    const claim = await db.updateTable('workflows_executions').set({ claim_token: claimToken, claim_expires_at: leaseUntil(claimTime) })
+      .where('tenant_id', '=', execution.tenant_id).where('id', '=', execution.id).where('status', '=', 'retrying')
+      .where(eb => eb.or([eb('next_retry_at', 'is', null), eb('next_retry_at', '<=', claimTime)]))
+      .where(eb => eb.or([eb('claim_token', 'is', null), eb('claim_expires_at', '<=', claimTime)]))
+      .executeTakeFirst();
+    if (!claim.numUpdatedRows) return false;
+    // Reload after claiming: another worker may have completed an earlier
+    // attempt between the sweep's read and this atomic claim.
+    const claimed = await db.selectFrom('workflows_executions').selectAll().where('tenant_id', '=', execution.tenant_id)
+      .where('id', '=', execution.id).where('claim_token', '=', claimToken).executeTakeFirstOrThrow();
+    execution = claimed;
+    workflow.max_attempts = execution.retry_limit ?? workflow.max_attempts;
+    if (execution.attempts >= workflow.max_attempts) {
+      await db.updateTable('workflows_executions').set({ status: 'failed', next_retry_at: null,
+        claim_token: null, claim_expires_at: null, finished_at: clock() }).where('tenant_id', '=', execution.tenant_id)
+        .where('id', '=', execution.id).where('claim_token', '=', claimToken).execute();
+      return true;
+    }
     const failedIds = new Set<string>(
       execution.failed_action_ids_json
         ? (JSON.parse(execution.failed_action_ids_json) as string[])
         : [],
     );
-    const actions = await db
+    const currentActions = await db
       .selectFrom('workflows_workflow_actions')
       .selectAll()
       .where('tenant_id', '=', execution.tenant_id)
@@ -724,10 +810,17 @@ export function createWorkflowEngine(
       .orderBy('position')
       .orderBy('id')
       .execute();
+    const snapshot = execution.actions_snapshot_json ? JSON.parse(execution.actions_snapshot_json) : null;
+    const actions: WorkflowActionRow[] = snapshot ? Array.isArray(snapshot) ? snapshot : snapshot.actions : currentActions;
+    if (snapshot && !Array.isArray(snapshot)) workflow.name = snapshot.name;
     const payload = JSON.parse(execution.trigger_payload_json) as unknown;
     const attempt = execution.attempts + 1;
-    const report = await runActions(workflow, execution, actions, payload, attempt, failedIds);
-    await finalizeRun(workflow, execution.id, attempt, report.failedActionIds);
+    // Count the attempt before any action can commit. A process death after a
+    // write must consume the retry budget even when header finalization is lost.
+    await db.updateTable('workflows_executions').set({ attempts: attempt }).where('tenant_id', '=', execution.tenant_id)
+      .where('id', '=', execution.id).where('claim_token', '=', claimToken).where('status', '=', 'retrying').execute();
+    const report = await runActions(workflow, execution, actions, payload, attempt, failedIds.size ? failedIds : null, claimToken, claimTime);
+    await finalizeRun(workflow, execution.id, attempt, report.failedActionIds, claimToken, claimTime);
     return true;
   }
 
@@ -739,15 +832,14 @@ export function createWorkflowEngine(
       .selectAll()
       .where('tenant_id', '=', tenantId)
       .where('status', '=', 'retrying')
-      .where('next_retry_at', 'is not', null)
-      .where('next_retry_at', '<=', now)
+      .where(eb => eb.or([eb('next_retry_at', 'is', null), eb('next_retry_at', '<=', now)]))
       .orderBy('next_retry_at')
       .orderBy('id')
       .execute();
     const retried: string[] = [];
     for (const execution of due) {
       try {
-        if (await retryExecution(execution)) retried.push(execution.id);
+        if (await retryExecution(execution, now)) retried.push(execution.id);
       } catch {
         // Isolation: a broken retry must not stop the rest of the tick.
       }

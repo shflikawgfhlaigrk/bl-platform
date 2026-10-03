@@ -154,6 +154,16 @@ describe('quotes (quoting provider)', () => {
     expect(foreign.status).toBe(404);
   });
 
+  it('requires the displayed scope hash and rejects stale decisions without writing provider events', async () => {
+    const { ctx, provider, session } = await quoteSetup();
+    const quote = (await provider.provider.getForCustomer(ctx.tenantA, 'cust_ada', 'q1'))!; quote.payloadHash = 'a'.repeat(64);
+    expect((await api(ctx.app, ctx.tenantA, 'POST', '/me/quotes/q1/approve', {}, session)).status).toBe(400);
+    expect((await api(ctx.app, ctx.tenantA, 'POST', '/me/quotes/q1/approve', { expectedPayloadHash: 'b'.repeat(64) }, session)).status).toBe(409);
+    expect(provider.approvalCalls).toEqual([]);
+    expect((await api(ctx.app, ctx.tenantA, 'POST', '/me/quotes/q1/approve', { expectedPayloadHash: quote.payloadHash }, session)).status).toBe(200);
+    expect(provider.approvalCalls[0].expectedPayloadHash).toBe(quote.payloadHash);
+  });
+
   it('approve records an ApprovalEvent via the quoting service and emits portal_customer.quote.approved', async () => {
     const { ctx, provider, session, account } = await quoteSetup();
     const events = capture(ctx.events, 'portal_customer.quote.approved');

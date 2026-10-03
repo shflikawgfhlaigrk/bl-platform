@@ -6,6 +6,7 @@ import {
   asCoreDb,
   id,
   nowIso,
+  getUser,
   type EventBus,
   type Pagination,
   type SendMessageContract,
@@ -196,6 +197,9 @@ export interface CreateConversationInput {
 }
 
 export interface InboundMessageInput {
+  /** Stable verified adapter identity and event id. Both are required together. */
+  provider?: string;
+  providerEventId?: string;
   channel: ChannelType;
   from: string;
   to?: string;
@@ -220,6 +224,7 @@ export interface SendOutboundInput {
   body?: string;
   templateId?: string;
   variables?: Record<string, string>;
+  expectedRevision?: number;
 }
 
 export interface ConversationFilters {
@@ -493,7 +498,7 @@ export class MessagingService {
       set.updated_at = nowIso();
       const result = await this.db
         .updateTable('messaging_conversations')
-        .set(set)
+        .set({ ...set, revision: sql<number>`revision + 1` })
         .where('tenant_id', '=', tenantId)
         .where('id', '=', conversationId)
         .executeTakeFirst();
@@ -527,7 +532,7 @@ export class MessagingService {
     }
     await this.db
       .updateTable('messaging_conversations')
-      .set({ status, updated_at: nowIso() })
+      .set({ status, updated_at: nowIso(), revision: sql<number>`revision + 1` })
       .where('tenant_id', '=', tenantId)
       .where('id', '=', conversationId)
       .execute();
@@ -553,9 +558,13 @@ export class MessagingService {
     tenantId: string,
     actor: string,
     conversationId: string,
-    input: { userId: string; note?: string },
+    input: { userId: string; note?: string; expectedRevision?: number },
   ): Promise<MessagingAssignmentRow> {
-    await this.getConversationRow(tenantId, conversationId);
+    const conversation = await this.getConversationRow(tenantId, conversationId);
+    if (!await getUser(asCoreDb(this.db), tenantId, input.userId)) throw ApiError.notFound('Assignee is not a user in this company.');
+    if (input.expectedRevision !== undefined && input.expectedRevision !== (conversation.revision ?? 0)) {
+      throw ApiError.conflict('Conversation changed. Refresh before assigning it.');
+    }
     const assignment: MessagingAssignmentRow = {
       id: id(),
       tenant_id: tenantId,
@@ -565,13 +574,15 @@ export class MessagingService {
       note: input.note ?? null,
       created_at: nowIso(),
     };
-    await this.db.insertInto('messaging_assignments').values(assignment).execute();
-    await this.db
+    const changed = await this.db
       .updateTable('messaging_conversations')
-      .set({ assigned_user_id: input.userId, updated_at: nowIso() })
+      .set({ assigned_user_id: input.userId, updated_at: nowIso(), revision: sql<number>`revision + 1` })
       .where('tenant_id', '=', tenantId)
       .where('id', '=', conversationId)
-      .execute();
+      .where('revision', '=', conversation.revision ?? 0)
+      .executeTakeFirst();
+    if (!changed.numUpdatedRows) throw ApiError.conflict('Conversation ownership changed. Refresh before assigning it.');
+    await this.db.insertInto('messaging_assignments').values(assignment).execute();
     await audit(
       asCoreDb(this.db), tenantId, actor,
       'messaging.conversation.assigned', 'messaging.conversation', conversationId,
@@ -640,10 +651,41 @@ export class MessagingService {
     actor: string,
     input: InboundMessageInput,
   ): Promise<{ message: MessagingMessageRow; conversation: MessagingConversationRow }> {
+    if (input.conversationId) {
+      const target = await this.getConversationRow(tenantId, input.conversationId);
+      if (target.channel !== input.channel) throw ApiError.badRequest('Inbound channel does not match the conversation.');
+    }
+    if (!!input.provider !== !!input.providerEventId) throw ApiError.badRequest('Inbound provider and event id must be supplied together.');
+    let receiptId: string | undefined;
+    if (input.provider && input.providerEventId) {
+      const requestHash = createHash('sha256').update(JSON.stringify({ channel: input.channel, from: input.from, to: input.to ?? null,
+        subject: input.subject ?? null, body: input.body, conversationId: input.conversationId ?? null, customerId: input.customerId ?? null,
+        contactId: input.contactId ?? null, recordingUrl: input.recordingUrl ?? null, transcript: input.transcript ?? null,
+        durationSeconds: input.durationSeconds ?? null })).digest('hex');
+      const previous = await this.db.selectFrom('messaging_inbound_receipts').selectAll().where('tenant_id', '=', tenantId)
+        .where('provider', '=', input.provider).where('channel', '=', input.channel).where('provider_event_id', '=', input.providerEventId).executeTakeFirst();
+      if (previous) {
+        if (previous.request_hash !== requestHash) throw ApiError.conflict('Inbound event id belongs to different content.');
+        if (!previous.message_id || !previous.conversation_id) throw ApiError.conflict('Inbound event is still being processed. Inspect its saved receipt.');
+        return { message: await this.getMessage(tenantId, previous.message_id), conversation: await this.getConversationRow(tenantId, previous.conversation_id) };
+      }
+      receiptId = id();
+      try {
+        await this.db.insertInto('messaging_inbound_receipts').values({ id: receiptId, tenant_id: tenantId, provider: input.provider,
+          channel: input.channel, provider_event_id: input.providerEventId, request_hash: requestHash,
+          message_id: null, conversation_id: null, created_at: nowIso() }).execute();
+      } catch (error) {
+        const raced = await this.db.selectFrom('messaging_inbound_receipts').select('id').where('tenant_id', '=', tenantId)
+          .where('provider', '=', input.provider).where('channel', '=', input.channel).where('provider_event_id', '=', input.providerEventId).executeTakeFirst();
+        if (raced) throw ApiError.conflict('Inbound event is already being processed.');
+        throw error;
+      }
+    }
     let conversation: MessagingConversationRow | undefined;
 
     if (input.conversationId) {
       conversation = await this.getConversationRow(tenantId, input.conversationId);
+      if (conversation.channel !== input.channel) throw ApiError.badRequest('Inbound channel does not match the conversation.');
     } else {
       const match = await this.db
         .selectFrom('messaging_conversations as c')
@@ -684,18 +726,21 @@ export class MessagingService {
       status: 'received',
       provider_message_id: null,
       failed_reason: null,
-      recording_url: input.recordingUrl ?? null,
-      transcript: input.transcript ?? null,
-      duration_seconds: input.durationSeconds ?? null,
+      recording_url: input.channel === 'call' ? input.recordingUrl ?? null : null,
+      transcript: input.channel === 'call' ? input.transcript ?? null : null,
+      duration_seconds: input.channel === 'call' ? input.durationSeconds ?? null : null,
       seq: await this.nextMessageSeq(tenantId, conversation.id),
       created_at: now,
     };
     await this.db.insertInto('messaging_messages').values(message).execute();
+    if (receiptId) await this.db.updateTable('messaging_inbound_receipts').set({ message_id: message.id, conversation_id: conversation.id })
+      .where('tenant_id', '=', tenantId).where('id', '=', receiptId).execute();
     await this.db
       .updateTable('messaging_conversations')
       .set({
         last_message_at: now,
         updated_at: now,
+        revision: sql<number>`revision + 1`,
         // an inbound message reopens a closed conversation
         ...(conversation.status === 'closed' ? { status: 'open' as ConversationStatus } : {}),
       })
@@ -797,6 +842,19 @@ export class MessagingService {
       if (previous.status === 'queued') throw ApiError.conflict('message submission is unresolved; reconcile the provider outcome before another attempt');
       return previous;
     }
+    if (!provider && conversation.channel !== 'internal') throw new ApiError(501,
+      `The ${conversation.channel} transport is unavailable. Connect a supported provider before sending.`, 'not_connected');
+    const unresolved = await this.db.selectFrom('messaging_messages').select('id').where('tenant_id', '=', tenantId)
+      .where('conversation_id', '=', conversation.id).where('direction', '=', 'out').where('status', '=', 'queued').executeTakeFirst();
+    if (unresolved) throw ApiError.conflict('This conversation has an unresolved submission. Reconcile its existing message before sending another reply.');
+    if (conversation.assigned_user_id && actor !== 'system' && actor !== conversation.assigned_user_id) {
+      throw ApiError.forbidden('This conversation belongs to another team member. Reassign it before replying.');
+    }
+    const claimed = await this.db.updateTable('messaging_conversations')
+      .set({ revision: sql<number>`revision + 1`, updated_at: nowIso() }).where('tenant_id', '=', tenantId)
+      .where('id', '=', conversation.id).where('revision', '=', input.expectedRevision ?? conversation.revision ?? 0)
+      .where('status', '!=', 'closed').executeTakeFirst();
+    if (!claimed.numUpdatedRows) throw ApiError.conflict('Conversation changed or another reply was submitted. Refresh before replying.');
 
     const now = nowIso();
     const message: MessagingMessageRow = {
@@ -834,10 +892,10 @@ export class MessagingService {
         status = result.status === 'failed' ? 'failed' : result.status === 'sent' && result.providerMessageId ? 'sent' : 'queued';
         providerMessageId = result.providerMessageId || null;
         failedReason = status !== 'sent' ? result.detail ?? 'provider did not return a confirmed message id' : null;
-      } catch (err) {
+      } catch {
         // A timeout may have happened after acceptance. Keep the submitted operation unresolved.
         status = 'queued';
-        failedReason = err instanceof Error ? err.message : String(err);
+        failedReason = 'Provider submission outcome is unresolved. Read the saved provider record before retrying.';
       }
       await this.db.updateTable('messaging_messages').set({ status, provider_message_id: providerMessageId, failed_reason: failedReason })
         .where('tenant_id', '=', tenantId).where('id', '=', message.id).execute();
@@ -845,7 +903,8 @@ export class MessagingService {
     }
     await this.db
       .updateTable('messaging_conversations')
-      .set({ last_message_at: now, updated_at: now })
+      .set({ last_message_at: sql<string>`CASE WHEN last_message_at IS NULL OR last_message_at < ${now} THEN ${now} ELSE last_message_at END`,
+        updated_at: sql<string>`CASE WHEN updated_at < ${now} THEN ${now} ELSE updated_at END` })
       .where('tenant_id', '=', tenantId)
       .where('id', '=', conversation.id)
       .execute();
@@ -867,6 +926,11 @@ export class MessagingService {
   async getOperationMessage(tenantId: string, operationId: string): Promise<MessagingMessageRow | undefined> {
     return this.db.selectFrom('messaging_messages').selectAll()
       .where('tenant_id', '=', tenantId).where('idempotency_key', '=', operationId).executeTakeFirst();
+  }
+
+  async listInboundReceipts(tenantId: string, page: Pagination = DEFAULT_PAGE) {
+    return this.db.selectFrom('messaging_inbound_receipts').selectAll().where('tenant_id', '=', tenantId)
+      .orderBy('created_at', 'desc').orderBy('id').limit(page.limit).offset(page.offset).execute();
   }
 
   async getMessage(tenantId: string, messageId: string): Promise<MessagingMessageRow> {

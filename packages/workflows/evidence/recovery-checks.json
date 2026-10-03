@@ -1,0 +1,754 @@
+{
+  "numTotalTestSuites": 27,
+  "numPassedTestSuites": 27,
+  "numFailedTestSuites": 0,
+  "numPendingTestSuites": 0,
+  "numTotalTests": 60,
+  "numPassedTests": 60,
+  "numFailedTests": 0,
+  "numPendingTests": 0,
+  "numTodoTests": 0,
+  "snapshot": {
+    "added": 0,
+    "failure": false,
+    "filesAdded": 0,
+    "filesRemoved": 0,
+    "filesRemovedList": [],
+    "filesUnmatched": 0,
+    "filesUpdated": 0,
+    "matched": 0,
+    "total": 0,
+    "unchecked": 0,
+    "uncheckedKeysByFile": [],
+    "unmatched": 0,
+    "updated": 0,
+    "didUpdate": false
+  },
+  "startTime": 1791052220061,
+  "success": true,
+  "testResults": [
+    {
+      "assertionResults": [
+        {
+          "ancestorTitles": [
+            "workflowsCreateTaskContract (core CreateTaskContract implementation)"
+          ],
+          "fullName": "workflowsCreateTaskContract (core CreateTaskContract implementation) creates a tenant-scoped task row and emits workflows.task.created",
+          "status": "passed",
+          "title": "creates a tenant-scoped task row and emits workflows.task.created",
+          "duration": 8.371499999999997,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": [
+            "workflowsCreateTaskContract (core CreateTaskContract implementation)"
+          ],
+          "fullName": "workflowsCreateTaskContract (core CreateTaskContract implementation) rejects blank titles",
+          "status": "passed",
+          "title": "rejects blank titles",
+          "duration": 1.6683749999999975,
+          "failureMessages": [],
+          "meta": {}
+        }
+      ],
+      "startTime": 1791052222004,
+      "endTime": 1791052222013.6685,
+      "status": "passed",
+      "message": "",
+      "name": "packages/workflows/test/contract.test.ts"
+    },
+    {
+      "assertionResults": [
+        {
+          "ancestorTitles": [
+            "template + condition helpers"
+          ],
+          "fullName": "template + condition helpers renderTemplate resolves dot paths and blanks missing values",
+          "status": "passed",
+          "title": "renderTemplate resolves dot paths and blanks missing values",
+          "duration": 0.5676660000000027,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": [
+            "template + condition helpers"
+          ],
+          "fullName": "template + condition helpers evaluateCondition handles eq/gt/contains/exists/not_exists",
+          "status": "passed",
+          "title": "evaluateCondition handles eq/gt/contains/exists/not_exists",
+          "duration": 0.1716249999999775,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": [
+            "trigger matching"
+          ],
+          "fullName": "trigger matching runs a matching enabled workflow and logs the execution",
+          "status": "passed",
+          "title": "runs a matching enabled workflow and logs the execution",
+          "duration": 18.342583999999988,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": [
+            "trigger matching"
+          ],
+          "fullName": "trigger matching does not run for other event types",
+          "status": "passed",
+          "title": "does not run for other event types",
+          "duration": 1.8059159999999963,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": [
+            "trigger matching"
+          ],
+          "fullName": "trigger matching does not run a disabled workflow",
+          "status": "passed",
+          "title": "does not run a disabled workflow",
+          "duration": 1.319958000000014,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": [
+            "condition filter"
+          ],
+          "fullName": "condition filter runs only when the payload condition matches",
+          "status": "passed",
+          "title": "runs only when the payload condition matches",
+          "duration": 2.8475420000000042,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": [
+            "actions"
+          ],
+          "fullName": "actions create_task writes a task row and emits workflows.task.created",
+          "status": "passed",
+          "title": "create_task writes a task row and emits workflows.task.created",
+          "duration": 2.257208999999989,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": [
+            "actions"
+          ],
+          "fullName": "actions notify_user writes a notification row",
+          "status": "passed",
+          "title": "notify_user writes a notification row",
+          "duration": 2.1479579999999885,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": [
+            "actions"
+          ],
+          "fullName": "actions add_tag writes a tag row and is idempotent across runs",
+          "status": "passed",
+          "title": "add_tag writes a tag row and is idempotent across runs",
+          "duration": 2.8332090000000107,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": [
+            "actions"
+          ],
+          "fullName": "actions update_lead_stage fails when the CRM mutation is not connected",
+          "status": "passed",
+          "title": "update_lead_stage fails when the CRM mutation is not connected",
+          "duration": 2.071666999999991,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": [
+            "actions"
+          ],
+          "fullName": "actions create_appointment goes through the injected scheduling contract",
+          "status": "passed",
+          "title": "create_appointment goes through the injected scheduling contract",
+          "duration": 2.101875000000007,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": [
+            "actions"
+          ],
+          "fullName": "actions create_appointment is skipped gracefully when the contract is absent",
+          "status": "passed",
+          "title": "create_appointment is skipped gracefully when the contract is absent",
+          "duration": 1.9586249999999836,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": [
+            "actions"
+          ],
+          "fullName": "actions create_invoice goes through the injected billing contract",
+          "status": "passed",
+          "title": "create_invoice goes through the injected billing contract",
+          "duration": 1.7959169999999745,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": [
+            "actions"
+          ],
+          "fullName": "actions send_email routes through the messaging contract when wired",
+          "status": "passed",
+          "title": "send_email routes through the messaging contract when wired",
+          "duration": 1.7768750000000182,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": [
+            "webhook action"
+          ],
+          "fullName": "webhook action POSTs JSON with the trigger payload and captures the response",
+          "status": "passed",
+          "title": "POSTs JSON with the trigger payload and captures the response",
+          "duration": 1.8764170000000036,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": [
+            "webhook action"
+          ],
+          "fullName": "webhook action treats non-2xx responses as failures (retryable) and captures the status",
+          "status": "passed",
+          "title": "treats non-2xx responses as failures (retryable) and captures the status",
+          "duration": 1.8413329999999632,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": [
+            "webhook action"
+          ],
+          "fullName": "webhook action times out and records the timeout error",
+          "status": "passed",
+          "title": "times out and records the timeout error",
+          "duration": 13.197832999999946,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": [
+            "failure isolation"
+          ],
+          "fullName": "failure isolation a failing action does not stop later actions in the same workflow",
+          "status": "passed",
+          "title": "a failing action does not stop later actions in the same workflow",
+          "duration": 1.9845420000000331,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": [
+            "failure isolation"
+          ],
+          "fullName": "failure isolation one broken workflow does not stop another workflow on the same trigger",
+          "status": "passed",
+          "title": "one broken workflow does not stop another workflow on the same trigger",
+          "duration": 1.8692499999999654,
+          "failureMessages": [],
+          "meta": {}
+        }
+      ],
+      "startTime": 1791052220359,
+      "endTime": 1791052220422.8691,
+      "status": "passed",
+      "message": "",
+      "name": "packages/workflows/test/engine.test.ts"
+    },
+    {
+      "assertionResults": [
+        {
+          "ancestorTitles": [
+            "tenant isolation \u2014 workflows"
+          ],
+          "fullName": "tenant isolation \u2014 workflows tenant B cannot read, update or delete tenant A workflows; A stays intact",
+          "status": "passed",
+          "title": "tenant B cannot read, update or delete tenant A workflows; A stays intact",
+          "duration": 13.28170799999998,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": [
+            "tenant isolation \u2014 workflows"
+          ],
+          "fullName": "tenant isolation \u2014 workflows an event for tenant A never runs tenant B's workflows (and vice versa)",
+          "status": "passed",
+          "title": "an event for tenant A never runs tenant B's workflows (and vice versa)",
+          "duration": 13.495708000000008,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": [
+            "tenant isolation \u2014 tasks, notifications, tags"
+          ],
+          "fullName": "tenant isolation \u2014 tasks, notifications, tags tasks are invisible and immutable across tenants",
+          "status": "passed",
+          "title": "tasks are invisible and immutable across tenants",
+          "duration": 3.045708999999988,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": [
+            "tenant isolation \u2014 tasks, notifications, tags"
+          ],
+          "fullName": "tenant isolation \u2014 tasks, notifications, tags run-pending for tenant B does not touch tenant A's overdue tasks or retries",
+          "status": "passed",
+          "title": "run-pending for tenant B does not touch tenant A's overdue tasks or retries",
+          "duration": 1.859375,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": [
+            "tenant isolation \u2014 tasks, notifications, tags"
+          ],
+          "fullName": "tenant isolation \u2014 tasks, notifications, tags run-pending for tenant B does not process tenant A's due execution retries",
+          "status": "passed",
+          "title": "run-pending for tenant B does not process tenant A's due execution retries",
+          "duration": 9.190874999999977,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": [
+            "tenant isolation \u2014 tasks, notifications, tags"
+          ],
+          "fullName": "tenant isolation \u2014 tasks, notifications, tags notifications and tags are tenant-scoped",
+          "status": "passed",
+          "title": "notifications and tags are tenant-scoped",
+          "duration": 2.7703750000000014,
+          "failureMessages": [],
+          "meta": {}
+        }
+      ],
+      "startTime": 1791052220623,
+      "endTime": 1791052220666.7703,
+      "status": "passed",
+      "message": "",
+      "name": "packages/workflows/test/isolation.test.ts"
+    },
+    {
+      "assertionResults": [
+        {
+          "ancestorTitles": [
+            "workflows migrations"
+          ],
+          "fullName": "workflows migrations apply on a fresh db (after core) and create the module tables",
+          "status": "passed",
+          "title": "apply on a fresh db (after core) and create the module tables",
+          "duration": 7.085000000000008,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": [
+            "workflows migrations"
+          ],
+          "fullName": "workflows migrations are idempotent on re-run",
+          "status": "passed",
+          "title": "are idempotent on re-run",
+          "duration": 1.6033329999999921,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": [
+            "seedWorkflows"
+          ],
+          "fullName": "seedWorkflows creates demo workflows for the tenant",
+          "status": "passed",
+          "title": "creates demo workflows for the tenant",
+          "duration": 3.119708000000003,
+          "failureMessages": [],
+          "meta": {}
+        }
+      ],
+      "startTime": 1791052221786,
+      "endTime": 1791052221798.1196,
+      "status": "passed",
+      "message": "",
+      "name": "packages/workflows/test/migrations.test.ts"
+    },
+    {
+      "assertionResults": [
+        {
+          "ancestorTitles": [
+            "workflow trigger and local-action recovery receipts"
+          ],
+          "fullName": "workflow trigger and local-action recovery receipts adds recovery columns without changing a pre-existing workflow or task and re-runs safely",
+          "status": "passed",
+          "title": "adds recovery columns without changing a pre-existing workflow or task and re-runs safely",
+          "duration": 8.048500000000018,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": [
+            "workflow trigger and local-action recovery receipts"
+          ],
+          "fullName": "workflow trigger and local-action recovery receipts runs one business task for concurrent replay of the same platform event",
+          "status": "passed",
+          "title": "runs one business task for concurrent replay of the same platform event",
+          "duration": 15.57179099999999,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": [
+            "workflow trigger and local-action recovery receipts"
+          ],
+          "fullName": "workflow trigger and local-action recovery receipts replays a retained event after engine recreation without repeating local work",
+          "status": "passed",
+          "title": "replays a retained event after engine recreation without repeating local work",
+          "duration": 2.902582999999993,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": [
+            "workflow trigger and local-action recovery receipts"
+          ],
+          "fullName": "workflow trigger and local-action recovery receipts recovers task, notification and tag from their atomic receipts when attempt logs are absent",
+          "status": "passed",
+          "title": "recovers task, notification and tag from their atomic receipts when attempt logs are absent",
+          "duration": 4.104167000000018,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": [
+            "workflow trigger and local-action recovery receipts"
+          ],
+          "fullName": "workflow trigger and local-action recovery receipts recovers an actual interrupted write path and counts the lost attempt before any effect",
+          "status": "passed",
+          "title": "recovers an actual interrupted write path and counts the lost attempt before any effect",
+          "duration": 3.2328329999999994,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": [
+            "workflow trigger and local-action recovery receipts"
+          ],
+          "fullName": "workflow trigger and local-action recovery receipts rolls back the local business record when its atomic receipt cannot commit",
+          "status": "passed",
+          "title": "rolls back the local business record when its atomic receipt cannot commit",
+          "duration": 3.520333000000022,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": [
+            "workflow trigger and local-action recovery receipts"
+          ],
+          "fullName": "workflow trigger and local-action recovery receipts does not emit a completed claim after ownership changes during an external action",
+          "status": "passed",
+          "title": "does not emit a completed claim after ownership changes during an external action",
+          "duration": 2.2863330000000133,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": [
+            "workflow trigger and local-action recovery receipts"
+          ],
+          "fullName": "workflow trigger and local-action recovery receipts uses the real Billing source receipt when invoice creation succeeds before its attempt log",
+          "status": "passed",
+          "title": "uses the real Billing source receipt when invoice creation succeeds before its attempt log",
+          "duration": 4.712375000000037,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": [
+            "workflow trigger and local-action recovery receipts"
+          ],
+          "fullName": "workflow trigger and local-action recovery receipts uses the real Scheduling receipt when booking commits before its attempt log",
+          "status": "passed",
+          "title": "uses the real Scheduling receipt when booking commits before its attempt log",
+          "duration": 8.0745,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": [
+            "workflow trigger and local-action recovery receipts"
+          ],
+          "fullName": "workflow trigger and local-action recovery receipts freezes action inputs and due windows across later workflow edits and recovery",
+          "status": "passed",
+          "title": "freezes action inputs and due windows across later workflow edits and recovery",
+          "duration": 2.7712080000000014,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": [
+            "workflow trigger and local-action recovery receipts"
+          ],
+          "fullName": "workflow trigger and local-action recovery receipts lets only one of two engines claim an interrupted execution",
+          "status": "passed",
+          "title": "lets only one of two engines claim an interrupted execution",
+          "duration": 2.351333000000011,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": [
+            "workflow trigger and local-action recovery receipts"
+          ],
+          "fullName": "workflow trigger and local-action recovery receipts waits for a live claim to expire and respects a paused workflow",
+          "status": "passed",
+          "title": "waits for a live claim to expire and respects a paused workflow",
+          "duration": 2.3767500000000155,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": [
+            "workflow trigger and local-action recovery receipts"
+          ],
+          "fullName": "workflow trigger and local-action recovery receipts stops recovery at the saved attempt bound despite a later increased workflow limit",
+          "status": "passed",
+          "title": "stops recovery at the saved attempt bound despite a later increased workflow limit",
+          "duration": 1.9676249999999982,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": [
+            "workflow trigger and local-action recovery receipts"
+          ],
+          "fullName": "workflow trigger and local-action recovery receipts isolates the same originating event ID and receipts between two companies",
+          "status": "passed",
+          "title": "isolates the same originating event ID and receipts between two companies",
+          "duration": 2.832125000000019,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": [
+            "workflow trigger and local-action recovery receipts"
+          ],
+          "fullName": "workflow trigger and local-action recovery receipts preserves the prior event payload on ID reuse and treats a fresh event ID as a distinct occurrence",
+          "status": "passed",
+          "title": "preserves the prior event payload on ID reuse and treats a fresh event ID as a distinct occurrence",
+          "duration": 3.1948750000000246,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": [
+            "bounded built-in workflow recipes"
+          ],
+          "fullName": "bounded built-in workflow recipes installs each useful local recipe and runs its matching business job with receipts",
+          "status": "passed",
+          "title": "installs each useful local recipe and runs its matching business job with receipts",
+          "duration": 4.681957999999952,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": [
+            "bounded built-in workflow recipes"
+          ],
+          "fullName": "bounded built-in workflow recipes repeated and concurrent recipe installation preserves the owner-edited workflow",
+          "status": "passed",
+          "title": "repeated and concurrent recipe installation preserves the owner-edited workflow",
+          "duration": 1.4935840000000553,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": [
+            "bounded built-in workflow recipes"
+          ],
+          "fullName": "bounded built-in workflow recipes rejects a foreign assignee, unknown recipe and invalid due windows through real routes",
+          "status": "passed",
+          "title": "rejects a foreign assignee, unknown recipe and invalid due windows through real routes",
+          "duration": 9.041082999999958,
+          "failureMessages": [],
+          "meta": {}
+        }
+      ],
+      "startTime": 1791052221433,
+      "endTime": 1791052221516.041,
+      "status": "passed",
+      "message": "",
+      "name": "packages/workflows/test/recovery-receipts.test.ts"
+    },
+    {
+      "assertionResults": [
+        {
+          "ancestorTitles": [
+            "retry with exponential backoff"
+          ],
+          "fullName": "retry with exponential backoff persists attempts + next_retry_at, doubles the delay, then fails permanently",
+          "status": "passed",
+          "title": "persists attempts + next_retry_at, doubles the delay, then fails permanently",
+          "duration": 20.77200000000002,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": [
+            "retry with exponential backoff"
+          ],
+          "fullName": "retry with exponential backoff re-runs ONLY the failed actions on retry and succeeds once they recover",
+          "status": "passed",
+          "title": "re-runs ONLY the failed actions on retry and succeeds once they recover",
+          "duration": 2.949707999999987,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": [
+            "retry with exponential backoff"
+          ],
+          "fullName": "retry with exponential backoff pauses due retries while the workflow is disabled and resumes on re-enable",
+          "status": "passed",
+          "title": "pauses due retries while the workflow is disabled and resumes on re-enable",
+          "duration": 3.479083000000003,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": [
+            "runPending tick \u2014 overdue tasks"
+          ],
+          "fullName": "runPending tick \u2014 overdue tasks marks due tasks overdue, emits workflows.task.overdue, and triggers workflows off it",
+          "status": "passed",
+          "title": "marks due tasks overdue, emits workflows.task.overdue, and triggers workflows off it",
+          "duration": 2.079499999999996,
+          "failureMessages": [],
+          "meta": {}
+        }
+      ],
+      "startTime": 1791052221119,
+      "endTime": 1791052221149.0796,
+      "status": "passed",
+      "message": "",
+      "name": "packages/workflows/test/retry.test.ts"
+    },
+    {
+      "assertionResults": [
+        {
+          "ancestorTitles": [
+            "workflows router \u2014 definitions CRUD"
+          ],
+          "fullName": "workflows router \u2014 definitions CRUD creates, reads, lists, updates, toggles and deletes a workflow",
+          "status": "passed",
+          "title": "creates, reads, lists, updates, toggles and deletes a workflow",
+          "duration": 14.849290999999994,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": [
+            "workflows router \u2014 definitions CRUD"
+          ],
+          "fullName": "workflows router \u2014 definitions CRUD exposes the trigger/action vocabulary at /meta",
+          "status": "passed",
+          "title": "exposes the trigger/action vocabulary at /meta",
+          "duration": 1.942167000000012,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": [
+            "workflows router \u2014 definitions CRUD"
+          ],
+          "fullName": "workflows router \u2014 definitions CRUD rejects unknown action types, trigger events and condition ops with 400",
+          "status": "passed",
+          "title": "rejects unknown action types, trigger events and condition ops with 400",
+          "duration": 3.4022080000000017,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": [
+            "workflows router \u2014 definitions CRUD"
+          ],
+          "fullName": "workflows router \u2014 definitions CRUD requires the tenant header (400) and a real tenant (404)",
+          "status": "passed",
+          "title": "requires the tenant header (400) and a real tenant (404)",
+          "duration": 1.5037090000000148,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": [
+            "workflows router \u2014 executions"
+          ],
+          "fullName": "workflows router \u2014 executions lists and details executions produced by the engine",
+          "status": "passed",
+          "title": "lists and details executions produced by the engine",
+          "duration": 12.753917000000001,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": [
+            "workflows router \u2014 tasks"
+          ],
+          "fullName": "workflows router \u2014 tasks creates, lists and completes tasks; completion emits workflows.task.completed",
+          "status": "passed",
+          "title": "creates, lists and completes tasks; completion emits workflows.task.completed",
+          "duration": 1.9822089999999832,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": [
+            "workflows router \u2014 run-pending tick"
+          ],
+          "fullName": "workflows router \u2014 run-pending tick marks overdue tasks and reports them (workflows.task.overdue asserted)",
+          "status": "passed",
+          "title": "marks overdue tasks and reports them (workflows.task.overdue asserted)",
+          "duration": 2.0322080000000255,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": [
+            "workflows router \u2014 notifications and tags"
+          ],
+          "fullName": "workflows router \u2014 notifications and tags serves notification rows created by the notify_user action and marks them read",
+          "status": "passed",
+          "title": "serves notification rows created by the notify_user action and marks them read",
+          "duration": 3.5829999999999984,
+          "failureMessages": [],
+          "meta": {}
+        }
+      ],
+      "startTime": 1791052220877,
+      "endTime": 1791052220919.583,
+      "status": "passed",
+      "message": "",
+      "name": "packages/workflows/test/router.test.ts"
+    }
+  ]
+}

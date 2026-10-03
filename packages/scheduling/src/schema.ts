@@ -198,6 +198,16 @@ export interface SchedulingReminderRow {
   created_at: string;
 }
 
+/** Durable contract receipt, committed atomically with the appointment. */
+export interface SchedulingAppointmentReceiptRow {
+  id: string;
+  tenant_id: string;
+  idempotency_key: string;
+  payload_hash: string;
+  appointment_id: string;
+  created_at: string;
+}
+
 export interface SchedulingDatabase extends CoreDatabase {
   scheduling_calendars: SchedulingCalendarRow;
   scheduling_locations: SchedulingLocationRow;
@@ -211,4 +221,5 @@ export interface SchedulingDatabase extends CoreDatabase {
   scheduling_appointment_staff: SchedulingAppointmentStaffRow;
   scheduling_appointment_resources: SchedulingAppointmentResourceRow;
   scheduling_reminders: SchedulingReminderRow;
+  scheduling_appointment_receipts: SchedulingAppointmentReceiptRow;
 }

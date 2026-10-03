@@ -22,6 +22,58 @@ module serves field-service crews and media/marketing staff.
 
 Every table carries `tenant_id` (indexed); every query filters by it.
 
+## Reviewed work closeout
+
+Assignments include a closeout report (`GET /assignments/:id/closeout`, or
+token-authenticated `GET /portal/assignments/:id/closeout`). It contains the
+assignment, checklists, exception records, linked time entries and explicit
+blockers. Completion requires every checklist item checked or specifically
+waived by a manager, every exception resolved, and every linked time entry
+clocked out and approved. An assignment with no linked time has no implied
+approved hours. `completed_at` records the first successful completion;
+retries and manager reopen/recompletion never duplicate the completed event.
+Workers cannot reopen closed work. Closed checklists and approved linked time
+stay fixed until a manager reopens the assignment.
+
+`POST /portal/clock-in` accepts optional `assignmentId` alongside `shiftId`.
+Only the assigned worker can record time against that assignment. An employee
+has one open clock entry; simultaneous clock attempts are serialized. Existing
+unlinked shift entries remain available and migrate to `pending` review rather
+than being represented as historically approved.
+
+Employees report an exception with
+`POST /portal/assignments/:id/exceptions` and
+`{ reason, checklist_item_id?, idempotency_key }`. The item must belong to that
+work. Identical retries return the original report; key reuse with changed
+input returns 409. A manager/admin uses
+`POST /portal/exceptions/:id/resolve` with
+`{ resolution_note, waive_item? }`. A waiver identifies one checklist item;
+resolving a generic exception does not complete any checklist item. Reasons,
+reviewers, decisions, timestamps, audit entries and work logs are retained.
+
+Managers/admins use `GET /portal/time-entries` for the review queue and
+`POST /portal/time-entries/:id/review` with
+`{ status: "approved" | "rejected", note }`. Trusted company owners use the
+equivalent `/time-entries` and `/exceptions/:id/resolve` back-office routes.
+Workers get 403 on manager review routes. All entity lookups remain tenant
+scoped. Review summary counts cover all company time entries; the item list
+uses `limit`/`offset` and can filter by `status`. Closed-entry durations in the
+queue are elapsed whole minutes. The worker `/team` UI shows closeout blockers,
+job clock controls, exceptions and review decisions; the owner UI adds review
+and closeout panels using `employee.js`. The owner review queue starts with
+pending time, supports review-state filters and pagination, and reads linked
+assignment names directly even when their work is beyond the current page.
+Work closeout has its own status filter and pagination. Repeated time selection
+replaces the current review form so its submission targets the selected entry.
+
+Migration `portal_employee.0003_reviewed_job_closeout` appends fields/tables and
+preserves existing records. Existing completed assignments keep their original
+status and get their last update timestamp as first completion evidence.
+Checks are in-memory router tests using synthetic employees and tokens.
+Independent browser/device validation and purchase provisioning remain product
+acceptance gates. Assignments can reference shared job IDs, but this slice does
+not establish cross-module fulfillment synchronization or external payroll.
+
 ## Auth model
 
 Two surfaces on one router (`portalEmployeeRouter(deps)`):

@@ -28,6 +28,12 @@ export interface CreateTaskContract {
 
 export interface CreateAppointmentInput {
   tenantId: string;
+  /**
+   * Optional tenant-scoped local booking receipt key. Replays with the same
+   * payload return the saved appointment; changed payloads must conflict.
+   * This does not promise durable event delivery or remote-provider delivery.
+   */
+  idempotencyKey?: string;
   customerId: string;
   /** ISO-8601 UTC. */
   startsAt: string;

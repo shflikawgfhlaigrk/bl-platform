@@ -5,6 +5,14 @@ import { RateLimiter } from '../src/security';
 // Retained state is the property under test, independent of HTTP status.
 const size=(limiter:RateLimiter)=>(limiter as unknown as {buckets:Map<string,unknown>}).buckets.size;
 describe('bounded admission state',()=>{
+ it('rotating forwarded headers cannot reset a real socket or unknown-source budget',async()=>{
+  const limiter=new RateLimiter({generalPerMinute:2,now:()=>1000});const app=new Hono();app.onError(errorHandler);app.use('*',limiter.middleware());
+  app.get('/',c=>c.json({ok:true}));
+  for(let i=0;i<5;i++)expect((await app.request('/',{headers:{'x-forwarded-for':`192.0.2.${i}`,'x-real-ip':`198.51.100.${i}`}},
+    {incoming:{socket:{remoteAddress:'127.0.0.1'}}})).status).toBe(i<2?200:429);
+  expect((await app.request('/',{}, {incoming:{socket:{remoteAddress:'192.0.2.99'}}})).status).toBe(200);
+  for(let i=0;i<3;i++)expect((await app.request('/',{headers:{'x-forwarded-for':`203.0.113.${i}`}})).status).toBe(i<2?200:429);
+ });
  it('10,000 arbitrary paths share one source budget and retain one entry',()=>{
   const limiter=new RateLimiter({generalPerMinute:5,now:()=>1000});let allowed=0;
   for(let i=0;i<10000;i++)allowed+=Number(limiter.take('192.0.2.1',`/new-${i}/resource`));

@@ -40,6 +40,12 @@ describe('migrations', () => {
 });
 
 describe('applyIndustry', () => {
+  it('rejects concurrent applications to the same company instead of duplicating setup',async()=>{
+    const {db,tenantA}=await setup();
+    const first=applyIndustry(db,tenantA.id,'service-delivery');
+    await expect(applyIndustry(db,tenantA.id,'hvac')).rejects.toMatchObject({status:409});
+    expect((await first).industryKey).toBe('service-delivery');
+  });
   it('seeds every defaults table from the config', async () => {
     const { db, tenantA } = await setup();
     const config = getIndustryConfig('window-cleaning')!;

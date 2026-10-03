@@ -35,6 +35,7 @@ import {
   deleteEmployee,
   getAssignment,
   getAssignmentForActor,
+  getAssignmentCloseout,
   getDailySchedule,
   getEmployee,
   instantiateChecklist,
@@ -47,8 +48,12 @@ import {
   listJobPhotos,
   listShifts,
   listTimeEntries,
+  listTimeReviewQueue,
   listWorkLogs,
   revokeEmployeeToken,
+  reportAssignmentException,
+  resolveAssignmentException,
+  reviewTimeEntry,
   setChecklistItemChecked,
   updateAssignmentStatus,
   updateEmployee,
@@ -165,7 +170,10 @@ const statusSchema = z.object({
 
 const logBodySchema = z.object({ body: z.string().min(1) });
 
-const clockInSchema = z.object({ shiftId: z.string().optional() });
+const clockInSchema = z.object({ shiftId: z.string().optional(), assignmentId: z.string().optional() }).strict();
+const exceptionSchema = z.object({ reason: z.string().trim().min(1).max(2000), checklist_item_id: z.string().min(1).optional(), idempotency_key: z.string().min(8).max(200) }).strict();
+const resolveExceptionSchema = z.object({ resolution_note: z.string().trim().min(1).max(2000), waive_item: z.boolean().optional() }).strict();
+const timeReviewSchema = z.object({ status: z.enum(['approved', 'rejected']), note: z.string().trim().min(1).max(2000) }).strict();
 
 const checkSchema = z.object({ checked: z.boolean() });
 
@@ -268,6 +276,20 @@ export function portalEmployeeRouter(deps: ModuleDeps<PortalEmployeeDatabase>): 
     const assignment = await getAssignment(db, c.get('tenantId'), c.req.param('assignmentId'));
     return c.json({ data: assignment });
   });
+  app.get('/assignments/:assignmentId/closeout', async (c) => c.json({ data: await getAssignmentCloseout(db, c.get('tenantId'), c.req.param('assignmentId')) }));
+  app.post('/exceptions/:exceptionId/resolve', async (c) => {
+    const input = resolveExceptionSchema.parse(await jsonBody(c));
+    return c.json({ data: await resolveAssignmentException(db, events, c.get('tenantId'), backOfficeActor(c), c.req.param('exceptionId'), input) });
+  });
+  app.get('/time-entries', async (c) => {
+    const page = parsePagination(c.req.query());
+    const status = z.enum(['pending', 'approved', 'rejected']).optional().parse(c.req.query('status'));
+    return c.json({ data: await listTimeReviewQueue(db, c.get('tenantId'), page, status), limit: page.limit, offset: page.offset });
+  });
+  app.post('/time-entries/:entryId/review', async (c) => {
+    const input = timeReviewSchema.parse(await jsonBody(c));
+    return c.json({ data: await reviewTimeEntry(db, events, c.get('tenantId'), backOfficeActor(c), c.req.param('entryId'), input) });
+  });
 
   app.get('/assignments/:assignmentId/logs', async (c) => {
     await getAssignment(db, c.get('tenantId'), c.req.param('assignmentId'));
@@ -369,6 +391,27 @@ export function portalEmployeeRouter(deps: ModuleDeps<PortalEmployeeDatabase>): 
       c.req.param('assignmentId'),
     );
     return c.json({ data: assignment });
+  });
+  portal.get('/assignments/:assignmentId/closeout', async (c) => {
+    await getAssignmentForActor(db, c.get('tenantId'), c.get('employee'), c.req.param('assignmentId'));
+    return c.json({ data: await getAssignmentCloseout(db, c.get('tenantId'), c.req.param('assignmentId')) });
+  });
+  portal.post('/assignments/:assignmentId/exceptions', async (c) => {
+    const input = exceptionSchema.parse(await jsonBody(c));
+    return c.json({ data: await reportAssignmentException(db, events, c.get('tenantId'), c.get('employee'), c.req.param('assignmentId'), input) }, 201);
+  });
+  portal.post('/exceptions/:exceptionId/resolve', requireRole('manager', 'admin'), async (c) => {
+    const input = resolveExceptionSchema.parse(await jsonBody(c));
+    return c.json({ data: await resolveAssignmentException(db, events, c.get('tenantId'), c.get('employee'), c.req.param('exceptionId'), input) });
+  });
+  portal.get('/time-entries', requireRole('manager', 'admin'), async (c) => {
+    const page = parsePagination(c.req.query());
+    const status = z.enum(['pending', 'approved', 'rejected']).optional().parse(c.req.query('status'));
+    return c.json({ data: await listTimeReviewQueue(db, c.get('tenantId'), page, status), limit: page.limit, offset: page.offset });
+  });
+  portal.post('/time-entries/:entryId/review', requireRole('manager', 'admin'), async (c) => {
+    const input = timeReviewSchema.parse(await jsonBody(c));
+    return c.json({ data: await reviewTimeEntry(db, events, c.get('tenantId'), c.get('employee'), c.req.param('entryId'), input) });
   });
 
   portal.post('/assignments/:assignmentId/status', async (c) => {

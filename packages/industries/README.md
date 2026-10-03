@@ -9,11 +9,11 @@ automations, terminology) lives in a plain-data config in `src/configs/`.
 Applying a config seeds a tenant with those defaults; UIs and other layers
 read the applied state back through this module's REST API.
 
-## Shipped industries (10)
+## Shipped configurations (12)
 
 `construction`, `hvac`, `law-firm`, `medical-dental`, `music-audio`,
-`real-estate`, `restaurant`, `smart-home-security`, `spa-wellness`,
-`window-cleaning`
+`real-estate`, `restaurant`, `service-delivery`, `smart-home-security`, `spa-wellness`,
+`tack-retail`, `window-cleaning`
 
 ## Adding a new industry (no code, one file)
 
@@ -105,9 +105,10 @@ export const petGroomingConfig = {
 
 ## Terminology mapping
 
-A flat map `core-term -> display-term` consumed by UIs: wherever a UI would
-render a core term, it renders `terminology[coreTerm]` instead
-(e.g. `job` → "Job" / "Matter" / "Project" / "Session").
+A flat map `core-term -> display-term` available to UIs (e.g. `job` →
+"Job" / "Matter" / "Project" / "Session"). The current business workspace
+displays this configured map in Industry setup; other screens retain their
+generic record labels until they explicitly consume this mapping.
 
 - Core terms (must all be mapped): `lead`, `customer`, `quote`, `job`,
   `appointment`, `invoice`, `team_member` (exported as `CORE_TERMS`).
@@ -188,8 +189,46 @@ Success envelopes: `{ data: ... }` (single) / `{ data, limit, offset }`
 cd <repo root> && npx vitest run packages/industries
 ```
 
-48 tests: loader validation (every violation reported), all 10 shipped
-configs validated, money asserted to the cent via core's `computeTotals`,
+Focused checks cover loader validation (every violation reported), all shipped
+configs validated, integer-cent money through core's `computeTotals`,
 apply idempotency + industry switching, terminology lookup, event emission,
 audit, migration idempotency, and tenant-isolation denial tests at both the
 service and router layers.
+
+## Runtime provisioning in the business composition
+
+The business API composes `industriesRouter(deps, {installRuntime})` with
+`businessIndustryRuntime`. An explicit apply creates real CRM stages, real Quoting
+templates, and supported Workflows recipes, then saves source IDs/readback receipts in
+`industries_runtime_receipts`. `GET /applied` includes `runtime.available`, the last
+checked time, and per-component outcomes. A configuration-only installation reports
+that runtime targets have not been verified. The existing appointment-type contract
+continues to provision bookable Scheduling types.
+
+Reapplying never overwrites owner stage, template, or workflow edits. An owner-deleted
+target remains missing. Concurrent applies to one company return an explicit conflict.
+Quote creation and its provenance receipt share a transaction; workflow installation uses
+a stable tenant recipe key. Switching setups pauses untouched earlier task recipes and
+retains edited owner recipes without installing a second handler for the same event.
+Runtime receipts describe preserved custom configuration separately from installed defaults.
+Previously paused targets stay paused when returning to a setup; review and explicitly
+enable the desired recipe in Workflows. Reapplying setup never infers authorization to
+reactivate a paused owner target.
+
+Only bounded `create_task` recipes with supported event triggers are provisioned by this
+bridge. External message, webhook, and unsupported definitions stay disabled and are
+reported as `unsupported`. Applying setup does not send messages, collect payments, or
+automatically convert a quote to billable work. Arbitrary dashboard definitions remain a
+read model; the working Overview action queue/basic reports are supplied by Dashboard.
+
+`service-delivery` is a domain-neutral inquiry → scope → job → closeout starting flow.
+It installs source-linked follow-up tasks. Its zero-price placeholder template is saved
+inactive and explicitly requires an owner to enter agreed quantities/rates and enable it.
+Appointment durations/resources also require company-specific review. Existing vertical
+template rates are configuration examples, not validated market prices or promised gains.
+
+Focused verification: `npm test -- packages/industries/test apps/api/test/business-industry-wiring.test.ts`.
+The composition test boots `createApp({businessPortals:true})`, applies the neutral setup,
+reads actual module routes, and exercises the real lead event → linked task path. Separate
+browser, independent buyer/device, willingness-to-pay, and founder acceptance evidence
+are still required before treating the module as a released product.
