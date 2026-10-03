@@ -1,6 +1,8 @@
-import { readFileSync, readdirSync, statSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { readFileSync, readdirSync, lstatSync, openSync, closeSync, constants } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { basename, join } from 'node:path';
+import type { ClientOpsService } from '../service';
+import { canonicalManifestJson } from '../manifest';
 import type {
   FoundationAdapterReadiness,
   FoundationInvocationRequest,
@@ -8,17 +10,16 @@ import type {
   FoundationVerificationRequest,
   FoundationVerificationResult,
   ServiceFoundationAdapter,
+  OwnedSourceConnection,
 } from '../adapters';
 
 /**
  * Executive Operations HQ (service `executive-operations-hq`, capability
  * `client_ops.hq.publish_brief`). Owned source is `BlackLabelHQ`.
  *
- * This adapter performs REAL, evidenced work: it reads the fleet's computed-%
- * handoff packets from disk (the same `~/BlackLabel-Team/STATE/handoffs/*.json`
- * packets ATLAS/HQ dispatch from) and assembles one module-scoped operations
- * brief — per-seat percent, checklist progress, blockers, and next step — with a
- * deep-link reference to every packet that backs a statement.
+ * Reads only an explicitly provisioned tenant/installation connector mapping.
+ * Each invocation and verification revalidates the run and current connector
+ * against the server's database. There is no process-home or environment source.
  *
  * Anti-vapor guarantee: it NEVER fabricates a brief. If the HQ handoff source
  * cannot be read (missing directory, zero well-formed packets), `readiness()`
@@ -30,17 +31,25 @@ import type {
  */
 
 export interface ExecutiveOperationsHqConfig {
-  /**
-   * Directory of computed-% handoff packets.
-   * Default: env `BL_HQ_HANDOFFS_DIR`, else `~/BlackLabel-Team/STATE/handoffs`.
-   */
+  /** Server-owned run/connection lookups; never supplied by invocation input. */
+  service?: Pick<ClientOpsService, 'getRun' | 'getInstallation' | 'listConnectedOwnedSources'>;
+  /** Explicit operator-provisioned mappings; a tenant's connector metadata cannot add one. */
+  sources?: readonly HqSourceBinding[];
+  /** @deprecated Unbound directories are ignored. Provision `sources` instead. */
   handoffsDir?: string;
-  /** Deep-link base for the HQ dashboard (the HQ dashboard runs on :8791). */
+  /** @deprecated Set a dashboard URL on the tenant source binding. */
   dashboardBaseUrl?: string;
   /** Newest DISTINCT seats to summarize in one brief (default 12). */
   maxSeats?: number;
   /** Upper bound on files parsed per newest-first scan; keeps I/O bounded (default 500). */
   scanCap?: number;
+}
+
+export interface HqSourceBinding {
+  tenantId: string;
+  connection: OwnedSourceConnection;
+  handoffsDir: string;
+  dashboardBaseUrl?: string;
 }
 
 /** One checklist row inside a handoff packet. */
@@ -67,6 +76,7 @@ interface LoadedPacket {
   packet: HandoffPacket;
   file: string;
   mtimeMs: number;
+  sha256: string;
 }
 
 interface SeatSummary {
@@ -102,7 +112,7 @@ interface HqBriefAggregate {
 
 interface HqBrief {
   generatedAt: string;
-  source: { kind: 'handoff_packets'; ownedSource: 'BlackLabelHQ'; dir: string; packetsRead: number };
+  source: { kind: 'handoff_packets'; ownedSource: 'BlackLabelHQ'; bindingId: string; packetsRead: number };
   aggregate: HqBriefAggregate;
   seats: SeatSummary[];
   attention: AttentionItem[];
@@ -139,8 +149,12 @@ function median(values: number[]): number {
     : sorted[mid];
 }
 
-function deepLink(file: string): string {
-  return `${DEEP_LINK_PREFIX}${basename(file)}`;
+function deepLink(file: string, source: HqSourceBinding): string {
+  return DEEP_LINK_PREFIX + [source.tenantId, source.connection.installationId, source.connection.bindingId, basename(file)].map(encodeURIComponent).join('/');
+}
+
+function sameConnection(a: OwnedSourceConnection, b: OwnedSourceConnection): boolean {
+  return (['bindingId', 'installationId', 'connectorId', 'credentialRef', 'ownedSourceIdentifier'] as const).every(k => a[k] === b[k]);
 }
 
 export class ExecutiveOperationsHqAdapter implements ServiceFoundationAdapter {
@@ -148,56 +162,72 @@ export class ExecutiveOperationsHqAdapter implements ServiceFoundationAdapter {
   readonly capabilityId = 'client_ops.hq.publish_brief';
   readonly ownedSourceIdentifier = 'BlackLabelHQ';
 
-  private readonly handoffsDir: string;
-  private readonly dashboardBaseUrl: string;
+  private readonly service: ExecutiveOperationsHqConfig['service'];
+  private readonly sources: readonly HqSourceBinding[];
   private readonly maxSeats: number;
   private readonly scanCap: number;
 
   constructor(config: ExecutiveOperationsHqConfig = {}) {
-    this.handoffsDir =
-      config.handoffsDir ??
-      process.env.BL_HQ_HANDOFFS_DIR ??
-      join(homedir(), 'BlackLabel-Team', 'STATE', 'handoffs');
-    this.dashboardBaseUrl = config.dashboardBaseUrl ?? 'http://localhost:8791';
+    this.service = config.service;
+    this.sources = (config.sources ?? []).map(s => ({ ...s, connection: { ...s.connection } }));
     this.maxSeats = Math.max(1, config.maxSeats ?? 12);
     this.scanCap = Math.max(this.maxSeats, config.scanCap ?? 500);
   }
 
-  /** Ready only when the HQ handoff source yields at least one well-formed packet. */
+  /** Configuration readiness only; source access is checked for each tenant request. */
   readiness(): FoundationAdapterReadiness {
+    return this.service && this.sources.length > 0 ? 'ready' : 'declared';
+  }
+
+  private async resolveSource(request: Pick<FoundationInvocationRequest, 'tenantId' | 'installationId' | 'runId' | 'ownedSourceRef'>, verifying = false): Promise<HqSourceBinding | null> {
+    const ref = request.ownedSourceRef;
+    if (!this.service || !ref || ref.ownedSourceIdentifier !== this.ownedSourceIdentifier || ref.installationId !== request.installationId) return null;
+    const source = this.sources.find(s => s.tenantId === request.tenantId && sameConnection(s.connection, ref));
+    if (!source) return null;
     try {
-      return this.collectSeats(1).length > 0 ? 'ready' : 'declared';
-    } catch {
-      return 'declared';
-    }
+      const [run, installation, connected] = await Promise.all([
+        this.service.getRun(request.tenantId, request.runId),
+        this.service.getInstallation(request.tenantId, request.installationId),
+        this.service.listConnectedOwnedSources(request.tenantId),
+      ]);
+      if (run.installationId !== request.installationId ||
+          (run.status !== 'running' && !(verifying && run.status === 'succeeded')) ||
+          installation.catalogId !== this.serviceId || installation.status !== 'active' ||
+          !connected.some(c => sameConnection(c, ref))) return null;
+      return source;
+    } catch { return null; }
   }
 
   async invoke(request: FoundationInvocationRequest): Promise<FoundationInvocationResult> {
     const invocationId = `hq-brief-${request.runId}-${request.actionType}`;
-    const loaded = this.collectSeats(this.maxSeats);
+    const source = await this.resolveSource(request);
+    const loaded = source ? this.collectSeats(source, this.maxSeats) : [];
 
     // Honest failure: the registry only invokes a `ready` adapter, but the source
     // can drift between the readiness check and here. Never fabricate a brief.
-    if (loaded.length === 0) {
+    if (!source || loaded.length === 0) {
       return {
         invocationId,
         status: 'failed',
         output: {
-          error: 'no readable BlackLabelHQ handoff packets',
-          dir: this.handoffsDir,
+          error: 'no authorized readable HQ handoff source for this run',
         },
         externalReferences: [],
       };
     }
 
-    const brief = this.buildBrief(loaded);
+    return this.compose(request, source, loaded, new Date().toISOString());
+  }
+
+  private compose(request: FoundationInvocationRequest, source: HqSourceBinding, loaded: LoadedPacket[], generatedAt: string): FoundationInvocationResult {
+    const invocationId = `hq-brief-${request.runId}-${request.actionType}`;
+    const brief = this.buildBrief(loaded, source, generatedAt);
     const seatRefs = brief.seats.map((s) => s.evidenceRef);
     const attentionRefs = brief.attention.map((a) => a.evidenceRef);
-    const briefArtifactRef = `client-ops://hq/briefs/${request.runId}`;
-    const dashboardRef = `${this.dashboardBaseUrl}/flow.html`;
+    const briefArtifactRef = 'client-ops://hq/briefs/' + [request.tenantId, request.installationId, request.runId].map(encodeURIComponent).join('/');
 
     // Each workflow action produces its real slice of the same evidenced brief.
-    let output: unknown;
+    let output: Record<string, unknown>;
     let externalReferences: string[];
     switch (request.actionType) {
       case 'collect_summaries':
@@ -223,7 +253,7 @@ export class ExecutiveOperationsHqAdapter implements ServiceFoundationAdapter {
       case 'publish_brief':
       case 'track_resolution':
         output = { section: request.actionType, artifact: 'executive-operations-brief', brief };
-        externalReferences = [briefArtifactRef, dashboardRef, ...seatRefs];
+        externalReferences = [briefArtifactRef, ...(source.dashboardBaseUrl ? [`${source.dashboardBaseUrl.replace(/\/$/, '')}/flow.html`] : []), ...seatRefs];
         break;
       default:
         output = { section: request.actionType, brief };
@@ -234,22 +264,35 @@ export class ExecutiveOperationsHqAdapter implements ServiceFoundationAdapter {
     return {
       invocationId,
       status: 'completed',
-      output,
+      output: { ...output, sourceProof: {
+        bindingId: source.connection.bindingId, tenantId: request.tenantId,
+        installationId: request.installationId, invocationId, generatedAt,
+        packetDigest: createHash('sha256').update(canonicalManifestJson(loaded.map(l => ({ file: basename(l.file), sha256: l.sha256 })))).digest('hex'),
+      } },
       externalReferences: [...new Set(externalReferences)].sort(),
     };
   }
 
-  /** Re-resolve the packets that back the brief; verified iff the source still reads. */
+  /** Re-authorize the same source, then reproduce the exact output from its packets. */
   async verify(request: FoundationVerificationRequest): Promise<FoundationVerificationResult> {
-    const loaded = this.collectSeats(this.maxSeats);
+    const source = await this.resolveSource(request, true);
+    const loaded = source ? this.collectSeats(source, this.maxSeats) : [];
+    const expected = request.expected;
+    let verified = false;
+    if (source && loaded.length && isRecord(expected) && isRecord(expected.sourceProof) &&
+        typeof expected.section === 'string' && typeof expected.sourceProof.generatedAt === 'string' &&
+        Number.isFinite(Date.parse(expected.sourceProof.generatedAt))) {
+      const rebuilt = this.compose({ ...request, actionType: expected.section, workflowTemplateId: '', input: null }, source, loaded, expected.sourceProof.generatedAt);
+      verified = rebuilt.invocationId === request.invocationId && canonicalManifestJson(rebuilt.output) === canonicalManifestJson(expected);
+    }
     return {
-      verified: loaded.length > 0,
+      verified,
       evidence: {
         invocationId: request.invocationId,
         ownedSource: this.ownedSourceIdentifier,
-        dir: this.handoffsDir,
+        bindingId: source?.connection.bindingId ?? null,
         packetsResolved: loaded.length,
-        references: loaded.map((l) => deepLink(l.file)),
+        references: verified && source ? loaded.map((l) => deepLink(l.file, source)) : [],
       },
       checkedAt: new Date().toISOString(),
     };
@@ -260,10 +303,10 @@ export class ExecutiveOperationsHqAdapter implements ServiceFoundationAdapter {
    * seat (newest wins), up to `maxSeats`. Bounded by `scanCap`. Fully defensive:
    * unreadable / malformed / non-packet JSON is skipped, never fatal.
    */
-  private collectSeats(maxSeats: number): LoadedPacket[] {
+  private collectSeats(source: HqSourceBinding, maxSeats: number): LoadedPacket[] {
     let entries: string[];
     try {
-      entries = readdirSync(this.handoffsDir);
+      entries = readdirSync(source.handoffsDir);
     } catch {
       return [];
     }
@@ -271,16 +314,16 @@ export class ExecutiveOperationsHqAdapter implements ServiceFoundationAdapter {
     const candidates: Array<{ file: string; mtimeMs: number }> = [];
     for (const name of entries) {
       if (!name.endsWith('.json')) continue;
-      const file = join(this.handoffsDir, name);
+      const file = join(source.handoffsDir, name);
       try {
-        const stat = statSync(file);
+        const stat = lstatSync(file);
         if (!stat.isFile()) continue;
         candidates.push({ file, mtimeMs: stat.mtimeMs });
       } catch {
         // vanished / permission — skip
       }
     }
-    candidates.sort((a, b) => b.mtimeMs - a.mtimeMs);
+    candidates.sort((a, b) => b.mtimeMs - a.mtimeMs || a.file.localeCompare(b.file));
 
     const collected: LoadedPacket[] = [];
     const seenSeats = new Set<string>();
@@ -290,8 +333,14 @@ export class ExecutiveOperationsHqAdapter implements ServiceFoundationAdapter {
       if (examined >= this.scanCap) break;
       examined += 1;
       let parsed: unknown;
+      let sha256: string;
       try {
-        parsed = JSON.parse(readFileSync(candidate.file, 'utf8'));
+        const fd = openSync(candidate.file, constants.O_RDONLY | constants.O_NOFOLLOW);
+        try {
+          const bytes = readFileSync(fd);
+          parsed = JSON.parse(bytes.toString('utf8'));
+          sha256 = createHash('sha256').update(bytes).digest('hex');
+        } finally { closeSync(fd); }
       } catch {
         continue;
       }
@@ -299,12 +348,12 @@ export class ExecutiveOperationsHqAdapter implements ServiceFoundationAdapter {
       if (!packet) continue;
       if (seenSeats.has(packet.seat)) continue;
       seenSeats.add(packet.seat);
-      collected.push({ packet, file: candidate.file, mtimeMs: candidate.mtimeMs });
+      collected.push({ packet, file: candidate.file, mtimeMs: candidate.mtimeMs, sha256 });
     }
     return collected;
   }
 
-  private summarizeSeat(loaded: LoadedPacket): SeatSummary {
+  private summarizeSeat(loaded: LoadedPacket, source: HqSourceBinding): SeatSummary {
     const { packet, file } = loaded;
     const checklist = Array.isArray(packet.checklist) ? packet.checklist : [];
     const checklistTotal = checklist.length;
@@ -326,12 +375,12 @@ export class ExecutiveOperationsHqAdapter implements ServiceFoundationAdapter {
       ts: typeof packet.ts === 'string' ? packet.ts : null,
       next: typeof packet.next === 'string' ? packet.next : null,
       clientWork: packet.client_work === true,
-      evidenceRef: deepLink(file),
+      evidenceRef: deepLink(file, source),
     };
   }
 
-  private buildBrief(loaded: LoadedPacket[]): HqBrief {
-    const seats = loaded.map((l) => this.summarizeSeat(l));
+  private buildBrief(loaded: LoadedPacket[], source: HqSourceBinding, generatedAt: string): HqBrief {
+    const seats = loaded.map((l) => this.summarizeSeat(l, source));
 
     const percents = seats.map((s) => s.percent);
     const meanPercent = percents.length
@@ -377,11 +426,11 @@ export class ExecutiveOperationsHqAdapter implements ServiceFoundationAdapter {
       (lowest ? ` Lowest: ${lowest.seat} at ${lowest.percent}%.` : '');
 
     return {
-      generatedAt: new Date().toISOString(),
+      generatedAt,
       source: {
         kind: 'handoff_packets',
         ownedSource: 'BlackLabelHQ',
-        dir: this.handoffsDir,
+        bindingId: source.connection.bindingId,
         packetsRead: loaded.length,
       },
       aggregate,

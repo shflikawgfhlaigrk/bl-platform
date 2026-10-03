@@ -1,5 +1,5 @@
-import { mkdir, writeFile, copyFile, access, rm } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { mkdir, writeFile, copyFile, access, rm, lstat } from 'node:fs/promises';
+import { dirname, join, resolve, relative, isAbsolute, sep } from 'node:path';
 import type { Kysely } from 'kysely';
 import type { StorefrontDatabase } from './schema';
 import { renderSite, type SiteConfig } from './render';
@@ -51,6 +51,34 @@ async function fileExists(p: string): Promise<boolean> {
   }
 }
 
+function exportDestination(root: string, path: string): string {
+  const parts = path.split('/');
+  if (!path || isAbsolute(path) || /[\\:\u0000-\u001f\u007f]/.test(path) ||
+      parts.some((part) => !part || part === '.' || part === '..')) {
+    throw new Error(`Unsafe export path: ${JSON.stringify(path)}`);
+  }
+  const dest = resolve(root, path);
+  const rel = relative(resolve(root), dest);
+  if (!rel || rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
+    throw new Error(`Unsafe export path: ${JSON.stringify(path)}`);
+  }
+  return dest;
+}
+
+async function rejectExistingSymlinks(root: string, dest: string): Promise<void> {
+  let current = resolve(root);
+  const parts = relative(current, dest).split(sep);
+  for (let i = -1; i < parts.length; i++) {
+    if (i >= 0) current = join(current, parts[i]);
+    try {
+      if ((await lstat(current)).isSymbolicLink()) throw new Error(`Unsafe export path: symbolic link at ${current}`);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+      throw error;
+    }
+  }
+}
+
 /**
  * Render the projection to a self-contained static site under `outDir`.
  * Works over file:// (flat pages, relative links, zero external URLs).
@@ -64,6 +92,19 @@ export async function exportStaticSite(opts: ExportOptions): Promise<ExportStats
   const site = await readProjection(db, tenantId, runId);
   const rendered = renderSite(site, { ...opts.config, mode: 'static' });
 
+  // Validate the entire output plan before clean can remove an existing site.
+  // Catalog-derived paths and extra asset destinations never select a parent.
+  const paths = [
+    ...rendered.pages.map((page) => page.path),
+    ...[...rendered.imageRefs].map((name) => `assets/img/${name}`),
+    ...[...rendered.assetRefs].map((name) => `assets/${name}`),
+    ...(opts.extraAssets ?? []).map((asset) => `assets/${asset.destName}`),
+  ];
+  for (const path of new Set(paths)) {
+    const dest = exportDestination(outDir, path);
+    await rejectExistingSymlinks(outDir, dest);
+  }
+
   if (opts.clean !== false) {
     await rm(outDir, { recursive: true, force: true });
   }
@@ -71,7 +112,7 @@ export async function exportStaticSite(opts: ExportOptions): Promise<ExportStats
 
   let bytesWritten = 0;
   for (const page of rendered.pages) {
-    const dest = join(outDir, page.path);
+    const dest = exportDestination(outDir, page.path);
     await mkdir(dirname(dest), { recursive: true });
     await writeFile(dest, page.body, 'utf8');
     bytesWritten += Buffer.byteLength(page.body, 'utf8');
@@ -87,7 +128,7 @@ export async function exportStaticSite(opts: ExportOptions): Promise<ExportStats
     for (const base of [...rendered.imageRefs].sort()) {
       const src = join(opts.imageSourceDir, base);
       if (await fileExists(src)) {
-        await copyFile(src, join(imgDir, base));
+        await copyFile(src, exportDestination(outDir, `assets/img/${base}`));
         imagesCopied++;
       } else {
         imagesMissing++;
@@ -96,7 +137,7 @@ export async function exportStaticSite(opts: ExportOptions): Promise<ExportStats
   }
 
   for (const asset of opts.extraAssets ?? []) {
-    const dest = join(outDir, 'assets', asset.destName);
+    const dest = exportDestination(outDir, `assets/${asset.destName}`);
     await mkdir(dirname(dest), { recursive: true });
     await copyFile(asset.sourcePath, dest);
   }

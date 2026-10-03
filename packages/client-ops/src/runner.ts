@@ -3,6 +3,7 @@ import {
   SERVICE_EXECUTION_FOUNDATIONS,
   ServiceFoundationRegistry,
   type FoundationInvocationResult,
+  type FoundationVerificationResult,
 } from './adapters';
 import { resolveTenantFoundation } from './tenant-foundations';
 
@@ -77,9 +78,10 @@ export async function executeRun(deps: RunnerDeps, args: RunnerArgs): Promise<Ru
 
   const installation: InstallationDetail = await service.getInstallation(tenantId, run.installationId);
   const workflow = installation.workflows.find((w) => w.id === run.workflowId);
+  const verifications: Array<{ actionId: string; invocationId: string } & FoundationVerificationResult> = [];
 
   const fail = async (error: string, results: ActionResult[] = []): Promise<RunnerOutcome> => {
-    const failed = await service.updateRun(tenantId, runId, { status: 'failed', output: { results }, error }, actor);
+    const failed = await service.updateRun(tenantId, runId, { status: 'failed', output: { results, verifications }, error }, actor);
     return { status: 'failed', run: failed, error, results };
   };
 
@@ -107,7 +109,7 @@ export async function executeRun(deps: RunnerDeps, args: RunnerArgs): Promise<Ru
   // stop here — awaiting connection, never silently executing against our data.
   // An unregistered or not-ready adapter is left alone so registry.invoke can
   // still fail honestly (501/409) exactly as before.
-  const foundation = await resolveTenantFoundation(service, tenantId, capabilityId, registry);
+  const foundation = await resolveTenantFoundation(service, tenantId, capabilityId, registry, run.installationId);
   if (foundation?.connectionStatus === 'awaiting_connection') {
     return {
       status: 'not_ready',
@@ -153,7 +155,26 @@ export async function executeRun(deps: RunnerDeps, args: RunnerArgs): Promise<Ru
     }
     if (result.status === 'accepted') {
       // Async foundation: leave the run 'running'; a later callback finalizes it.
-      return { status: 'not_ready', run, reason: `action '${action.id}' accepted for async completion` };
+      return { status: 'not_ready', run: await service.getRun(tenantId, runId), reason: `action '${action.id}' accepted for async completion` };
+    }
+    // An adapter's completion claim is not destination verification. Every
+    // completed action must be read back before it can enter a success receipt.
+    try {
+      const verification = await registry.verify(capabilityId, {
+        tenantId,
+        installationId: run.installationId,
+        runId: run.id,
+        invocationId: result.invocationId,
+        expected: result.output,
+        ownedSourceRef,
+      });
+      verifications.push({ actionId: action.id, invocationId: result.invocationId, ...verification });
+      if (verification.verified !== true || !Number.isFinite(Date.parse(verification.checkedAt))) {
+        return fail(`action '${action.id}' did not pass result verification`, results);
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return fail(`action '${action.id}' could not be verified: ${message}`, results);
     }
   }
 
@@ -161,7 +182,7 @@ export async function executeRun(deps: RunnerDeps, args: RunnerArgs): Promise<Ru
   const succeeded = await service.updateRun(
     tenantId,
     runId,
-    { status: 'succeeded', output: { results } },
+    { status: 'succeeded', output: { results, verifications } },
     actor,
   );
   const receipt = await service.createCompletionReceipt(
@@ -174,6 +195,7 @@ export async function executeRun(deps: RunnerDeps, args: RunnerArgs): Promise<Ru
         capabilityId,
         invocationIds: results.map((r) => r.invocationId),
         externalReferences,
+        actions: verifications,
       },
       artifactIds: [],
     },

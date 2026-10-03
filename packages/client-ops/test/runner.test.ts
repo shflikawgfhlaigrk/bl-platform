@@ -13,7 +13,7 @@ describe('client-ops execution runner', () => {
     const run = await createRun(app, tenantA, installation);
     expect(run.status).toBe('requested');
 
-    const registry = registerReadyFoundations(new ServiceFoundationRegistry());
+    const registry = registerReadyFoundations(new ServiceFoundationRegistry(), { workflow: { db, events } });
     const outcome = await executeRun(
       { service, registry },
       { tenantId: tenantA.id, runId: run.id, approved: true },
@@ -23,6 +23,9 @@ describe('client-ops execution runner', () => {
     // The state change is real and persisted, not a returned literal.
     const persisted = await service.getRun(tenantA.id, run.id);
     expect(persisted.status).toBe('succeeded');
+    const tasks = await db.selectFrom('workflows_tasks').selectAll().where('tenant_id', '=', tenantA.id).execute();
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0].title).toBe('Follow up on estimate');
     if (outcome.status === 'succeeded') {
       const receipt = await service.getCompletionReceipt(tenantA.id, outcome.receiptId);
       expect(receipt.runId).toBe(run.id);

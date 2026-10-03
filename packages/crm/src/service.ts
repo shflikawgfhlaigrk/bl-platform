@@ -900,7 +900,9 @@ export async function updateJob(
   actor: string,
   jobId: string,
   patch: JobInput,
+  events?: EventBus,
 ): Promise<CrmJobRow> {
+  const before = await genericMustGet(db, tenantId, ENTITY_DEFS.job, jobId);
   const set: Record<string, unknown> = {};
   if (patch.title !== undefined) {
     if (!patch.title.trim()) throw ApiError.badRequest('job title cannot be blank');
@@ -911,7 +913,11 @@ export async function updateJob(
   }
   const custom = await serializeCustomFields(db, tenantId, 'crm.job', patch.custom_fields);
   if (custom !== undefined) set.custom_fields = custom;
-  return (await genericUpdate(db, tenantId, actor, ENTITY_DEFS.job, jobId, set)) as unknown as CrmJobRow;
+  const updated = (await genericUpdate(db, tenantId, actor, ENTITY_DEFS.job, jobId, set)) as unknown as CrmJobRow;
+  if (updated.status === 'completed' && before.status !== 'completed' && events) {
+    await events.emit(tenantId, 'crm.job.completed', { jobId, customerId: updated.customer_id, title: updated.title });
+  }
+  return updated;
 }
 
 /* ------------------------------------------------------------------ *

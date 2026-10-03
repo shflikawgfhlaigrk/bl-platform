@@ -39,6 +39,7 @@ import {
  */
 export interface PortalCustomerDeps extends ModuleDeps<PortalCustomerDatabase> {
   providers?: PortalCustomerProviders;
+  brandName?: string;
 }
 
 const SESSION_HEADER = 'x-portal-session';
@@ -76,6 +77,7 @@ const uploadSchema = z.object({
   fileName: z.string().min(1).max(255),
   contentType: z.string().min(1).max(255),
   sizeBytes: z.number().int().min(0).max(100 * 1024 * 1024),
+  contentBase64: z.string().max(14 * 1024 * 1024).optional(),
   kind: z.enum(['photo', 'document']).default('document'),
   relatedEntityType: z.string().max(100).optional(),
   relatedEntityId: z.string().max(100).optional(),
@@ -101,6 +103,14 @@ function publicAccount(a: PortalCustomerAccountRow) {
 
 /* --------------------------- HTML helpers -------------------------- */
 
+function reviewHref(value: unknown): string | null {
+  if (typeof value !== 'string' || !(/^(?:https?:\/\/|\/(?![\/\\]))/.test(value)) || /[\x00-\x20\\]/.test(value)) return null;
+  try {
+    const url = new URL(value, 'https://portal.invalid');
+    return ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password ? value : null;
+  } catch { return null; }
+}
+
 function esc(value: unknown): string {
   return String(value ?? '')
     .replaceAll('&', '&amp;')
@@ -121,34 +131,42 @@ function uiBase(c: Context<TenantEnv>): string {
   return idx === -1 ? '/ui' : path.slice(0, idx + 3);
 }
 
-function page(title: string, body: string): string {
+function signInUrl(c: Context<TenantEnv>, token: string): string {
+  const route = c.req.path;
+  const auth = route.indexOf('/auth/');
+  const base = auth >= 0 ? `${route.slice(0, auth)}/ui` : uiBase(c);
+  return `${new URL(c.req.url).origin}${base}/session?token=${encodeURIComponent(token)}`;
+}
+
+function portalPage(title: string, body: string, brandName = ''): string {
   return `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${esc(title)}</title>
+<title>${brandName ? `${esc(brandName)} · ` : ''}${esc(title)}</title>
 <style>
-  :root { color-scheme: light; }
+  :root { color-scheme: dark; }
   * { box-sizing: border-box; }
-  body { margin: 0; background: #fff; color: #111; font: 16px/1.5 system-ui, -apple-system, sans-serif; }
-  main { max-width: 640px; margin: 0 auto; padding: 16px; }
+  body { margin: 0; background: #10110f; color: #eeeae0; font: 16px/1.5 system-ui, -apple-system, sans-serif; }
+  main { max-width: 740px; margin: 0 auto; padding: 28px 18px; }
+  .brand { color: #d3b77a; letter-spacing: .18em; font-weight: 650; padding: 10px 0 24px; }
   h1 { font-size: 1.35rem; margin: 8px 0 16px; }
   h2 { font-size: 1.05rem; margin: 24px 0 8px; }
-  .card { border: 1px solid #ddd; border-radius: 8px; padding: 12px; margin: 8px 0; }
-  .muted { color: #666; font-size: 0.9rem; }
+  .card { border: 1px solid #363b2d; background: #1a1c17; border-radius: 10px; padding: 16px; margin: 10px 0; }
+  .muted { color: #acaf9d; font-size: 0.9rem; }
   .row { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
   label { display: block; margin: 12px 0 4px; font-weight: 600; }
-  input, textarea { width: 100%; padding: 10px; border: 1px solid #bbb; border-radius: 6px; font: inherit; }
-  button { padding: 10px 16px; border: 1px solid #111; border-radius: 6px; background: #111; color: #fff; font: inherit; cursor: pointer; margin-top: 12px; }
-  button.secondary { background: #fff; color: #111; }
+  input, textarea { width: 100%; padding: 10px; border: 1px solid #625438; border-radius: 6px; font: inherit; color: #eeeae0; background: #10110f; }
+  button { padding: 10px 16px; border: 1px solid #cfb478; border-radius: 6px; background: #cfb478; color: #15180f; font: inherit; cursor: pointer; margin-top: 12px; }
+  button.secondary { background: transparent; color: #d9c79f; }
   form.inline { display: inline; }
   form.inline button { margin-top: 8px; margin-right: 8px; }
   .pill { display: inline-block; padding: 2px 8px; border: 1px solid #ccc; border-radius: 999px; font-size: 0.8rem; }
-  a { color: #111; }
+  a { color: #d3b77a; }
 </style>
 </head>
-<body><main>${body}</main></body>
+<body><main>${brandName ? `<div class="brand">${esc(brandName.toUpperCase())} · CUSTOMER PORTAL</div>` : ''}${body}</main></body>
 </html>`;
 }
 
@@ -157,6 +175,7 @@ function page(title: string, body: string): string {
 export function portalCustomerRouter(deps: PortalCustomerDeps): Hono<TenantEnv> {
   const { db, events, contracts } = deps;
   const providers = deps.providers ?? {};
+  const page = (title: string, body: string) => portalPage(title, body, deps.brandName);
 
   const app = new Hono<TenantEnv>();
   app.onError(errorHandler);
@@ -209,15 +228,18 @@ export function portalCustomerRouter(deps: PortalCustomerDeps): Hono<TenantEnv> 
     const result = await requestLoginLink(db, events, c.get('tenantId'), body.email);
     // Deliver the link out-of-band via the messaging contract when wired.
     if (result && contracts.sendMessage) {
-      await contracts.sendMessage.sendMessage({
+      const message = {
+        idempotencyKey: `portal-login:${result.row.id}`,
         tenantId: c.get('tenantId'),
-        channel: 'email',
+        channel: 'email' as const,
         to: result.account.email,
         subject: 'Your sign-in link',
-        body: `Use this single-use token to sign in to your customer portal: ${result.token} (expires ${result.row.expires_at})`,
+        body: `Sign in to your customer portal: ${signInUrl(c, result.token)}\n\nThis single-use link expires ${result.row.expires_at}.`,
         relatedEntityType: 'portal_customer.account',
         relatedEntityId: result.account.id,
-      });
+      };
+      try { await contracts.sendMessage.sendMessage(message); }
+      catch { await events.emit(c.get('tenantId'), 'portal_customer.login.delivery_failed', { accountId: result.account.id }); }
     }
     // Identical response whether or not the email matched (no enumeration).
     return c.json({ data: { requested: true } });
@@ -364,6 +386,22 @@ export function portalCustomerRouter(deps: PortalCustomerDeps): Hono<TenantEnv> 
     return c.json({ data: rows, limit: pageq.limit, offset: pageq.offset });
   });
 
+  app.get('/me/files', async (c) => {
+    const account = await requireAccount(c);
+    if (!providers.files?.listForCustomer) throw notWired('files');
+    return c.json({ data: await providers.files.listForCustomer(c.get('tenantId'), account.customer_id) });
+  });
+  app.get('/me/files/:fileId/content', async (c) => {
+    const account = await requireAccount(c);
+    if (!providers.files?.readForCustomer) throw notWired('files');
+    const file = await providers.files.readForCustomer(c.get('tenantId'), account.customer_id, c.req.param('fileId'));
+    return new Response(new Uint8Array(file.content).buffer, { headers: {
+      'Content-Type': 'application/octet-stream', 'X-Content-Type-Options': 'nosniff',
+      'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(file.name)}`,
+      'Cache-Control': 'no-store',
+    } });
+  });
+
   app.post('/me/uploads', async (c) => {
     const account = await requireAccount(c);
     const body = uploadSchema.parse(await readJson(c));
@@ -407,7 +445,7 @@ export function portalCustomerRouter(deps: PortalCustomerDeps): Hono<TenantEnv> 
           channel: 'email',
           to: result.account.email,
           subject: 'Your sign-in link',
-          body: `Use this single-use token to sign in to your customer portal: ${result.token} (expires ${result.row.expires_at})`,
+          body: `Sign in to your customer portal: ${signInUrl(c, result.token)}\n\nThis single-use link expires ${result.row.expires_at}.`,
           relatedEntityType: 'portal_customer.account',
           relatedEntityId: result.account.id,
         });
@@ -426,7 +464,7 @@ export function portalCustomerRouter(deps: PortalCustomerDeps): Hono<TenantEnv> 
     if (!token) return c.redirect(`${base}/login`);
     try {
       const { session } = await exchangeLoginToken(db, events, c.get('tenantId'), token);
-      setCookie(c, SESSION_COOKIE, session.token, { httpOnly: true, sameSite: 'Lax', path: '/' });
+      setCookie(c, SESSION_COOKIE, session.token, { httpOnly: true, sameSite: 'Lax', secure: new URL(c.req.url).protocol === 'https:', path: '/' });
       return c.redirect(base);
     } catch (err) {
       // Expired/spent/unknown magic links are the common failure path in a
@@ -498,7 +536,7 @@ export function portalCustomerRouter(deps: PortalCustomerDeps): Hono<TenantEnv> 
       const rows = await providers.reviews.listPendingForCustomer(tenantId, account.customer_id);
       if (rows.length > 0) {
         sections.push(`<h2>We&#39;d love your feedback</h2>${rows.map((r) => `
-          <div class="card">${esc(r.subject ?? 'How did we do?')} <span class="muted">requested ${esc(r.requestedAt)}</span></div>`).join('')}`);
+          <div class="card">${esc(r.subject ?? 'How did we do?')} <span class="muted">requested ${esc(r.requestedAt)}</span>${reviewHref(r.url) ? `<p><a href="${esc(reviewHref(r.url))}" rel="noreferrer">Leave feedback</a></p>` : ''}</div>`).join('')}`);
       }
     }
 
@@ -566,10 +604,11 @@ export function portalCustomerRouter(deps: PortalCustomerDeps): Hono<TenantEnv> 
       db, events, providers.invoices, providers.payments,
       c.get('tenantId'), account, c.req.param('invoiceId'),
     );
-    return c.html(page('Payment started', `
-      <h1>Payment started</h1>
+    return c.html(page('Payment instructions', `
+      <h1>Payment instructions</h1>
       <div class="card">
-        Payment of <strong>${money(intent.amountCents)}</strong> for invoice ${esc(intent.invoiceId)} was initiated.<br>
+        Balance: <strong>${money(intent.amountCents)}</strong> for invoice ${esc(intent.invoiceId)}.<br>
+        <p>${esc(intent.instructions ?? 'Complete payment with the connected payment provider.')}</p>
         <span class="muted">Reference ${esc(intent.id)} &middot; status ${esc(intent.status)}</span>
       </div>
       <p><a href="${esc(base)}">Back to portal</a></p>

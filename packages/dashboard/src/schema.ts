@@ -204,6 +204,7 @@ export interface DashboardDatabase extends CoreDatabase {
   // cross-module read contracts (read-only)
   billing_invoices: BillingInvoiceReadRow;
   crm_leads: CrmLeadReadRow;
+  crm_jobs: { id: string; tenant_id: string; status: string; created_at: string };
   scheduling_appointments: SchedulingAppointmentReadRow;
   quoting_quotes: QuotingQuoteReadRow;
   workflows_tasks: WorkflowsTaskReadRow;

@@ -163,6 +163,7 @@ export interface BillingWebhookEventRow {
 }
 
 export interface BillingDatabase extends CoreDatabase {
+  billing_subscription_periods: { id: string; tenant_id: string; subscription_id: string; period_start: string; invoice_id: string; created_at: string };
   billing_accounts: BillingAccountRow;
   billing_invoices: BillingInvoiceRow;
   billing_invoice_lines: BillingInvoiceLineRow;

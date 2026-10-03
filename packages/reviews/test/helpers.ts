@@ -15,9 +15,7 @@ export async function setup(contracts: Contracts = {}, provider?: ReviewProvider
   const tenantA = await createTenant(asCoreDb(db), { name: 'Tenant A' });
   const tenantB = await createTenant(asCoreDb(db), { name: 'Tenant B' });
   const events = new EventBus();
-  const app = provider
-    ? reviewsRouter({ db, events, contracts }, provider)
-    : reviewsRouter({ db, events, contracts });
+  const app = reviewsRouter({ db, events, contracts }, provider ?? new SpyProvider());
   return { db, events, app, tenantA, tenantB };
 }
 

@@ -1,4 +1,5 @@
 import type { Migration } from '@blacklabel/db';
+import { executionJournalMigration } from './execution-migrations';
 
 /** Append-only migrations for the client-ops module. */
 export const clientOpsMigrations: Migration[] = [
@@ -305,4 +306,5 @@ export const clientOpsMigrations: Migration[] = [
         .execute();
     },
   },
+  executionJournalMigration,
 ];

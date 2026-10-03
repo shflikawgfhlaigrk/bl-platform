@@ -124,6 +124,8 @@ export type FetchLike = (
 ) => Promise<{ status: number; ok: boolean; text(): Promise<string> }>;
 
 export interface WorkflowEngineOptions {
+  /** Composition-owned CRM mutation, with destination readback before return. */
+  leadStages?: { update(input: { tenantId: string; leadId: string; stage: string; actor: string; operationId: string }): Promise<{ leadId: string; stage: string }> };
   /** Base delay for exponential retry backoff (delay = base * 2^(attempt-1)). */
   baseBackoffMs?: number;
   /** Injectable clock, ISO-8601 UTC. Defaults to nowIso. */
@@ -139,6 +141,8 @@ interface ActionContext {
   tenantId: string;
   workflowId: string;
   executionId: string;
+  actionId: string;
+  leadStages?: WorkflowEngineOptions['leadStages'];
   payload: unknown;
   triggerEvent: string;
   occurredAt: string;
@@ -242,48 +246,46 @@ const workflowActor = (ctx: ActionContext) => `workflow:${ctx.workflowId}`;
  * never selects code beyond these fixed entries.
  */
 const ACTION_REGISTRY: Record<ActionType, ActionDefinition> = {
-  /** Provider stub: routes through the messaging contract when wired, else records the composed email. */
+  /** Submit the exact operation through the connected messaging contract. */
   send_email: {
     configSchema: sendEmailConfig,
     run: async (config: z.infer<typeof sendEmailConfig>, ctx) => {
       if (ctx.contracts.sendMessage) {
-        const result = await ctx.contracts.sendMessage.sendMessage({
+        const message = {
+          idempotencyKey: `workflow:${ctx.executionId}:${ctx.actionId}`,
           tenantId: ctx.tenantId,
-          channel: 'email',
+          channel: 'email' as const,
           to: config.to,
           subject: config.subject,
           body: config.body,
           relatedEntityType: 'workflows.execution',
           relatedEntityId: ctx.executionId,
-        });
+        };
+        const result = await ctx.contracts.sendMessage.sendMessage(message);
         return { status: 'succeeded', output: { messageId: result.id, via: 'contract' } };
       }
-      return {
-        status: 'succeeded',
-        output: { stub: true, channel: 'email', to: config.to, subject: config.subject, body: config.body },
-      };
+      throw new Error('Email messaging is not connected.');
     },
   },
 
-  /** Provider stub: routes through the messaging contract when wired, else records the composed SMS. */
+  /** Submit the exact operation through the connected messaging contract. */
   send_sms: {
     configSchema: sendSmsConfig,
     run: async (config: z.infer<typeof sendSmsConfig>, ctx) => {
       if (ctx.contracts.sendMessage) {
-        const result = await ctx.contracts.sendMessage.sendMessage({
+        const message = {
+          idempotencyKey: `workflow:${ctx.executionId}:${ctx.actionId}`,
           tenantId: ctx.tenantId,
-          channel: 'sms',
+          channel: 'sms' as const,
           to: config.to,
           body: config.body,
           relatedEntityType: 'workflows.execution',
           relatedEntityId: ctx.executionId,
-        });
+        };
+        const result = await ctx.contracts.sendMessage.sendMessage(message);
         return { status: 'succeeded', output: { messageId: result.id, via: 'contract' } };
       }
-      return {
-        status: 'succeeded',
-        output: { stub: true, channel: 'sms', to: config.to, body: config.body },
-      };
+      throw new Error('SMS messaging is not connected.');
     },
   },
 
@@ -315,17 +317,15 @@ const ACTION_REGISTRY: Record<ActionType, ActionDefinition> = {
     },
   },
 
-  /**
-   * Stub-per-spec: core defines no lead-stage contract yet and cross-module
-   * writes are banned, so this records the intent for the CRM module to apply.
-   */
+  /** CRM owns its mutation; composition injects its verified operation. */
   update_lead_stage: {
     configSchema: updateLeadStageConfig,
-    run: async (config: z.infer<typeof updateLeadStageConfig>, _ctx) => {
-      return {
-        status: 'succeeded',
-        output: { stub: true, leadId: config.leadId, stage: config.stage },
-      };
+    run: async (config: z.infer<typeof updateLeadStageConfig>, ctx) => {
+      if (!ctx.leadStages) throw new Error('CRM lead updates are not connected.');
+      const result = await ctx.leadStages.update({ tenantId: ctx.tenantId, leadId: config.leadId, stage: config.stage,
+        actor: workflowActor(ctx), operationId: `workflow:${ctx.executionId}:${ctx.actionId}` });
+      if (result.leadId !== config.leadId || result.stage !== config.stage) throw new Error('CRM lead update readback differs from the requested change.');
+      return { status: 'succeeded', output: result };
     },
   },
 
@@ -529,6 +529,8 @@ export function createWorkflowEngine(
       tenantId: workflow.tenant_id,
       workflowId: workflow.id,
       executionId: execution.id,
+      actionId: '',
+      leadStages: options.leadStages,
       payload,
       triggerEvent: execution.trigger_event,
       occurredAt: execution.started_at,
@@ -554,7 +556,7 @@ export function createWorkflowEngine(
         const rawConfig = JSON.parse(action.config_json) as unknown;
         const rendered = renderConfig(rawConfig, templateCtx);
         const config = definition.configSchema.parse(rendered);
-        const outcome = await definition.run(config as never, ctx);
+        const outcome = await definition.run(config as never, { ...ctx, actionId: action.id });
         await logActionRow({
           ...base,
           status: outcome.status,

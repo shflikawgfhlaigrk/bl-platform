@@ -1,5 +1,6 @@
 import type { Kysely } from 'kysely';
-import { asCoreDb, audit, id, nowIso, type Pagination } from '@blacklabel/core';
+import { ApiError, asCoreDb, audit, id, nowIso, type Pagination } from '@blacklabel/core';
+import { createHash } from 'node:crypto';
 import { DateTime } from 'luxon';
 import type { AdminBackupRow, AdminDatabase, BackupStatus } from './schema';
 
@@ -11,8 +12,13 @@ type Db = Kysely<AdminDatabase>;
  * the integrator notes (VACUUM INTO + sha256 + PRAGMA integrity_check).
  */
 export interface BackupProvider {
-  /** Create a backup artifact in destDir. */
-  create(destDir: string): Promise<{ path: string; bytes: number; sha256: string }>;
+  /** Encryption support must be explicit before a requested encrypted write. */
+  supportsEncryption?: boolean;
+  /** HTTP backup access is only wired for an explicitly scoped provider. */
+  scope?: 'single-tenant-database';
+  /** Destination is trusted server configuration; HTTP clients cannot supply it. */
+  create(destDir?: string, options?: { encrypted?: boolean; tenantId?: string }): Promise<{ path: string; bytes: number; sha256: string; encrypted?: boolean }>;
+  readArtifact?(path: string): Promise<Uint8Array>;
   /** Restore an artifact to a throwaway temp location for verification. */
   restoreToTemp(path: string): Promise<{ tempPath: string }>;
   /** Integrity-check a restored temp copy (e.g. PRAGMA integrity_check + probes). */
@@ -27,13 +33,13 @@ export interface BackupProvider {
 export type CountProbe = (dbPath: string | null) => Promise<Record<string, number>>;
 
 export interface RunBackupOptions {
-  destDir: string;
+  destDir?: string;
   /**
    * Count probe used to compare the LIVE db (dbPath === null) against the
    * restored temp copy. Verification requires the two to match exactly.
    */
   countProbe?: CountProbe;
-  /** 0/1 — whether the produced artifact is encrypted (provider's concern). */
+  /** Request actual provider encryption; unsupported providers fail before writing. */
   encrypted?: boolean;
 }
 
@@ -75,15 +81,19 @@ export class BackupService {
   ): Promise<AdminBackupRow> {
     const provider = this.requireProvider();
     const now = nowIso();
-
-    const created = await provider.create(opts.destDir);
+    if (opts.encrypted && !provider.supportsEncryption) throw ApiError.badRequest('backup provider does not support encryption');
+    const created = await provider.create(opts.destDir, { encrypted: opts.encrypted, tenantId });
+    if (opts.encrypted && !created.encrypted) {
+      await provider.delete?.(created.path);
+      throw ApiError.badRequest('provider did not produce an encrypted backup');
+    }
     const row: AdminBackupRow = {
       id: id(),
       tenant_id: tenantId,
       path: created.path,
       bytes: created.bytes,
       sha256: created.sha256,
-      encrypted: opts.encrypted ? 1 : 0,
+      encrypted: created.encrypted ? 1 : 0,
       status: 'created',
       detail: null,
       verified_at: null,
@@ -220,6 +230,29 @@ export class BackupService {
       .execute();
   }
 
+  /** Raw database exports are disabled whenever the database has multiple tenants. */
+  async assertHttpScope(tenantId: string): Promise<void> {
+    const provider = this.requireProvider();
+    if (provider.scope !== 'single-tenant-database') throw ApiError.forbidden('backup provider has no HTTP export scope');
+    const tenants = await this.db.selectFrom('tenants').select('id').limit(2).execute();
+    if (tenants.length !== 1 || tenants[0].id !== tenantId) {
+      throw ApiError.forbidden('complete database backups require a single-tenant installation');
+    }
+  }
+
+  async download(tenantId: string, backupId: string): Promise<Uint8Array> {
+    await this.assertHttpScope(tenantId);
+    const provider = this.requireProvider();
+    if (!provider.readArtifact) throw new ApiError(501, 'backup download not configured', 'not_implemented');
+    const row = await this.getRow(tenantId, backupId);
+    if (row.status !== 'verified' || !row.encrypted) throw ApiError.forbidden('only verified encrypted backups can be downloaded');
+    const bytes = await provider.readArtifact(row.path);
+    if (bytes.length !== row.bytes || createHash('sha256').update(bytes).digest('hex') !== row.sha256) {
+      throw ApiError.conflict('backup artifact no longer matches its verified record');
+    }
+    return bytes;
+  }
+
   private async getRow(tenantId: string, backupId: string): Promise<AdminBackupRow> {
     const row = await this.db
       .selectFrom('admin_backups')
@@ -227,7 +260,7 @@ export class BackupService {
       .where('tenant_id', '=', tenantId)
       .where('id', '=', backupId)
       .executeTakeFirst();
-    if (!row) throw new Error(`backup "${backupId}" not found`);
+    if (!row) throw ApiError.notFound('backup not found');
     return row;
   }
 

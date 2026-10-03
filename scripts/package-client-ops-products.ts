@@ -60,6 +60,7 @@ const SHARED_SOURCE_DIRECTORIES = [
   'apps/client-ops-ui',
   'packages/client-ops',
   'packages/automation',
+  'packages/workflows',
   'packages/core',
   'packages/db',
   'docs/client-ops',

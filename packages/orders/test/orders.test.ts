@@ -65,6 +65,69 @@ describe('orders CRUD + money', () => {
     expect(updated.data.lines).toHaveLength(1);
   });
 
+  it('adds tip after discount and tax, preserves POS provenance, and keeps receipt stable', async () => {
+    const { app, tenantA } = await setup();
+    const created = await json(
+      await app.request('/orders', {
+        method: 'POST',
+        headers: headers(tenantA),
+        body: JSON.stringify({
+          channel: 'pos',
+          registerId: 'reg-1',
+          deviceId: 'dev-1',
+          cashierId: 'user-1',
+          cashSessionId: 'shift-1',
+          lines: [{ description: 'A', qty: 3, unitPriceCents: 333, discountBps: 333 }],
+          discountFixedCents: 17,
+          taxBps: 725,
+          tipCents: 251,
+        }),
+      }),
+    );
+    // Core math: line round(999 * .9667)=966; order discount=17;
+    // tax round(949 * .0725)=69; base=1018; tip after tax => 1269.
+    expect(created.data).toMatchObject({
+      subtotal_cents: 966,
+      discount_cents: 17,
+      tax_cents: 69,
+      tip_cents: 251,
+      total_cents: 1269,
+      register_id: 'reg-1',
+      device_id: 'dev-1',
+      cashier_id: 'user-1',
+      cash_session_id: 'shift-1',
+    });
+    expect(created.data.receipt_number).toMatch(/^BL-\d{8}-[A-Z0-9_-]{10}$/);
+
+    const receipt = created.data.receipt_number;
+    const updated = await json(
+      await app.request(`/orders/${created.data.id}`, {
+        method: 'PUT',
+        headers: headers(tenantA),
+        body: JSON.stringify({ tipCents: 500 }),
+      }),
+    );
+    expect(updated.data.tip_cents).toBe(500);
+    expect(updated.data.total_cents).toBe(1518);
+    expect(updated.data.receipt_number).toBe(receipt);
+  });
+
+  it('rejects negative and fractional tips', async () => {
+    const { app, tenantA } = await setup();
+    for (const tipCents of [-1, 1.25]) {
+      const res = await app.request('/orders', {
+        method: 'POST',
+        headers: headers(tenantA),
+        body: JSON.stringify({
+          channel: 'pos',
+          tipCents,
+          lines: [{ description: 'A', qty: 1, unitPriceCents: 100 }],
+        }),
+      });
+      expect(res.status).toBe(400);
+    }
+  });
+
   it('audits order creation', async () => {
     const { app, db, tenantA } = await setup();
     const created = await json(
@@ -127,34 +190,197 @@ describe('orders tenant isolation', () => {
 
 describe('tenders (idempotent) + pay requires sum == total', () => {
   it('same idempotency key twice yields ONE tender', async () => {
-    const { app, tenantA } = await setup();
+    const { app, events, tenantA } = await setup();
+    const captured = collect(events, 'orders.tender.captured');
     const order = await json(
       await app.request('/orders', {
         method: 'POST',
         headers: headers(tenantA),
-        body: JSON.stringify({ channel: 'pos', lines: [{ description: 'X', qty: 1, unitPriceCents: 5000 }] }),
+        body: JSON.stringify({ channel: 'pos', cashSessionId: 'drawer-1', lines: [{ description: 'X', qty: 1, unitPriceCents: 5000 }] }),
       }),
     );
     const id = order.data.id;
     const t1 = await app.request(`/orders/${id}/tenders`, {
       method: 'POST',
       headers: headers(tenantA),
-      body: JSON.stringify({ kind: 'cash', amountCents: 5000, idempotencyKey: 'k1' }),
+      body: JSON.stringify({ kind: 'cash', amountCents: 5000, cashReceivedCents: 6000, idempotencyKey: 'k1' }),
     });
     expect(t1.status).toBe(201);
     const t2 = await app.request(`/orders/${id}/tenders`, {
       method: 'POST',
       headers: headers(tenantA),
-      body: JSON.stringify({ kind: 'cash', amountCents: 5000, idempotencyKey: 'k1' }),
+      body: JSON.stringify({ kind: 'cash', amountCents: 5000, cashReceivedCents: 6000, idempotencyKey: 'k1' }),
     });
     expect(t2.status).toBe(200);
     const b1 = await json(t1);
     const b2 = await json(t2);
     expect(b2.created).toBe(false);
     expect(b2.data.id).toBe(b1.data.id);
+    expect(b1.data).toMatchObject({ cash_received_cents: 6000, change_due_cents: 1000 });
 
     const list = await json(await app.request(`/orders/${id}/tenders`, { headers: headers(tenantA) }));
     expect(list.data).toHaveLength(1);
+    expect(captured).toHaveLength(1);
+    expect(captured[0].payload).toMatchObject({
+      cashSessionId: 'drawer-1',
+      orderId: id,
+      tenderId: b1.data.id,
+      kind: 'cash',
+      amountCents: 5000,
+      cashReceivedCents: 6000,
+      changeDueCents: 1000,
+    });
+  });
+
+  it('fails closed for unsupported manual tender paths and requires a drawer for POS cash', async () => {
+    const { app, tenantA } = await setup();
+    const posWithoutDrawer = await json(
+      await app.request('/orders', {
+        method: 'POST',
+        headers: headers(tenantA),
+        body: JSON.stringify({
+          channel: 'pos',
+          lines: [{ description: 'X', qty: 1, unitPriceCents: 1000 }],
+        }),
+      }),
+    );
+    expect(
+      (
+        await app.request(`/orders/${posWithoutDrawer.data.id}/tenders`, {
+          method: 'POST',
+          headers: headers(tenantA),
+          body: JSON.stringify({ kind: 'cash', amountCents: 1000, idempotencyKey: 'no-drawer' }),
+        })
+      ).status,
+    ).toBe(400);
+
+    const order = await json(
+      await app.request('/orders', {
+        method: 'POST',
+        headers: headers(tenantA),
+        body: JSON.stringify({
+          channel: 'storefront',
+          lines: [{ description: 'X', qty: 1, unitPriceCents: 1000 }],
+        }),
+      }),
+    );
+    for (const kind of ['card', 'provider', 'gift_card', 'store_credit']) {
+      const res = await app.request(`/orders/${order.data.id}/tenders`, {
+        method: 'POST',
+        headers: headers(tenantA),
+        body: JSON.stringify({ kind, amountCents: 1000, idempotencyKey: `blocked-${kind}` }),
+      });
+      expect(res.status).toBe(400);
+    }
+    expect(
+      (
+        await app.request(`/orders/${order.data.id}/tenders`, {
+          method: 'POST',
+          headers: headers(tenantA),
+          body: JSON.stringify({
+            kind: 'external',
+            amountCents: 1000,
+            cashReceivedCents: 1000,
+            idempotencyKey: 'external-cash-field',
+          }),
+        })
+      ).status,
+    ).toBe(400);
+
+    // Non-POS compatibility: cash defaults received to the applied amount.
+    const cash = await json(
+      await app.request(`/orders/${order.data.id}/tenders`, {
+        method: 'POST',
+        headers: headers(tenantA),
+        body: JSON.stringify({ kind: 'cash', amountCents: 1000, idempotencyKey: 'legacy-cash' }),
+      }),
+    );
+    expect(cash.data).toMatchObject({ cash_received_cents: 1000, change_due_cents: 0 });
+  });
+
+  it('rejects reusing a tender idempotency key for different money or order', async () => {
+    const { app, tenantA } = await setup();
+    const makeOrder = async () =>
+      json(
+        await app.request('/orders', {
+          method: 'POST',
+          headers: headers(tenantA),
+          body: JSON.stringify({
+            channel: 'pos',
+            cashSessionId: 'drawer-conflict',
+            lines: [{ description: 'X', qty: 1, unitPriceCents: 5000 }],
+          }),
+        }),
+      );
+    const a = await makeOrder();
+    const b = await makeOrder();
+    expect(
+      (
+        await app.request(`/orders/${a.data.id}/tenders`, {
+          method: 'POST',
+          headers: headers(tenantA),
+          body: JSON.stringify({ kind: 'cash', amountCents: 5000, idempotencyKey: 'bound-key' }),
+        })
+      ).status,
+    ).toBe(201);
+    expect(
+      (
+        await app.request(`/orders/${a.data.id}/tenders`, {
+          method: 'POST',
+          headers: headers(tenantA),
+          body: JSON.stringify({ kind: 'cash', amountCents: 4999, idempotencyKey: 'bound-key' }),
+        })
+      ).status,
+    ).toBe(409);
+    expect(
+      (
+        await app.request(`/orders/${a.data.id}/tenders`, {
+          method: 'POST',
+          headers: headers(tenantA),
+          body: JSON.stringify({
+            kind: 'cash',
+            amountCents: 5000,
+            cashReceivedCents: 6000,
+            idempotencyKey: 'bound-key',
+          }),
+        })
+      ).status,
+    ).toBe(409);
+    expect(
+      (
+        await app.request(`/orders/${b.data.id}/tenders`, {
+          method: 'POST',
+          headers: headers(tenantA),
+          body: JSON.stringify({ kind: 'cash', amountCents: 5000, idempotencyKey: 'bound-key' }),
+        })
+      ).status,
+    ).toBe(409);
+  });
+
+  it('rejects cash received below the amount applied', async () => {
+    const { app, tenantA } = await setup();
+    const order = await json(
+      await app.request('/orders', {
+        method: 'POST',
+        headers: headers(tenantA),
+        body: JSON.stringify({
+          channel: 'pos',
+          cashSessionId: 'drawer-short',
+          lines: [{ description: 'X', qty: 1, unitPriceCents: 5000 }],
+        }),
+      }),
+    );
+    const res = await app.request(`/orders/${order.data.id}/tenders`, {
+      method: 'POST',
+      headers: headers(tenantA),
+      body: JSON.stringify({
+        kind: 'cash',
+        amountCents: 5000,
+        cashReceivedCents: 4999,
+        idempotencyKey: 'short-cash',
+      }),
+    });
+    expect(res.status).toBe(400);
   });
 
   it('pay fails until captured tenders equal the total, then succeeds and emits paid', async () => {
@@ -164,7 +390,7 @@ describe('tenders (idempotent) + pay requires sum == total', () => {
       await app.request('/orders', {
         method: 'POST',
         headers: headers(tenantA),
-        body: JSON.stringify({ channel: 'pos', lines: [{ variationId: 'v1', description: 'X', qty: 1, unitPriceCents: 5000 }] }),
+        body: JSON.stringify({ channel: 'pos', cashSessionId: 'drawer-pay', lines: [{ variationId: 'v1', description: 'X', qty: 1, unitPriceCents: 5000 }] }),
       }),
     );
     const id = order.data.id;
@@ -189,6 +415,64 @@ describe('tenders (idempotent) + pay requires sum == total', () => {
     expect(paidEvents[0].payload).toMatchObject({ v: 1, orderId: id, totalCents: 5000 });
     expect(paidEvents[0].payload).toMatchObject({ lines: [{ variationId: 'v1', qty: 1 }] });
   });
+
+  it('rolls back every inline tender when a later tender or the final total is invalid', async () => {
+    const { app, events, tenantA } = await setup();
+    const tenderEvents = collect(events, 'orders.tender.captured');
+    const order = await json(
+      await app.request('/orders', {
+        method: 'POST',
+        headers: headers(tenantA),
+        body: JSON.stringify({
+          channel: 'pos',
+          cashSessionId: 'drawer-atomic-pay',
+          lines: [{ description: 'X', qty: 1, unitPriceCents: 5_000 }],
+        }),
+      }),
+    );
+    const orderId = order.data.id;
+
+    const laterInvalid = await app.request(`/orders/${orderId}/pay`, {
+      method: 'POST',
+      headers: headers(tenantA),
+      body: JSON.stringify({
+        tenders: [
+          { kind: 'cash', amountCents: 2_000, idempotencyKey: 'atomic-first' },
+          { kind: 'provider', amountCents: 3_000, idempotencyKey: 'atomic-invalid' },
+        ],
+      }),
+    });
+    expect(laterInvalid.status).toBe(400);
+    expect(
+      (
+        await json(
+          await app.request(`/orders/${orderId}/tenders`, { headers: headers(tenantA) }),
+        )
+      ).data,
+    ).toEqual([]);
+    expect(tenderEvents).toHaveLength(0);
+
+    const wrongTotal = await app.request(`/orders/${orderId}/pay`, {
+      method: 'POST',
+      headers: headers(tenantA),
+      body: JSON.stringify({
+        tenders: [{ kind: 'cash', amountCents: 4_999, idempotencyKey: 'atomic-short' }],
+      }),
+    });
+    expect(wrongTotal.status).toBe(409);
+    expect(
+      (
+        await json(
+          await app.request(`/orders/${orderId}/tenders`, { headers: headers(tenantA) }),
+        )
+      ).data,
+    ).toEqual([]);
+    expect(tenderEvents).toHaveLength(0);
+    const after = await json(
+      await app.request(`/orders/${orderId}`, { headers: headers(tenantA) }),
+    );
+    expect(after.data.status).toBe('draft');
+  });
 });
 
 describe('order state machine', () => {
@@ -197,7 +481,7 @@ describe('order state machine', () => {
       await app.request('/orders', {
         method: 'POST',
         headers: headers(tenant),
-        body: JSON.stringify({ channel: 'pos', lines: [{ description: 'X', qty: 1, unitPriceCents: 1000 }] }),
+        body: JSON.stringify({ channel: 'pos', cashSessionId: 'drawer-state', lines: [{ description: 'X', qty: 1, unitPriceCents: 1000 }] }),
       }),
     );
   }
@@ -241,7 +525,7 @@ describe('order state machine', () => {
         await app.request(`/orders/${id}/refunds`, {
           method: 'POST',
           headers: headers(tenantA),
-          body: JSON.stringify({ tenderId: 'x', amountCents: 100, lines: [{ lineId: o.data.lines[0].id, qty: 1, disposition: 'restock' }] }),
+          body: JSON.stringify({ tenderId: 'x', idempotencyKey: 'unpaid-refund', amountCents: 100, lines: [{ lineId: o.data.lines[0].id, qty: 1, disposition: 'restock' }] }),
         })
       ).status,
     ).toBe(409);

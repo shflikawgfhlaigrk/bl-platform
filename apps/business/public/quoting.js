@@ -1,0 +1,53 @@
+export function quotingView(ui) {
+  const { api, content, field, area, select, form, panel, table, action, bindForm, bindActions, render, say, esc, money, cents, customers, customerOptions } = ui;
+  const percent = value => { const bps=cents(value||'0'); if(bps>10000)throw Error('Enter a percentage between 0 and 100.'); return bps; };
+  const line = (value={}) => `<div class="quote-line fields">${field('description','Description','text',value.description||'','required')}${field('quantity','Quantity','number',value.quantity??1,'required min="0.01" step="0.01"')}${field('price','Unit price','text',value.unitPriceCents===undefined?'':(value.unitPriceCents/100).toFixed(2),'required inputmode="decimal"')}${field('cost','Internal unit cost','text',((value.unitCostCents||0)/100).toFixed(2),'inputmode="decimal"')}${field('lineDiscount','Line discount (%)','text',((value.discountBps||0)/100).toFixed(2),'inputmode="decimal"')}<button type="button" class="quiet" data-remove-line>Remove line</button></div>`;
+  const lineEditor = () => `<div class="wide" data-quote-editor><div data-quote-lines>${line()}</div><button type="button" class="quiet" data-add-quote-line>Add line</button></div>`;
+  const bindLines = id => {
+    const f=document.getElementById(id);if(!f)return;
+    f.querySelector('[data-add-quote-line]').onclick=()=>f.querySelector('[data-quote-lines]').insertAdjacentHTML('beforeend',line());
+    f.addEventListener('click',e=>{const b=e.target.closest('[data-remove-line]');if(b){if(f.querySelectorAll('.quote-line').length>1)b.closest('.quote-line').remove();else say('Keep at least one line, or choose a saved template.',true);}});
+  };
+  const lines = f => [...f.querySelectorAll('.quote-line')].map(row=>{const value=name=>row.querySelector(`[name="${name}"]`).value;return {description:value('description'),quantity:Number(value('quantity')),unitPriceCents:cents(value('price')),unitCostCents:cents(value('cost')||'0'),discountBps:percent(value('lineDiscount'))};});
+  const append = html => { content.querySelector('[data-quote-detail]')?.remove();content.insertAdjacentHTML('beforeend',`<div data-quote-detail>${html}</div>`);content.querySelector('[data-quote-detail]').scrollIntoView({behavior:'smooth'}); };
+  return async(sub='quotes')=>{
+    if(!['quotes','templates','rules'].includes(sub))sub='quotes';
+    content.innerHTML=`<div class="tabs">${[['quotes','Quotes'],['templates','Templates & bundles'],['rules','Pricing rules']].map(([key,label])=>`<a href="#/quoting/${key}" class="${key===sub?'active':''}">${label}</a>`).join('')}</div>`;
+    const templates=await api('quoting/templates?limit=200');
+    if(sub==='templates'){
+      content.insertAdjacentHTML('beforeend',form('template-add','Create a service template',field('name','Template name','text','','required')+field('summary','Description')+lineEditor(),'Save template')
+        +form('bundle-add','Bundle saved templates',field('name','Bundle name','text','','required')+`<div class="wide">${templates.filter(r=>r.active).map(r=>`<label class="check-row"><input type="checkbox" name="children" value="${esc(r.id)}">${esc(r.name)}</label>`).join('')||'<p class="muted">Create a template first.</p>'}</div>`,'Save bundle')
+        +panel('Templates & bundles',table(templates,[['Name','name'],['Description','description'],['Status',r=>r.active?'Active':'Disabled']],r=>action('template-view',r.id,'View')+action('template-toggle',r.id,r.active?'Disable':'Enable'))));
+      bindLines('template-add');bindForm('template-add',(d,f)=>api('quoting/templates','POST',{name:d.name,description:d.summary,lineItems:lines(f)}));
+      bindForm('bundle-add',(d,f)=>{const children=new FormData(f).getAll('children');if(!children.length)throw Error('Select at least one saved template.');return api('quoting/templates','POST',{name:d.name,childTemplateIds:children});});
+      bindActions(async(a,id)=>{const row=templates.find(t=>t.id===id);if(a==='template-toggle'){await api(`quoting/templates/${id}`,'PATCH',{active:!row.active});await render();say('Template updated.');}if(a==='template-view'){const x=await api(`quoting/templates/${id}`);append(panel(x.name,table(JSON.parse(x.line_items),[['Description','description'],['Quantity','quantity'],['Unit price',r=>money(r.unitPriceCents)],['Internal unit cost',r=>money(r.unitCostCents)]])+`<p>Included templates: ${esc(JSON.parse(x.child_template_ids).map(id=>templates.find(t=>t.id===id)?.name||'Unavailable template').join(', ')||'None')}</p>`));}});
+      return;
+    }
+    if(sub==='rules'){
+      const rows=await api('quoting/pricing-rules?limit=200');
+      content.insertAdjacentHTML('beforeend',form('rule-add','Create a pricing rule',field('name','Rule name','text','','required')+select('scope','Applies to',[['quote','Whole quote'],['line','Each matching line']],false)+select('condition','When',[['subtotal_cents','Subtotal is at least ($)'],['line_count','Line count is at least'],['total_quantity','Total quantity is at least']],false)+field('threshold','Threshold','text','0','required')+select('action','Adjustment',[['percent_discount','Percent discount (%)'],['fixed_discount','Fixed discount ($)']],false)+field('amount','Adjustment amount','text','','required')+field('priority','Order (lower runs first)','number','0','step="1"'),'Save rule')
+        +panel('Pricing rules',`<p class="muted">Rules apply in order when a draft quote is created or edited. Published quotes keep their agreed price.</p>`+table(rows,[['Rule','name'],['Scope','scope'],['Order','priority'],['Status',r=>r.active?'Active':'Disabled']],r=>action('rule-toggle',r.id,r.active?'Disable':'Enable'))));
+      const f=document.getElementById('rule-add');
+      f.elements.scope.onchange=()=>{const isLine=f.elements.scope.value==='line';f.elements.condition.innerHTML=(isLine?[['quantity','Quantity is at least'],['unit_price_cents','Unit price is at least ($)'],['description','Description contains']]:[['subtotal_cents','Subtotal is at least ($)'],['line_count','Line count is at least'],['total_quantity','Total quantity is at least']]).map(([v,t])=>`<option value="${v}">${t}</option>`).join('');f.elements.action.innerHTML=(isLine?[['percent_adjust','Percent increase (%)'],['fixed_adjust','Fixed increase ($)'],['set_price','Set unit price ($)']]:[['percent_discount','Percent discount (%)'],['fixed_discount','Fixed discount ($)']]).map(([v,t])=>`<option value="${v}">${t}</option>`).join('');};
+      bindForm('rule-add',d=>{const value=d.condition==='description'?d.threshold:d.condition.endsWith('_cents')?cents(d.threshold):Number(d.threshold);if(typeof value==='number'&&(!Number.isFinite(value)||value<0))throw Error('Enter a valid non-negative threshold.');return api('quoting/pricing-rules','POST',{name:d.name,scope:d.scope,priority:Number(d.priority),conditions:[{field:d.condition,op:d.condition==='description'?'contains':'gte',value}],action:{type:d.action,amount:d.action.startsWith('percent')?percent(d.amount):cents(d.amount)}});});
+      bindActions(async(a,id)=>{if(a==='rule-toggle'){await api(`quoting/pricing-rules/${id}`,'PATCH',{active:!rows.find(r=>r.id===id).active});await render();say('Pricing rule updated.');}});
+      return;
+    }
+    const [rows,cs]=await Promise.all([api('quoting/quotes?limit=200'),customers()]);
+    content.insertAdjacentHTML('beforeend',form('quote-add','Prepare an estimate',select('customerId','Customer',customerOptions(cs))+field('title','Quote title','text','','required')+select('templateId','Start with',[['','Custom line items'],...templates.filter(r=>r.active).map(r=>[r.id,r.name])],false)+field('discount','Quote discount (%)','text','0')+field('fixedDiscount','Additional discount ($)','text','0')+field('tax','Tax (%)','text','0')+lineEditor(),'Create quote')
+      +panel('Quotes',table(rows,[['Quote','title'],['Total',r=>money(r.total_cents)],['Internal cost',r=>money(r.total_cost_cents)],['Margin',r=>`${money(r.margin_cents)} (${(r.margin_bps/100).toFixed(2)}%)`],['Status','status']],r=>action('view',r.id,'Details')+(r.status==='draft'?action('publish',r.id,'Share in portal'):r.status==='approved'&&!r.converted_at?action('convert',r.id,'Create job & invoice'):''))));
+    bindLines('quote-add');const f=document.getElementById('quote-add');
+    f.elements.templateId.onchange=()=>{const disabled=!!f.elements.templateId.value;f.querySelector('[data-quote-editor]').hidden=disabled;for(const input of f.querySelectorAll('[data-quote-editor] input'))input.disabled=disabled;};
+    bindForm('quote-add',(d,f)=>api('quoting/quotes','POST',{customerId:d.customerId,title:d.title,discountBps:percent(d.discount),discountFixedCents:cents(d.fixedDiscount||'0'),taxBps:percent(d.tax),...(d.templateId?{templateId:d.templateId}:{lines:lines(f)})}));
+    bindActions(async(a,id)=>{
+      if(a==='publish'){await api(`quoting/quotes/${id}/send`,'POST',{});await render();say('Quote is available in the customer portal.');}
+      if(a==='convert'){const x=await api(`quoting/quotes/${id}/convert`,'POST',{});await render();append(panel('Job and invoice created',`<p>${esc(x.job.title)} · ${money(x.totalCents)}</p><div class="actions"><a class="button quiet" href="#/crm/jobs">Open jobs</a><a class="button quiet" href="#/billing">Review draft invoice</a></div>`));}
+      if(a==='view'){
+        const {quote,lines:items}=await api(`quoting/quotes/${id}`);
+        append(panel(quote.title,table(items,[['Description','description'],['Quantity','quantity'],['Effective unit price',r=>money(r.effective_unit_price_cents)],['Internal unit cost',r=>money(r.unit_cost_cents)],['Line total',r=>money(r.total_cents)]])+`<p>Subtotal: ${money(quote.subtotal_cents)} · Discount: ${money(quote.discount_cents)} · Tax: ${money(quote.tax_cents)} · Total: ${money(quote.total_cents)}</p><p>Internal cost: ${money(quote.total_cost_cents)} · Margin: ${money(quote.margin_cents)}</p><a href="/api/quoting/quotes/${encodeURIComponent(id)}/document" target="_blank" rel="noopener">Printable customer quote</a>`)
+          +(quote.status==='draft'?form('quote-adjust','Adjust quote pricing',field('title','Title','text',quote.title,'required')+field('discount','Quote discount (%)','text',((quote.discount_bps||0)/100).toFixed(2))+field('fixedDiscount','Additional discount ($)','text',((quote.discount_fixed_cents||0)/100).toFixed(2))+field('tax','Tax (%)','text',((quote.tax_bps||0)/100).toFixed(2)),'Update quote'):''));
+        bindForm('quote-adjust',d=>api(`quoting/quotes/${id}`,'PATCH',{title:d.title,discountBps:percent(d.discount),discountFixedCents:cents(d.fixedDiscount),taxBps:percent(d.tax)}));
+      }
+    });
+  };
+}

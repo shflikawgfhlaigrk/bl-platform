@@ -229,7 +229,7 @@ describe('assignments + permissions + work logs', () => {
     expect(logs.map((l: any) => l.kind)).toEqual(['note', 'manager_comment']);
   });
 
-  it('photo references: worker attaches file ids to own assignment; others are denied', async () => {
+  it('photo references never grant file access; new photos require the authenticated upload endpoint', async () => {
     const ctx = await setup();
     const { worker, other } = await twoWorkersAndAManager(ctx);
     const assignment = await makeAssignment(ctx, ctx.tenantA, {
@@ -245,8 +245,7 @@ describe('assignments + permissions + work logs', () => {
       { fileId: 'file-abc-123', caption: 'after' },
       worker.token,
     );
-    expect(added.status).toBe(201);
-    expect((await body(added)).data.file_id).toBe('file-abc-123');
+    expect(added.status).toBe(400);
 
     const denied = await post(
       ctx.app,
@@ -264,8 +263,7 @@ describe('assignments + permissions + work logs', () => {
       worker.token,
     );
     const photos = (await body(listed)).data;
-    expect(photos).toHaveLength(1);
-    expect(photos[0].caption).toBe('after');
+    expect(photos).toHaveLength(0);
   });
 
   it('tenant isolation: tenant B cannot see or touch tenant A assignments', async () => {

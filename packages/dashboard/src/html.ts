@@ -95,6 +95,10 @@ function renderWidget(w: EffectiveWidget, d: DashboardPageData): string {
         `<p class="big">${fmtCount(r.total)}</p><p class="sub">${fmtCount(r.completed)} completed</p>${statusList(r.byStatus)}${unavailableNote(r.available, 'scheduling')}`,
       );
     }
+    case 'jobs': {
+      const result = d.jobs ?? { available: false, total: 0, completed: 0, byStatus: [] };
+      return card(w.name, `<p class="big">${fmtCount(result.total)}</p><p class="sub">${fmtCount(result.completed)} completed</p>${statusList(result.byStatus)}${unavailableNote(result.available, 'crm')}`);
+    }
     case 'quote_conversion': {
       const r = d.quoteConversion;
       return card(

@@ -50,6 +50,7 @@ export {
   // Reservations
   reserve,
   releaseReservation,
+  settleReservationsForReference,
   expireReservations,
   listReservations,
   // Sell reconciliation
@@ -97,6 +98,7 @@ export type {
   MovementFilter,
   ReserveInput,
   ReserveResult,
+  SettleReservationsResult,
   SellLine,
   SellForOrderInput,
   SellForOrderResult,

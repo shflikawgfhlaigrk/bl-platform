@@ -164,13 +164,14 @@ describe('workflows router — executions', () => {
     const listRes = await app.request(`/executions?workflow_id=${workflowId}`, { headers });
     const listBody = (await listRes.json()) as any;
     expect(listBody.data.length).toBe(1);
-    expect(listBody.data[0].status).toBe('succeeded');
+    expect(listBody.data[0].status).toBe('retrying');
 
     const detailRes = await app.request(`/executions/${listBody.data[0].id}`, { headers });
     const detail = ((await detailRes.json()) as any).data;
     expect(detail.triggerPayload).toEqual({ leadId: 'L1', email: 'a@b.c' });
     expect(detail.actions.length).toBe(2);
-    expect(detail.actions.map((a: any) => a.status)).toEqual(['succeeded', 'succeeded']);
+    expect(detail.actions.map((a: any) => a.status)).toEqual(['succeeded', 'failed']);
+    expect(detail.actions[1].error).toContain('Email messaging is not connected');
   });
 });
 

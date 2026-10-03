@@ -1,4 +1,5 @@
 import type { CoreDatabase } from '@blacklabel/core';
+import type { WorkflowsDatabase } from '@blacklabel/workflows';
 
 export type CatalogKind = 'service' | 'vertical_pack';
 export type InstallationStatus = 'onboarding' | 'active' | 'paused' | 'archived';
@@ -191,7 +192,8 @@ export interface ClientOpsPortfolioPackageRow {
   updated_at: string;
 }
 
-export interface ClientOpsDatabase extends CoreDatabase {
+export interface ClientOpsDatabase extends CoreDatabase, WorkflowsDatabase {
+  client_ops_execution_journal: ClientOpsExecutionJournalRow;
   client_ops_installations: ClientOpsInstallationRow;
   client_ops_installed_workflows: ClientOpsInstalledWorkflowRow;
   client_ops_connector_bindings: ClientOpsConnectorBindingRow;
@@ -203,4 +205,17 @@ export interface ClientOpsDatabase extends CoreDatabase {
   client_ops_usage_events: ClientOpsUsageEventRow;
   client_ops_portfolio_test_runs: ClientOpsPortfolioTestRunRow;
   client_ops_portfolio_packages: ClientOpsPortfolioPackageRow;
+}
+
+/** Immutable action checkpoints; business writes and their checkpoint commit together. */
+export interface ClientOpsExecutionJournalRow {
+  id: string;
+  tenant_id: string;
+  installation_id: string;
+  root_run_id: string;
+  action_key: string;
+  request_sha256: string;
+  output_json: string;
+  references_json: string;
+  created_at: string;
 }

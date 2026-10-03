@@ -474,7 +474,7 @@ export function crmRouter(deps: ModuleDeps<CrmDatabase>): Hono<TenantEnv> {
   });
   app.patch('/jobs/:id', async (c) => {
     const patch = jobUpdate.parse(await jsonBody(c));
-    const row = await svc.updateJob(db, c.get('tenantId'), actorOf(c), c.req.param('id'), patch);
+    const row = await svc.updateJob(db, c.get('tenantId'), actorOf(c), c.req.param('id'), patch, events);
     return c.json({ data: present(row) });
   });
   app.delete('/jobs/:id', async (c) => {

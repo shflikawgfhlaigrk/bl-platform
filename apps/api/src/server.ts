@@ -19,6 +19,14 @@
  *   ADMIN_MASTER_KEY_FILE    path to a key file; else auto-generated ONCE into
  *                            <storage>/admin.key (chmod 600)
  *   CHECKOUT_SIM_SECRET      overrides the derived checkout-simulator secret
+ *   STRIPE_SECRET_KEY        Stripe server secret (required for Terminal)
+ *   STRIPE_WEBHOOK_SECRET    Stripe webhook signing secret (required)
+ *   STRIPE_TERMINAL_READER_ID  default physical reader id (required)
+ *   STRIPE_API_VERSION       optional explicit Stripe-Version
+ *   STRIPE_API_BASE_URL      optional API base (defaults to Stripe production)
+ *   STRIPE_REQUEST_TIMEOUT_MS  optional bounded request timeout
+ *   STRIPE_WEBHOOK_TOLERANCE_SECONDS optional signature timestamp tolerance
+ *   STRIPE_CURRENCY          optional default currency (defaults to usd)
  *
  * Loopback only: this process serves one owner's business data on their own
  * machine; it must never listen on an outward-facing interface.
@@ -27,7 +35,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'n
 import { randomBytes } from 'node:crypto';
 import * as path from 'node:path';
 import { serve } from '@hono/node-server';
-import { serveStatic } from '@hono/node-server/serve-static';
+import { privateStaticFiles } from './private-static';
 import { Hono } from 'hono';
 import { asCoreDb } from '@blacklabel/core';
 import { createDb } from '@blacklabel/db';
@@ -35,6 +43,14 @@ import { LocalDiskStorageProvider } from '@blacklabel/files';
 import { createApp, mountPublicStorefront, type PlatformDatabase } from './app';
 import { SqliteBackupProvider, makeCountProbe } from './admin-wiring';
 import { securityHeaders } from './security';
+import {
+  createConfiguredStripeTerminalProvider,
+  readStripeTerminalEnvConfig,
+  inspectStripeTerminalConnection,
+  verifyConfiguredStripeTerminalReader,
+  type StripeTerminalFetch,
+} from './stripe-terminal';
+import { withStartupLock } from './startup-lock';
 
 const PORT = Number(process.env.PORT ?? 8460);
 const STORAGE_DIR = path.resolve(process.env.PLATFORM_STORAGE_DIR ?? '.storage');
@@ -42,6 +58,33 @@ const DB_PATH =
   process.env.PLATFORM_DB_PATH ?? process.env.DB_PATH ?? path.join(STORAGE_DIR, 'platform.db');
 const DEFAULT_TENANT_NAME = process.env.PLATFORM_DEFAULT_TENANT_NAME;
 const UI_DIR = process.env.UI_DIR;
+
+const stripeTerminalFetch: StripeTerminalFetch = (url, init) => fetch(url, init);
+const stripeTerminalConfig = readStripeTerminalEnvConfig(process.env);
+const stripeTerminalProvider = createConfiguredStripeTerminalProvider(
+  stripeTerminalConfig,
+  { fetch: stripeTerminalFetch },
+);
+const stripeReaderId = stripeTerminalConfig.defaultReaderId?.trim();
+const posCardPresent = stripeTerminalProvider && stripeReaderId
+  ? {
+      provider: 'stripe_terminal' as const,
+      readerId: stripeReaderId,
+      verify: async () => {
+        const result = await verifyConfiguredStripeTerminalReader(
+          stripeTerminalConfig,
+          { fetch: stripeTerminalFetch },
+        );
+        return {
+          verified: result.verified,
+          readerId: result.observedReaderId ?? result.expectedReaderId ?? stripeReaderId,
+          status: result.status,
+          checkedAt: new Date().toISOString(),
+          code: result.reason,
+        };
+      },
+    }
+  : undefined;
 
 mkdirSync(STORAGE_DIR, { recursive: true });
 
@@ -67,44 +110,55 @@ function resolveMasterKey(): Buffer | string {
 
 const db = createDb<PlatformDatabase>(DB_PATH);
 
-const platform = await createApp({
-  db,
-  storage: new LocalDiskStorageProvider(path.join(STORAGE_DIR, 'files')),
-  adminMasterKey: resolveMasterKey(),
-  backupProvider: new SqliteBackupProvider(DB_PATH),
-  countProbe: makeCountProbe(db as never),
-  dbPath: DB_PATH,
-  storageDir: STORAGE_DIR,
-  envDefaultLocationId: process.env.DEFAULT_LOCATION_ID,
-  ownerUserIdEnv: process.env.OWNER_USER_ID,
-  checkoutSimSecret: process.env.CHECKOUT_SIM_SECRET,
-  logSink: (line) => console.log(line), // eslint-disable-line no-console
+// The repository migration runner is replay-safe but not itself a distributed
+// lock. Fence the complete file-backed boot sequence so two local processes
+// cannot migrate, reconcile, or seed the same database concurrently.
+const platform = await withStartupLock(DB_PATH, async () => {
+  const adminMasterKey = resolveMasterKey();
+  const booted = await createApp({
+    db,
+    storage: new LocalDiskStorageProvider(path.join(STORAGE_DIR, 'files')),
+    adminMasterKey,
+    backupProvider: new SqliteBackupProvider(DB_PATH, { key: adminMasterKey, directory: path.join(STORAGE_DIR, 'backups'), staticRoots: UI_DIR ? [UI_DIR] : [] }),
+    countProbe: makeCountProbe(db as never),
+    dbPath: DB_PATH,
+    storageDir: STORAGE_DIR,
+    envDefaultLocationId: process.env.DEFAULT_LOCATION_ID,
+    ownerUserIdEnv: process.env.OWNER_USER_ID,
+    checkoutSimSecret: process.env.CHECKOUT_SIM_SECRET,
+    ...(stripeTerminalProvider ? { checkoutProviders: [stripeTerminalProvider] } : {}),
+    ...(posCardPresent ? { posCardPresent } : {}),
+    posProcessorStatus: () => inspectStripeTerminalConnection(stripeTerminalConfig, { fetch: stripeTerminalFetch }),
+    logSink: (line) => console.log(line), // eslint-disable-line no-console
+  });
+
+  // Single-tenant local mode: seed the named tenant (owner + roles) at boot and
+  // mount the PUBLIC storefront at /store for that tenant (projection-only
+  // reads; checkout creates real reserved orders through the orders module).
+  if (DEFAULT_TENANT_NAME) {
+    const row = await asCoreDb(db)
+      .selectFrom('tenants')
+      .select('id')
+      .where('name', '=', DEFAULT_TENANT_NAME)
+      .orderBy('created_at')
+      .orderBy('id')
+      .executeTakeFirst();
+    if (row) {
+      await booted.seedTenant(row.id);
+      const imageSourceDir = process.env.STORE_IMAGES_DIR;
+      mountPublicStorefront({
+        app: booted.app,
+        db,
+        events: booted.events,
+        tenantId: row.id,
+        imageSourceDir: imageSourceDir && existsSync(imageSourceDir) ? imageSourceDir : undefined,
+      });
+    }
+  }
+
+  return booted;
 });
 const { app, modules } = platform;
-
-// Single-tenant local mode: seed the named tenant (owner + roles) at boot and
-// mount the PUBLIC storefront at /store for that tenant (projection-only reads;
-// checkout creates real reserved orders through the orders module).
-if (DEFAULT_TENANT_NAME) {
-  const row = await asCoreDb(db)
-    .selectFrom('tenants')
-    .select('id')
-    .where('name', '=', DEFAULT_TENANT_NAME)
-    .orderBy('created_at')
-    .orderBy('id')
-    .executeTakeFirst();
-  if (row) {
-    await platform.seedTenant(row.id);
-    const imageSourceDir = process.env.STORE_IMAGES_DIR;
-    mountPublicStorefront({
-      app: platform.app,
-      db,
-      events: platform.events,
-      tenantId: row.id,
-      imageSourceDir: imageSourceDir && existsSync(imageSourceDir) ? imageSourceDir : undefined,
-    });
-  }
-}
 
 // Optional static UI at / (serveStatic falls through to the API app on a miss,
 // so /api/* is unaffected). Security headers apply to static responses too.
@@ -112,7 +166,7 @@ let entry: { fetch: (req: Request) => Response | Promise<Response> } = app;
 if (UI_DIR) {
   const outer = new Hono();
   outer.use('*', securityHeaders());
-  outer.use('/*', serveStatic({ root: UI_DIR }));
+  outer.use('/*', privateStaticFiles(UI_DIR));
   outer.route('/', app);
   entry = outer;
 }

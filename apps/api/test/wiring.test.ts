@@ -12,7 +12,18 @@ import {
   getStock,
   type InventoryDatabase,
 } from '@blacklabel/inventory';
-import { createOrder, type OrdersDatabase } from '@blacklabel/orders';
+import {
+  addTender,
+  createOrder,
+  createRefund,
+  payOrder,
+  type OrdersDatabase,
+} from '@blacklabel/orders';
+import {
+  cashSessionReconciliation,
+  openCashSession,
+  type FinanceDatabase,
+} from '@blacklabel/finance';
 import { listByKind, type ActionsDatabase } from '@blacklabel/actions';
 import {
   createShow,
@@ -37,6 +48,7 @@ const inv = (db: unknown) => db as import('kysely').Kysely<InventoryDatabase>;
 const ord = (db: unknown) => db as import('kysely').Kysely<OrdersDatabase>;
 const act = (db: unknown) => db as import('kysely').Kysely<ActionsDatabase>;
 const shw = (db: unknown) => db as import('kysely').Kysely<ShowsDatabase>;
+const fin = (db: unknown) => db as import('kysely').Kysely<FinanceDatabase>;
 const api = (db: unknown) => db as import('kysely').Kysely<ApiDatabase>;
 
 /** Seed a default warehouse location (config'd as default) + optional stock. */
@@ -71,6 +83,59 @@ async function onHand(db: unknown, tenantId: string, variationId: string, locati
 }
 
 describe('cross-module wiring', () => {
+  it('posts captured cash and cash refunds into the active drawer exactly once', async () => {
+    const { platform, db, tenantId } = await boot();
+    const session = await openCashSession(fin(db), tenantId, 'cashier', {
+      locationRef: 'front-location',
+      drawerRef: 'drawer-1',
+      registerRef: 'register-1',
+      openedBy: 'cashier',
+      openingFloatCents: 10000,
+    });
+    const ctx = { db: ord(db), events: platform.events };
+    const created = await createOrder(ctx, tenantId, 'cashier', {
+      channel: 'pos',
+      cashSessionId: session.id,
+      lines: [{ description: 'Custom item', qty: 1, unitPriceCents: 500 }],
+    });
+    const tender = await addTender(ctx, tenantId, 'cashier', created.order.id, {
+      kind: 'cash',
+      amountCents: 500,
+      idempotencyKey: 'drawer-tender-1',
+    });
+    await addTender(ctx, tenantId, 'cashier', created.order.id, {
+      kind: 'cash',
+      amountCents: 500,
+      idempotencyKey: 'drawer-tender-1',
+    });
+    await payOrder(ctx, tenantId, 'cashier', created.order.id);
+
+    let recon = await cashSessionReconciliation(fin(db), tenantId, session.id);
+    expect(recon).toMatchObject({
+      cashSalesCents: 500,
+      cashRefundsCents: 0,
+      movementCount: 1,
+      effectiveExpectedCents: 10500,
+    });
+
+    await createRefund(ctx, tenantId, 'cashier', created.order.id, {
+      tenderId: tender.tender.id,
+      idempotencyKey: 'wire-refund-1',
+      cashSessionId: session.id,
+      amountCents: 200,
+      reason: 'partial return',
+      lines: [{ lineId: created.lines[0].id, qty: 1, disposition: 'none' }],
+    });
+
+    recon = await cashSessionReconciliation(fin(db), tenantId, session.id);
+    expect(recon).toMatchObject({
+      cashSalesCents: 500,
+      cashRefundsCents: 200,
+      movementCount: 2,
+      effectiveExpectedCents: 10300,
+    });
+  });
+
   it('orders.order.paid decrements stock exactly once, even when emitted twice (journey 8)', async () => {
     const { platform, db, tenantId } = await boot();
     const locId = await seedWarehouse(platform, db, tenantId, [{ variationId: 'v1', onHand: 10 }]);
@@ -98,6 +163,51 @@ describe('cross-module wiring', () => {
     const rows = await getStock(inv(db), tenantId, { variationId: 'v1', locationId: locId });
     expect(rows[0]?.reserved).toBe(4);
     expect(rows[0]?.available).toBe(6);
+  });
+
+  it('aggregates repeated variation lines before reserving, then converts on payment', async () => {
+    const { platform, db, tenantId } = await boot();
+    const locId = await seedWarehouse(platform, db, tenantId, [{ variationId: 'v1', onHand: 10 }]);
+    const lines = [
+      { variationId: 'v1', qty: 2, locationId: locId },
+      { variationId: 'v1', qty: 3, locationId: locId },
+    ];
+
+    await platform.events.emit(tenantId, 'orders.order.reserved', { v: 1, orderId: 'ord-lines', lines });
+    let rows = await getStock(inv(db), tenantId, { variationId: 'v1', locationId: locId });
+    expect(rows[0]?.onHand).toBe(10);
+    expect(rows[0]?.reserved).toBe(5);
+    expect(rows[0]?.available).toBe(5);
+
+    await platform.events.emit(tenantId, 'orders.order.paid', {
+      v: 1,
+      orderId: 'ord-lines',
+      totalCents: 500,
+      lines,
+    });
+    rows = await getStock(inv(db), tenantId, { variationId: 'v1', locationId: locId });
+    expect(rows[0]?.onHand).toBe(5);
+    expect(rows[0]?.reserved).toBe(0);
+    expect(rows[0]?.available).toBe(5);
+  });
+
+  it('releases order reservations on cancellation without changing on-hand stock', async () => {
+    const { platform, db, tenantId } = await boot();
+    const locId = await seedWarehouse(platform, db, tenantId, [{ variationId: 'v1', onHand: 10 }]);
+    const reservePayload = {
+      v: 1,
+      orderId: 'ord-cancel',
+      lines: [{ variationId: 'v1', qty: 4, locationId: locId }],
+    };
+
+    await platform.events.emit(tenantId, 'orders.order.reserved', reservePayload);
+    await platform.events.emit(tenantId, 'orders.order.canceled', { v: 1, orderId: 'ord-cancel' });
+    await platform.events.emit(tenantId, 'orders.order.canceled', { v: 1, orderId: 'ord-cancel' });
+
+    const rows = await getStock(inv(db), tenantId, { variationId: 'v1', locationId: locId });
+    expect(rows[0]?.onHand).toBe(10);
+    expect(rows[0]?.reserved).toBe(0);
+    expect(rows[0]?.available).toBe(10);
   });
 
   it('order.paid with a null-variation line opens exactly one unassigned_custom_sale action', async () => {

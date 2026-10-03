@@ -1,19 +1,20 @@
 /**
  * Security hardening for the composition-root app (applied ONCE, in front of
  * every route). Deterministic and testable — the rate limiter takes an
- * injectable clock, and every rule is header-driven (no hidden global state
+ * injectable clock, and request bodies are bounded before parsing (no hidden global state
  * beyond the limiter's in-memory buckets).
  *
  * Rules:
- *  - Security headers on EVERY response: a self-only CSP, nosniff, no-referrer,
- *    DENY framing.
+ *  - Security headers on EVERY response: self-only active content, local inline
+ *    layout styles used by the DOM renderer, nosniff, no-referrer, DENY framing.
  *  - Origin/CSRF: a browser mutation (POST/PUT/PATCH/DELETE carrying an `Origin`
  *    header) is rejected 403 unless the Origin is same-origin OR it carries the
  *    custom `x-mags-csrf: 1` header. Loopback tools (no Origin) always pass —
  *    a browser cannot forge a missing Origin cross-site.
- *  - Rate limit: a token bucket per (ip, route-group). General 300/min; the
+ *  - Rate limit: bounded per-source buckets. General 300/min; the
  *    "auth-ish" groups (credentials, invitations, accept, session policy) 30/min.
- *  - Request-body size cap by Content-Length: 5MB, except import lanes 50MB.
+ *  - Streamed request-body caps: auth 64KiB, general 5MiB, files 15MiB,
+ *    imports 50MiB; bounded reads have a 30 second deadline.
  *  - Structured request log (admin.createLogger) with a correlation id — method,
  *    path, status, ms only. NEVER a body, never PII.
  */
@@ -32,10 +33,12 @@ const FIFTY_MB = 50 * 1024 * 1024;
 export function securityHeaders(): MiddlewareHandler {
   return async (c, next) => {
     await next();
-    // Self-only: no external scripts, styles, images, fetch, frames.
+    // Active content stays self-only. The UI renderer intentionally composes
+    // responsive flex/grid declarations in element style attributes, so styles
+    // permit inline declarations while scripts retain default-src 'self'.
     c.res.headers.set(
       'Content-Security-Policy',
-      "default-src 'self'; base-uri 'self'; frame-ancestors 'none'; object-src 'none'",
+      "default-src 'self'; style-src 'self' 'unsafe-inline'; base-uri 'self'; frame-ancestors 'none'; object-src 'none'",
     );
     c.res.headers.set('X-Content-Type-Options', 'nosniff');
     c.res.headers.set('Referrer-Policy', 'no-referrer');
@@ -79,6 +82,7 @@ function originHost(origin: string): string | null {
 
 interface Bucket {
   tokens: number;
+  authTokens: number;
   updatedAtMs: number;
 }
 
@@ -87,16 +91,14 @@ export interface RateLimitOptions {
   now?: () => number;
   generalPerMinute?: number;
   authPerMinute?: number;
+  /** Maximum retained source identities; new sources fail closed at capacity. */
+  maxBuckets?: number;
+  /** Idle eviction cannot precede a full token refill (at least one minute). */
+  idleMs?: number;
 }
 
 const AUTH_ISH = /\/(credentials|invitations|accept|session-policy)\b/;
 
-/** Route group key: /api/<module>, else the first path segment. */
-function routeGroup(path: string): string {
-  const parts = path.split('/').filter(Boolean);
-  if (parts[0] === 'api' && parts[1]) return `api/${parts[1]}`;
-  return parts[0] ?? '/';
-}
 
 export function clientIp(c: Context): string {
   const fwd = c.req.header('x-forwarded-for');
@@ -105,35 +107,56 @@ export function clientIp(c: Context): string {
 }
 
 export class RateLimiter {
+  // Only source identities are retained. The two budget categories are fixed;
+  // neither known modules nor arbitrary unknown paths allocate a new bucket.
   private readonly buckets = new Map<string, Bucket>();
   private readonly now: () => number;
   private readonly general: number;
   private readonly auth: number;
+  private readonly maxBuckets: number;
+  private readonly idleMs: number;
+  private lastNow = 0;
 
   constructor(opts: RateLimitOptions = {}) {
     this.now = opts.now ?? (() => Date.now());
     this.general = opts.generalPerMinute ?? 300;
     this.auth = opts.authPerMinute ?? 30;
+    this.maxBuckets = opts.maxBuckets ?? 10_000;
+    this.idleMs = opts.idleMs ?? 120_000;
+    for (const value of [this.general, this.auth, this.maxBuckets]) {
+      if (!Number.isSafeInteger(value) || value < 1) throw new Error('rate-limit capacities must be positive integers');
+    }
+    if (!Number.isFinite(this.idleMs) || this.idleMs < 60_000) throw new Error('rate-limit idle expiry must be at least one minute');
   }
 
-  /** Returns true when allowed; false when the bucket is empty (429). */
+  /** Returns true when allowed; both auth and general budgets use one source. */
   take(ip: string, path: string): boolean {
-    const group = routeGroup(path);
-    const capacity = AUTH_ISH.test(path) ? this.auth : this.general;
-    const refillPerMs = capacity / 60_000; // capacity tokens per minute
-    const key = `${ip}|${group}`;
-    const nowMs = this.now();
+    const clock = this.now();
+    if (!Number.isFinite(clock)) return false;
+    const nowMs = Math.max(this.lastNow, clock);
+    this.lastNow = nowMs;
+    // Map insertion order tracks last use. Only the idle prefix is scanned.
+    // Active/depleted clients are never evicted just to admit a new identity.
+    for (const [key, bucket] of this.buckets) {
+      if (nowMs - bucket.updatedAtMs < this.idleMs) break;
+      this.buckets.delete(key);
+    }
+    const key = typeof ip === 'string' && ip.length <= 128 ? ip : 'unknown';
     let bucket = this.buckets.get(key);
     if (!bucket) {
-      bucket = { tokens: capacity, updatedAtMs: nowMs };
-      this.buckets.set(key, bucket);
+      if (this.buckets.size >= this.maxBuckets) return false;
+      bucket = { tokens: this.general, authTokens: this.auth, updatedAtMs: nowMs };
     }
-    // Refill for elapsed time, capped at capacity.
-    const elapsed = Math.max(0, nowMs - bucket.updatedAtMs);
-    bucket.tokens = Math.min(capacity, bucket.tokens + elapsed * refillPerMs);
+    const elapsed = nowMs - bucket.updatedAtMs;
+    bucket.tokens = Math.min(this.general, bucket.tokens + elapsed * this.general / 60_000);
+    bucket.authTokens = Math.min(this.auth, bucket.authTokens + elapsed * this.auth / 60_000);
     bucket.updatedAtMs = nowMs;
-    if (bucket.tokens < 1) return false;
+    this.buckets.delete(key);
+    this.buckets.set(key, bucket);
+    const authRequest = AUTH_ISH.test(path);
+    if (bucket.tokens < 1 || (authRequest && bucket.authTokens < 1)) return false;
     bucket.tokens -= 1;
+    if (authRequest) bucket.authTokens -= 1;
     return true;
   }
 
@@ -148,18 +171,108 @@ export class RateLimiter {
 }
 
 /* ------------------------------------------------------------------ *
- * Body-size cap (by Content-Length; import lanes get the larger cap)
+ * Actual body-size admission (before downstream parsing or signature checks)
  * ------------------------------------------------------------------ */
 
-export function bodyLimit(): MiddlewareHandler {
+export interface BodyLimitOptions {
+  /** Absolute body-read deadline, not an idle timer reset by incoming bytes. */
+  timeoutMs?: number;
+}
+
+async function readBoundedBody(request: Request, cap: number, declared: number | undefined, timeoutMs: number): Promise<Buffer> {
+  const reader = request.body!.getReader();
+  const blocks: Buffer[] = [];
+  let size = 0;
+  let block: Buffer | undefined;
+  let used = 0;
+  let stopped = false;
+  const started = performance.now();
+  const timeoutError = () => new ApiError(408, 'request body read timed out', 'body_timeout');
+  let interrupt!: (error: Error) => void;
+  const interrupted = new Promise<never>((_, reject) => { interrupt = reject; });
+  const timer = setTimeout(() => interrupt(timeoutError()), timeoutMs);
+  const onAbort = () => interrupt(ApiError.badRequest('request body interrupted'));
+  request.signal.addEventListener('abort', onAbort, { once: true });
+
+  async function consume(): Promise<Buffer> {
+    if (request.signal.aborted) throw ApiError.badRequest('request body interrupted');
+    while (!stopped) {
+      // A stream of immediately resolved tiny chunks must not starve the timer.
+      if (performance.now() - started >= timeoutMs) throw timeoutError();
+      const { done, value } = await reader.read();
+      if (stopped) break;
+      if (done) {
+        if (declared !== undefined && declared !== size) throw ApiError.badRequest('content-length does not match body');
+        if (block && used) blocks.push(block.subarray(0, used));
+        return Buffer.concat(blocks, size);
+      }
+      if (value.byteLength > cap - size) throw new ApiError(413, 'request body too large', 'payload_too_large');
+      size += value.byteLength;
+      // Retain fixed slabs, not one object per attacker-controlled tiny chunk.
+      let offset = 0;
+      while (offset < value.byteLength) {
+        block ??= Buffer.allocUnsafe(64 * 1024);
+        const count = Math.min(block.length - used, value.byteLength - offset);
+        block.set(value.subarray(offset, offset + count), used);
+        used += count; offset += count;
+        if (used === block.length) { blocks.push(block); block = undefined; used = 0; }
+      }
+    }
+    throw ApiError.badRequest('request body interrupted');
+  }
+
+  try {
+    return await Promise.race([consume(), interrupted]);
+  } catch (error) {
+    stopped = true;
+    // Cancellation is best effort and cannot delay the error response.
+    void reader.cancel(error).catch(() => {});
+    throw error instanceof ApiError ? error : ApiError.badRequest('invalid request body stream');
+  } finally {
+    stopped = true;
+    clearTimeout(timer);
+    request.signal.removeEventListener('abort', onAbort);
+    reader.releaseLock();
+  }
+}
+
+export function bodyLimit(options: BodyLimitOptions = {}): MiddlewareHandler {
+  const timeoutMs = options.timeoutMs ?? 30_000;
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1) throw new Error('body timeout must be a positive integer');
   return async (c, next) => {
-    if (MUTATING.has(c.req.method)) {
-      const len = Number(c.req.header('content-length') ?? '0');
-      if (Number.isFinite(len) && len > 0) {
-        const cap = /\/import\b|\/imports\b|import/.test(c.req.path) ? FIFTY_MB : FIVE_MB;
-        if (len > cap) {
-          throw new ApiError(413, `request body too large (${len} > ${cap})`, 'payload_too_large');
+    const original = c.req.raw;
+    if (MUTATING.has(c.req.method) || original.body) {
+      const fileUpload = /^\/api\/(?:files\/uploads\/[^/]+\/complete|portal-customer\/me\/uploads)$/.test(c.req.path);
+      const auth = /\/(?:auth|login)(?:\/|$)/.test(c.req.path);
+      const cap = auth ? 64 * 1024 : fileUpload ? 15 * 1024 * 1024 : /import/.test(c.req.path) ? FIFTY_MB : FIVE_MB;
+      const rawLength = c.req.header('content-length');
+      let declared: number | undefined;
+      if (rawLength !== undefined) {
+        declared = Number(rawLength);
+        if (!/^\d+$/.test(rawLength) || !Number.isSafeInteger(declared)) {
+          void original.body?.cancel().catch(() => {});
+          throw ApiError.badRequest('invalid content-length');
         }
+        if (declared > cap) {
+          void original.body?.cancel().catch(() => {});
+          throw new ApiError(413, 'request body too large', 'payload_too_large');
+        }
+      }
+      if (original.body) {
+        const bytes = await readBoundedBody(original, cap, declared, timeoutMs);
+        // Keep byte-for-byte payloads and metadata for raw-body webhook checks
+        // and framework JSON/text parsers. No parser sees unadmitted bytes.
+        // The Node adapter supplies a lightweight Request, not a native Fetch
+        // object with internal slots. Reconstruct from its public fields.
+        c.req.raw = new Request(original.url, {
+          method: original.method, headers: original.headers, body: bytes,
+          signal: original.signal, redirect: original.redirect,
+          credentials: original.credentials, cache: original.cache,
+          integrity: original.integrity, keepalive: original.keepalive,
+          referrer: original.referrer, referrerPolicy: original.referrerPolicy,
+        });
+      } else if (declared !== undefined && declared !== 0) {
+        throw ApiError.badRequest('content-length does not match body');
       }
     }
     await next();

@@ -48,3 +48,5 @@ export { CRM_ENTITY_TYPES } from './schema';
 
 // Public constants/helpers other layers may need (id-string world only)
 export { DEFAULT_LEAD_STAGES, DEAL_STATUSES } from './service';
+export { ENTITY_DEFS, getEntity, listEntities, updateLead, addTimelineEvent, createJob } from './service';
+export { createCustomer, updateContact } from './service';

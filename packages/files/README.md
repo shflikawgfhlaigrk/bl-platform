@@ -60,6 +60,12 @@ Folders: `GET /folders` · `GET /folders/tree` · `POST /folders` ·
 Uploads (init → complete): `POST /uploads` · `GET /uploads/:id` ·
 `POST /uploads/:id/complete` (`{ content_base64 }`) · `POST /uploads/:id/abort`
 
+Files have a 10 MiB decoded limit and require canonical base64. Empty files are
+supported. The composition-root API admits at most 15 MiB of streamed JSON for
+completion, with a 30-second body-read deadline; declared lengths never replace
+the actual byte count. Rejected uploads leave the session pending and write no
+file content. Service-level completion also enforces the decoded size limit.
+
 Files: `GET /files` (search: `name`, `mime`, `tag`, `folder_id`, `visibility`,
 `entity_type`+`entity_id`; `sort` whitelist; paginated) · `GET /files/:id` ·
 `GET /files/:id/content` · `GET /files/:id/audit` · `PATCH /files/:id`

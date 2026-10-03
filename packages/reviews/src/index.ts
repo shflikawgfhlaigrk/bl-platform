@@ -12,6 +12,8 @@
  * - `reviews.testimonial.captured` { testimonialId, customerId }
  */
 export const MODULE_KEY = 'reviews' as const;
+export { listRequests, getRequestLink, processDueReminders } from './service';
+export { createRequest } from './service';
 
 // Migrations
 export { reviewsMigrations } from './migrations';
