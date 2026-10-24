@@ -28,7 +28,7 @@ export async function saveIndustryRuntimeReceipt(db: Kysely<IndustriesDatabase>,
   else await db.insertInto('industries_runtime_receipts').values({id:receiptId,tenant_id:tenantId,industry_key:industryKey,component_key:receipt.key,...values,created_at:updatedAt}).execute();
   // Detached definitions are never described as runnable workflows.
   if(receipt.targetType==='workflows.workflow')await db.updateTable('industries_workflow_definitions')
-    .set({enabled:['installed','preserved'].includes(receipt.status)?1:0})
+    .set({enabled:['installed','preserved'].includes(receipt.status)&&(receipt.snapshot as {enabled?:boolean}|null)?.enabled===true?1:0})
     .where('tenant_id','=',tenantId).where('key','=',receipt.key.replace(/^workflow:/,'')).execute();
   await audit(asCoreDb(db),tenantId,actor,'industries.runtime.checked','industries.runtime',receiptId,{industryKey,componentKey:receipt.key,status:receipt.status,targetId:receipt.targetId});
 }

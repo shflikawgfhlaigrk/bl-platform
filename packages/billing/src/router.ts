@@ -44,6 +44,7 @@ import {
   updateSubscription,
   voidInvoice,
   type BillingCtx,
+  type SubscriptionInvoiceFailure,
 } from './service';
 import { ApiError } from '@blacklabel/core';
 
@@ -57,7 +58,7 @@ const isoSchema = z.string().datetime();
 
 const lineSchema = z.object({
   description: z.string().min(1),
-  quantity: z.number().finite().positive(),
+  quantity: z.number().finite().nonnegative(),
   unitPriceCents: centsSchema,
   discountBps: bpsSchema.optional(),
   discountFixedCents: centsSchema.optional(),
@@ -275,8 +276,7 @@ export function billingRouter(
 
   app.post('/invoices/:id/payments', async (c) => {
     const body = recordPaymentSchema.parse(await c.req.json());
-    if (body.receiptRef && body.externalRef && body.receiptRef !== body.externalRef) throw ApiError.badRequest('Receipt references disagree.');
-    const result = await recordPayment(ctx, c.get('tenantId'), actorOf(c), c.req.param('id'), { ...body, receiptRef: body.receiptRef ?? body.externalRef });
+    const result = await recordPayment(ctx, c.get('tenantId'), actorOf(c), c.req.param('id'), body);
     return c.json({ data: { payment: result.payment, invoice: result.invoice, replayed: result.replayed ?? false } }, 201);
   });
 
@@ -352,8 +352,9 @@ export function billingRouter(
   });
 
   app.post('/subscriptions/tick', async (c) => {
-    const generated = await generateDueInvoices(ctx, c.get('tenantId'));
-    return c.json({ data: { generated, count: generated.length } });
+    const failures: SubscriptionInvoiceFailure[] = [];
+    const generated = await generateDueInvoices(ctx, c.get('tenantId'), undefined, { onFailure: failure => { failures.push(failure); } });
+    return c.json({ data: { generated, count: generated.length, failures, failureCount: failures.length } });
   });
 
   app.get('/subscriptions/:id', async (c) => {

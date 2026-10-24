@@ -121,6 +121,45 @@ describe('IndustryModules runtime provisioning',()=>{
     expect(await db.selectFrom('workflows_workflows').select('id').where('tenant_id','=',a.id).where('enabled','=',1).execute()).toHaveLength(1);
   });
 
+  it('resumes the same untouched recipes across A to B to C to A without duplicate follow-up tasks',async()=>{
+    const {db,a,crm,request,apply}=await setup();
+    const first=await apply();
+    const ids=first.runtime.items.filter(item=>item.targetType==='workflows.workflow').map(item=>item.targetId!).sort();
+    for(const middle of [['window-cleaning'],['window-cleaning','hvac'],['hvac']]){
+      for(const key of middle)await apply(key);
+      const returned=await apply();
+      expect(returned.runtime.items.filter(item=>item.targetType==='workflows.workflow').every(item=>item.status==='installed')).toBe(true);
+      const active=await db.selectFrom('workflows_workflows').select(['id','trigger_event']).where('tenant_id','=',a.id).where('enabled','=',1).execute();
+      expect(active.map(row=>row.id).sort()).toEqual(ids);
+      expect(new Set(active.map(row=>row.trigger_event)).size).toBe(active.length);
+    }
+    const response=await request(crm,'/leads',a.id,'POST',{name:'Customer after returning to service delivery'});
+    expect(response.status).toBe(201);
+    const lead=(await response.json() as {data:{id:string}}).data;
+    const tasks=await db.selectFrom('workflows_tasks').selectAll().where('tenant_id','=',a.id).where('related_entity_id','=',lead.id).execute();
+    expect(tasks).toHaveLength(1);
+  });
+
+  it('preserves owner edits, a repeated owner pause, and deletion while recipes are retired',async()=>{
+    const {db,a,events,workflows,request,apply}=await setup();
+    const first=await apply();
+    const recipes=first.runtime.items.filter(item=>item.targetType==='workflows.workflow');
+    await apply('window-cleaning');
+    await updateWorkflow(db as unknown as Kysely<WorkflowsDatabase>,events,a.id,recipes[0].targetId!,{name:'Owner edited while retired'},'owner');
+    expect((await request(workflows,`/${recipes[1].targetId}/disable`,a.id,'POST',{})).status).toBe(200);
+    expect((await request(workflows,`/${recipes[2].targetId}`,a.id,'DELETE')).status).toBe(200);
+    const returned=await apply();
+    expect(returned.runtime.items.find(item=>item.key===recipes[0].key)!.status).toBe('preserved');
+    expect(returned.runtime.items.find(item=>item.key===recipes[1].key)!.status).toBe('preserved');
+    expect(returned.runtime.items.find(item=>item.key===recipes[2].key)!.status).toBe('missing');
+    const remaining=await db.selectFrom('workflows_workflows').select(['id','enabled']).where('tenant_id','=',a.id).where('id','in',recipes.map(row=>row.targetId!)).execute();
+    expect(remaining).toHaveLength(2);expect(remaining.every(row=>row.enabled===0)).toBe(true);
+    for(const item of recipes){
+      const definition=await db.selectFrom('industries_workflow_definitions').select('enabled').where('tenant_id','=',a.id).where('key','=',item.key.replace(/^workflow:/,'')).executeTakeFirstOrThrow();
+      expect(definition.enabled).toBe(0);
+    }
+  });
+
   it('preserves an edited owner recipe through repeated switches rather than treating retained observations as default ownership',async()=>{
     const {db,a,events,apply}=await setup();
     const first=await apply(),ownerRecipe=first.runtime.items.find(item=>item.key==='workflow:inquiry_next_action')!.targetId!;

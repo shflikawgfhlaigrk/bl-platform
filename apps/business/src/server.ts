@@ -19,7 +19,7 @@ import { acquireStartupLock } from '../../api/src/startup-lock';
 import { SqliteBackupProvider, makeCountProbe } from '../../api/src/admin-wiring';
 import { createBusinessApp, type BusinessSettings } from './app';
 import { backupBusiness, restoreBusiness } from './recovery';
-import { businessTransport, businessRequest } from './transport';
+import { businessTransport, businessFetch } from './transport';
 import { businessEmployeeFiles } from '../../api/src/business-wiring';
 import { businessIntegrationMigrations, customerRecordIntegration } from './integrations';
 
@@ -99,7 +99,7 @@ let tail: Promise<unknown> = Promise.resolve();
 const serial = <T>(work: () => Promise<T>) => { const result = tail.then(work); tail = result.catch(() => {}); return result; };
 const { host, port } = transport;
 const server = serve({ hostname: host, port, ...(transport.tls ? { createServer: createHttpsServer, serverOptions: transport.tls } : {}),
-  fetch: (request) => businessRequest(request, transport, (bounded) => serial(async () => app.fetch(bounded)))
+  fetch: businessFetch(transport, app.fetch, serial)
 }, (info) => console.log(JSON.stringify({ brand: 'BlackLabel', version: packaged.version, buildId: packaged.buildId,
   url: transport.publicOrigin ?? `http://${host.includes(':') ? `[${host}]` : host}:${info.port}`, tenantId, ready: true })));
 const reminderContext = createSchedulingContext({ db: db as unknown as Kysely<SchedulingDatabase>, events: platform.events, reminderDelivery: businessReminderDelivery(db as unknown as Kysely<MessagingDatabase>, platform.events, { providers: { email } }) });

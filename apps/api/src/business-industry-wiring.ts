@@ -1,4 +1,4 @@
-import { ApiError, type EventBus } from '@blacklabel/core';
+import { ApiError, asCoreDb, type EventBus } from '@blacklabel/core';
 import type { Kysely } from '@blacklabel/db';
 import { DEFAULT_LEAD_STAGES, listLeadStages, setLeadStages, type CrmDatabase } from '@blacklabel/crm';
 import { createServiceTemplate, getServiceTemplate, type QuotingDatabase } from '@blacklabel/quoting';
@@ -21,7 +21,15 @@ export function businessIndustryRuntime<DB extends IndustryRuntimeDatabase>(db:K
     if(active.has(tenantId))throw ApiError.conflict('Industry configuration is already being applied for this company.');
     active.add(tenantId);
     const save=(entry:Omit<IndustryRuntimeReceipt,'checkedAt'>)=>saveIndustryRuntimeReceipt(industry,tenantId,config.key,actor,entry);
-    const workflowSnapshot=(workflow:Awaited<ReturnType<typeof getWorkflow>>)=>({name:workflow.name,triggerEvent:workflow.triggerEvent,enabled:workflow.enabled,maxAttempts:workflow.maxAttempts,actions:workflow.actions.map(action=>({type:action.type,config:action.config}))});
+    const workflowSnapshot=(workflow:Awaited<ReturnType<typeof getWorkflow>>)=>({name:workflow.name,triggerEvent:workflow.triggerEvent,enabled:workflow.enabled,maxAttempts:workflow.maxAttempts,actions:workflow.actions.map(action=>({type:action.type,config:action.config})),condition:workflow.condition});
+    const matchesWorkflow=(saved:unknown,current:ReturnType<typeof workflowSnapshot>)=>{
+      if(!saved||typeof saved!=='object')return false;
+      const old=saved as Record<string,unknown>;
+      return same({...old,condition:old.condition??null},current);
+    };
+    const mutationCount=async(targetId:string)=>Number((await asCoreDb(db).selectFrom('audit_log')
+      .select(({fn})=>fn.countAll<number>().as('count')).where('tenant_id','=',tenantId)
+      .where('entity_type','=','workflows.workflow').where('entity_id','=',targetId).executeTakeFirstOrThrow()).count);
     const retainedRecipes=new Map<string,Awaited<ReturnType<typeof getWorkflow>>>();
     try{
       if(previousIndustryKey&&previousIndustryKey!==config.key){
@@ -32,9 +40,10 @@ export function businessIndustryRuntime<DB extends IndustryRuntimeDatabase>(db:K
             if(!current.enabled)continue;
             // A retained owner's target remains owner-owned on subsequent switches,
             // even when its last observed snapshot happens to match current state.
-            if(prior.status==='installed'&&same(prior.snapshot,workflowSnapshot(current))){
-              await setWorkflowEnabled(workflows,events,tenantId,current.id,false,actor);
-              await save({...receipt(`retired:${previousIndustryKey}:${prior.key}`,'workflows.retired_recipe','#/workflows'),targetId:current.id,status:'preserved',detail:'Untouched recipe from the previous setup was paused to prevent duplicate follow-up work.',snapshot:workflowSnapshot(current)});
+            if(prior.status==='installed'&&matchesWorkflow(prior.snapshot,workflowSnapshot(current))){
+              const revision=await mutationCount(current.id);
+              const paused=await setWorkflowEnabled(workflows,events,tenantId,current.id,false,actor);
+              await save({...receipt(`retired:${previousIndustryKey}:${prior.key}`,'workflows.retired_recipe','#/workflows'),targetId:current.id,status:'preserved',detail:'Untouched recipe from the previous setup was paused to prevent duplicate follow-up work.',snapshot:{workflow:workflowSnapshot(paused),mutationCount:revision+1}});
             }else{
               retainedRecipes.set(current.triggerEvent,current);
               await save({...receipt(`retained:${previousIndustryKey}:${prior.key}`,'workflows.retained_recipe','#/workflows'),targetId:current.id,status:'preserved',detail:'An edited owner recipe from the previous setup was preserved. A second recipe for the same event will not be installed.',snapshot:workflowSnapshot(current)});
@@ -99,7 +108,24 @@ export function businessIndustryRuntime<DB extends IndustryRuntimeDatabase>(db:K
         try{
           if(saved?.targetId){
             const workflow=await getWorkflow(workflows,tenantId,saved.targetId),current=snapshot(workflow);
-            await save({...entry,targetId:workflow.id,status:saved.status==='preserved'||!same(saved.snapshot,current)?'preserved':'installed',detail:'Installed workflow read back. Owner edits and pauses were preserved.',snapshot:saved.snapshot});
+            // Retirement receipts live under the setup that replaced this one. Search
+            // every switch so A -> B -> C -> A resumes the same recipe as A -> B -> A.
+            const retired=await industry.selectFrom('industries_runtime_receipts').select(['snapshot_json'])
+              .where('tenant_id','=',tenantId).where('target_id','=',workflow.id)
+              .where('component_key','=',`retired:${config.key}:${entry.key}`)
+              .where('target_type','=','workflows.retired_recipe').execute();
+            const revision=await mutationCount(workflow.id);
+            const untouchedPause=retired.some(row=>{
+              const pause=JSON.parse(row.snapshot_json??'null') as {workflow?:unknown;mutationCount?:number}|null;
+              return pause?.mutationCount===revision&&matchesWorkflow(pause.workflow,current);
+            });
+            if(saved.status==='installed'&&!workflow.enabled&&untouchedPause&&!retainedRecipes.has(workflow.triggerEvent)){
+              const resumed=await setWorkflowEnabled(workflows,events,tenantId,workflow.id,true,actor);
+              await save({...entry,targetId:workflow.id,status:'installed',detail:'The untouched recipe paused by the earlier setup switch was resumed.',snapshot:snapshot(resumed)});
+            }else{
+              const preserved=saved.status==='preserved'||!matchesWorkflow(saved.snapshot,current);
+              await save({...entry,targetId:workflow.id,status:preserved?'preserved':'installed',detail:'Installed workflow read back. Owner edits and pauses were preserved.',snapshot:current});
+            }
           }else if(saved?.status==='missing'){
             await save({...entry,status:'missing',detail:'An owner-deleted workflow was preserved. Install a new recipe from Workflows if needed.',snapshot:saved.snapshot});
           }else if(retainedRecipes.has(definition.trigger)){

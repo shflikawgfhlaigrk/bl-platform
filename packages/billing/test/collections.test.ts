@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { parseCsv } from '@blacklabel/core';
-import { billingCreateInvoiceContract, createInvoice } from '../src/service';
+import { billingCreateInvoiceContract, createInvoice, listInvoices } from '../src/service';
 import { api, json, makeSentInvoice, setupBilling, type TestContext } from './helpers';
 
 const fixtures: TestContext[] = [];
@@ -34,13 +34,39 @@ describe('deposit, balance, receipts and stopped reminder drafts', () => {
     expect((await api(ctx.app, ctx.tenantA.id, 'POST', `/invoices/${invoice.id}/reminders/${balanceDraft.id}/receipt`, { deliveryReference: 'late-delivery' })).status).toBe(409);
   });
 
-  it('reconciles concurrent duplicate offline receipts once and rejects receipt reuse on another amount or invoice', async () => {
-    const ctx = await fixture(); const invoice = await makeSentInvoice(ctx, ctx.tenantA.id); let paid = 0; ctx.events.on('billing.invoice.paid', () => { paid += 1; });
-    const [a, b] = await Promise.all([data(ctx, `/invoices/${invoice.id}/payments`, 'POST', { amountCents: 10000, externalRef: 'same-bank-reference' }), data(ctx, `/invoices/${invoice.id}/payments`, 'POST', { amountCents: 10000, externalRef: 'same-bank-reference' })]);
-    expect(a.payment.id).toBe(b.payment.id); expect(a.replayed).not.toBe(b.replayed); expect(paid).toBe(1); expect(await data(ctx, `/invoices/${invoice.id}/payments`)).toHaveLength(1);
-    expect((await api(ctx.app, ctx.tenantA.id, 'POST', `/invoices/${invoice.id}/payments`, { amountCents: 9999, receiptRef: 'same-bank-reference' })).status).toBe(409);
+  it('deduplicates one payment submission while allowing repeated cash references and rejecting changed retry payloads', async () => {
+    const ctx = await fixture(); const invoice = await makeSentInvoice(ctx, ctx.tenantA.id);
+    let paid = 0; ctx.events.on('billing.invoice.paid', () => { paid += 1; });
+    const input = { amountCents: 5000, externalRef: 'cash', receiptRef: 'payment-operation-1' };
+    const [a, b] = await Promise.all([data(ctx, `/invoices/${invoice.id}/payments`, 'POST', input), data(ctx, `/invoices/${invoice.id}/payments`, 'POST', input)]);
+    expect(a.payment.id).toBe(b.payment.id); expect(a.replayed).not.toBe(b.replayed);
+    expect(a.payment.external_ref).toBe('cash'); expect(paid).toBe(0);
+    expect(await data(ctx, `/invoices/${invoice.id}/payments`)).toHaveLength(1);
+    for (const changed of [{ amountCents: 4999 }, { externalRef: 'check' }, { providerRef: 'other-provider-reference' }]) {
+      expect((await api(ctx.app, ctx.tenantA.id, 'POST', `/invoices/${invoice.id}/payments`, { ...input, ...changed })).status).toBe(409);
+    }
+    const second = await data(ctx, `/invoices/${invoice.id}/payments`, 'POST', { ...input, receiptRef: 'payment-operation-2' });
+    expect(second.replayed).toBe(false); expect(second.payment.id).not.toBe(a.payment.id);
+    expect(second.invoice).toMatchObject({ paid_cents: 10000, status: 'paid' }); expect(paid).toBe(1);
     const other = await makeSentInvoice(ctx, ctx.tenantA.id);
-    expect((await api(ctx.app, ctx.tenantA.id, 'POST', `/invoices/${other.id}/payments`, { amountCents: 10000, receiptRef: 'same-bank-reference' })).status).toBe(409);
+    expect((await api(ctx.app, ctx.tenantA.id, 'POST', `/invoices/${other.id}/payments`, input)).status).toBe(409);
+    expect(await data(ctx, `/invoices/${other.id}/payments`, 'POST', { ...input, receiptRef: 'payment-operation-3' })).toMatchObject({ replayed: false, payment: { external_ref: 'cash' } });
+    expect((await api(ctx.app, ctx.tenantA.id, 'POST', `/invoices/${other.id}/payments`, { amountCents: 1, receiptRef: 'blank-reference', externalRef: '  ' })).status).toBe(400);
+  });
+
+  it('returns all 200 collection summaries in two database reads without leaking another company', async () => {
+    const ctx = await fixture(); const first = await makeSentInvoice(ctx, ctx.tenantA.id);
+    await data(ctx, `/invoices/${first.id}/collection-plan`, 'PUT', { depositCents: 2000, depositDueAt: due, remindersEnabled: true });
+    const seed = await ctx.db.selectFrom('billing_invoices').selectAll().where('id', '=', first.id).executeTakeFirstOrThrow();
+    await ctx.db.insertInto('billing_invoices').values(Array.from({ length: 199 }, (_, i) => ({ ...seed, id: `collection-fixture-${i}`, number: `COL-${i}` }))).execute();
+    await makeSentInvoice(ctx, ctx.tenantB.id);
+    let queries = 0;
+    const observed = ctx.db.withPlugin({ transformQuery(args) { queries += 1; return args.node; }, async transformResult(args) { return args.result; } });
+    const rows = await listInvoices(observed, ctx.tenantA.id, { limit: 200, offset: 0 });
+    expect(queries).toBe(2); expect(rows).toHaveLength(200);
+    expect(rows.every(row => row.tenant_id === ctx.tenantA.id)).toBe(true);
+    expect(rows.find(row => row.id === first.id)!.collection).toEqual(await data(ctx, `/invoices/${first.id}/collection-plan`));
+    expect(rows.find(row => row.id === 'collection-fixture-0')!.collection).toMatchObject({ balanceCents: 10000, stage: 'balance', reminderStopReason: 'disabled' });
   });
 
   it('deduplicates stable invoice contract sources and rejects changed scope without consuming invoice numbers', async () => {
@@ -92,10 +118,10 @@ describe('deposit, balance, receipts and stopped reminder drafts', () => {
   });
 
   it('exports exact cents, source and manual receipt references while isolating other-company ledgers', async () => {
-    const ctx = await fixture(); const invoice = await makeSentInvoice(ctx, ctx.tenantA.id); await data(ctx, `/invoices/${invoice.id}/payments`, 'POST', { amountCents: 2500, receiptRef: 'receipt-export-1' });
+    const ctx = await fixture(); const invoice = await makeSentInvoice(ctx, ctx.tenantA.id); await data(ctx, `/invoices/${invoice.id}/payments`, 'POST', { amountCents: 2500, receiptRef: 'receipt-export-1', externalRef: 'Cash ledger 42' });
     const invoices = parseCsv(await (await api(ctx.app, ctx.tenantA.id, 'GET', '/invoices/export.csv')).text());
     expect(invoices).toMatchObject([{ total_cents: '10000', paid_cents: '2500', balance_cents: '7500' }]);
-    const payments = parseCsv(await (await api(ctx.app, ctx.tenantA.id, 'GET', '/payments/export.csv')).text()); expect(payments).toMatchObject([{ amount_cents: '2500', receipt_ref: 'receipt-export-1', invoice_id: invoice.id }]);
+    const payments = parseCsv(await (await api(ctx.app, ctx.tenantA.id, 'GET', '/payments/export.csv')).text()); expect(payments).toMatchObject([{ amount_cents: '2500', receipt_ref: 'receipt-export-1', external_ref: 'Cash ledger 42', invoice_id: invoice.id }]);
     expect(parseCsv(await (await api(ctx.app, ctx.tenantB.id, 'GET', '/payments/export.csv')).text())).toEqual([]);
   });
 });

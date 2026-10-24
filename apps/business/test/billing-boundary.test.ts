@@ -4,10 +4,10 @@ import { createTestDb } from '@blacklabel/db';
 import { createApp, type PlatformDatabase } from '../../api/src/app';
 import { createBusinessApp } from '../src/app';
 
-async function fixture() {
+async function fixture(businessPortals = true) {
   const db = createTestDb<PlatformDatabase>();
   let app: ReturnType<typeof createBusinessApp>;
-  const platform = await createApp({ db, businessPortals: true, disableRateLimit: true, includeCheckoutSimulator: false,
+  const platform = await createApp({ db, businessPortals, disableRateLimit: true, includeCheckoutSimulator: false,
     browserSessionUser: async request => app?.resolveOwnerRequest(request) });
   const tenantId = (await createTenant(asCoreDb(db), { name: 'Billing approval boundary fixture' })).id;
   const { ownerUserId } = await platform.seedTenant(tenantId);
@@ -48,6 +48,28 @@ describe('installed billing approval boundary', () => {
       expect((await f.request('billing/invoices/from-quote', 'POST', { quoteId, customerId: customer.id,
         lines: [{ description: 'Approved work', quantity: 1, unitPriceCents: 12550 }] })).status).toBe(409);
       expect(await f.data('billing/invoices')).toHaveLength(1); expect(await f.data('crm/jobs')).toHaveLength(1);
+    } finally { await f.close(); }
+  });
+
+  it.each([true, false])('converts an approved quote with zero-quantity scope exactly once (business portals %s)', async (businessPortals) => {
+    const f = await fixture(businessPortals);
+    try {
+      const customer = await f.data('crm/customers', 'POST', { name: 'Zero quantity quote customer' });
+      const created = await f.data('quoting/quotes', 'POST', { customerId: customer.id, title: 'Approved optional item',
+        lines: [{ description: 'Approved work', quantity: 1, unitPriceCents: 12550 }, { description: 'Unneeded optional item', quantity: 0, unitPriceCents: 9000 }] });
+      const quoteId = created.quote.id;
+      await f.data(`quoting/quotes/${quoteId}/send`, 'POST', {});
+      await f.data(`quoting/quotes/${quoteId}/approve`, 'POST', { signerName: 'Fixture customer' });
+      const converted = await f.data(`quoting/quotes/${quoteId}/convert`, 'POST', {});
+      const invoice = await f.data(`billing/invoices/${converted.invoiceId}`);
+      expect(invoice.total_cents).toBe(12550); expect(invoice.lines).toHaveLength(2);
+      expect(invoice.lines.find((line: any) => line.description === 'Unneeded optional item')).toMatchObject({ quantity: 0, line_total_cents: 0 });
+      const repeated = await f.request(`quoting/quotes/${quoteId}/convert`, 'POST', {});
+      expect([200, 409]).toContain(repeated.status);
+      expect(await f.data('billing/invoices')).toHaveLength(1);
+      if (businessPortals) expect(await f.data('crm/jobs')).toHaveLength(1);
+      expect((await f.request('billing/invoices', 'POST', { customerId: customer.id, lines: [{ description: 'Invalid quantity', quantity: -1, unitPriceCents: 100 }] })).status).toBe(400);
+      expect(await f.data('billing/invoices')).toHaveLength(1);
     } finally { await f.close(); }
   });
 

@@ -62,7 +62,7 @@ function validateBps(value: number | undefined | null, label: string): void {
 function validateInvoiceAmounts(lines: InvoiceLineInputSvc[], discountBps?: number | null, fixedCents?: number | null, taxBps?: number | null): void {
   validateBps(discountBps, 'discountBps'); validateBps(taxBps, 'taxBps'); validateCents(fixedCents, 'discountFixedCents');
   for (const line of lines) {
-    if (!line.description?.trim() || !Number.isFinite(line.quantity) || line.quantity <= 0) throw ApiError.badRequest('Work lines require a description and positive finite quantity.');
+    if (!line.description?.trim() || !Number.isFinite(line.quantity) || line.quantity < 0) throw ApiError.badRequest('Work lines require a description and nonnegative finite quantity.');
     validateCents(line.unitPriceCents, 'unitPriceCents'); validateBps(line.discountBps, 'line discountBps'); validateCents(line.discountFixedCents, 'line discountFixedCents');
     validateCents(Math.round(line.quantity * line.unitPriceCents), 'line amount');
   }
@@ -311,7 +311,7 @@ export async function listInvoices(
   page: Pagination = { limit: 50, offset: 0 },
   filters: ListInvoicesFilters = {},
   sort?: Sort,
-): Promise<InvoiceDto[]> {
+): Promise<Array<InvoiceDto & { collection: CollectionPlanDetails }>> {
   let query = db
     .selectFrom('billing_invoices')
     .selectAll()
@@ -333,7 +333,10 @@ export async function listInvoices(
     .limit(page.limit)
     .offset(page.offset)
     .execute();
-  return rows.map(toInvoiceDto);
+  const plans = rows.length ? await db.selectFrom('billing_collection_plans').selectAll()
+    .where('tenant_id', '=', tenantId).where('invoice_id', 'in', rows.map(row => row.id)).execute() : [];
+  const byInvoice = new Map(plans.map(plan => [plan.invoice_id, plan]));
+  return rows.map(row => ({ ...toInvoiceDto(row), collection: collectionDetails(row, byInvoice.get(row.id)) }));
 }
 
 export interface UpdateInvoiceInputSvc {
@@ -600,9 +603,11 @@ export interface RecordPaymentInputSvc {
   method?: string;
   provider?: string;
   providerRef?: string;
+  /** Customer-entered reference; repeated labels such as "cash" are valid. */
+  externalRef?: string;
   note?: string;
   receivedAt?: string;
-  /** Stable reference from the actual offline receipt; retries cannot count it twice. */
+  /** Unique operation key retained for retries of one payment submission. */
   receiptRef?: string;
 }
 
@@ -634,7 +639,13 @@ export async function recordPayment(
   if (!invoice) throw ApiError.notFound(`invoice not found: ${invoiceId}`);
   const receiptRef = input.receiptRef?.trim();
   if (input.receiptRef !== undefined && !receiptRef) throw ApiError.badRequest('receiptRef cannot be blank');
-  const inputHash = fingerprint({ invoiceId, amountCents: input.amountCents, method: input.method ?? 'manual', note: input.note ?? null, receivedAt: input.receivedAt ?? null });
+  const externalRef = input.externalRef?.trim();
+  if (input.externalRef !== undefined && !externalRef) throw ApiError.badRequest('externalRef cannot be blank');
+  // Preserve old hashes for requests without added fields so existing retries reconcile.
+  const inputHash = fingerprint({ invoiceId, amountCents: input.amountCents, method: input.method ?? 'manual', note: input.note ?? null, receivedAt: input.receivedAt ?? null,
+    ...(input.externalRef === undefined ? {} : { externalRef }),
+    ...(input.provider === undefined ? {} : { provider: input.provider }),
+    ...(input.providerRef === undefined ? {} : { providerRef: input.providerRef }) });
   if (receiptRef) {
     const prior = await ctx.db.selectFrom('billing_payment_receipts').selectAll().where('tenant_id', '=', tenantId).where('receipt_ref', '=', receiptRef).executeTakeFirst();
     if (prior) {
@@ -662,6 +673,7 @@ export async function recordPayment(
     method: input.method ?? 'manual',
     provider: input.provider ?? null,
     provider_ref: input.providerRef ?? null,
+    external_ref: externalRef ?? null,
     status: 'succeeded',
     note: input.note ?? null,
     received_at: input.receivedAt ?? now,
@@ -1094,7 +1106,7 @@ export async function createSubscription(
 ): Promise<BillingSubscriptionRow> {
   if (input.billingAccountId) {
     const account = await getBillingAccount(ctx.db, tenantId, input.billingAccountId);
-    if (!account) throw ApiError.badRequest(`unknown billing account: ${input.billingAccountId}`);
+    if (!account || account.customer_id !== input.customerId) throw ApiError.badRequest(`billing account does not belong to this customer: ${input.billingAccountId}`);
   }
   const now = nowIso();
   const row: BillingSubscriptionRow = {
@@ -1209,6 +1221,12 @@ export interface GeneratedInvoiceRef {
   nextInvoiceAt: string;
 }
 
+export interface SubscriptionInvoiceFailure {
+  subscriptionId: string;
+  periodStart: string;
+  reason: string;
+}
+
 /**
  * Recurring-billing tick: for every ACTIVE subscription with
  * next_invoice_at <= now, create a draft invoice (one line from the plan) and
@@ -1219,6 +1237,7 @@ export async function generateDueInvoices(
   ctx: BillingCtx,
   tenantId: string,
   now: string = nowIso(),
+  options: { onFailure?: (failure: SubscriptionInvoiceFailure) => void } = {},
 ): Promise<GeneratedInvoiceRef[]> {
   const due = await ctx.db
     .selectFrom('billing_subscriptions')
@@ -1232,50 +1251,57 @@ export async function generateDueInvoices(
 
   const generated: GeneratedInvoiceRef[] = [];
   for (const sub of due) {
-    const pending: NonNullable<BillingCtx['deferredEvents']> = [];
-    const committed = await ctx.db.transaction().execute(async trx => {
-      const current = await trx.selectFrom('billing_subscriptions').selectAll().where('tenant_id', '=', tenantId).where('id', '=', sub.id).executeTakeFirst();
-      if (!current || current.status !== 'active' || current.next_invoice_at !== sub.next_invoice_at) return undefined;
-      const nextInvoiceAt = advanceInterval(sub.next_invoice_at, sub.interval);
-      const previous = await trx.selectFrom('billing_subscription_periods').selectAll().where('tenant_id', '=', tenantId)
-        .where('subscription_id', '=', sub.id).where('period_start', '=', sub.next_invoice_at).executeTakeFirst();
-      if (previous) {
-        await trx.updateTable('billing_subscriptions').set({next_invoice_at:nextInvoiceAt,updated_at:nowIso()}).where('tenant_id','=',tenantId).where('id','=',sub.id).execute();
-        return undefined;
+    try {
+      const pending: NonNullable<BillingCtx['deferredEvents']> = [];
+      const committed = await ctx.db.transaction().execute(async trx => {
+        const current = await trx.selectFrom('billing_subscriptions').selectAll().where('tenant_id', '=', tenantId).where('id', '=', sub.id).executeTakeFirst();
+        if (!current || current.status !== 'active' || current.next_invoice_at !== sub.next_invoice_at) return undefined;
+        const nextInvoiceAt = advanceInterval(sub.next_invoice_at, sub.interval);
+        const previous = await trx.selectFrom('billing_subscription_periods').selectAll().where('tenant_id', '=', tenantId)
+          .where('subscription_id', '=', sub.id).where('period_start', '=', sub.next_invoice_at).executeTakeFirst();
+        if (previous) {
+          await trx.updateTable('billing_subscriptions').set({next_invoice_at:nextInvoiceAt,updated_at:nowIso()}).where('tenant_id','=',tenantId).where('id','=',sub.id).execute();
+          return undefined;
+        }
+        const { invoice } = await createInvoice({ ...ctx, db: trx, deferredEvents: pending }, tenantId, 'system', {
+        customerId: sub.customer_id,
+        billingAccountId: sub.billing_account_id ?? undefined,
+        lines: [
+          {
+            description: `${sub.plan_name} (${sub.interval})`,
+            quantity: 1,
+            unitPriceCents: sub.amount_cents,
+          },
+        ],
+        taxBps: sub.tax_bps ?? undefined,
+        memo: `Generated from subscription ${sub.id} for period starting ${sub.next_invoice_at}`,
+        sourceEntityType: 'billing.subscription',
+        sourceEntityId: sub.id,
+      });
+      await trx.insertInto('billing_subscription_periods').values({id:id(),tenant_id:tenantId,subscription_id:sub.id,period_start:sub.next_invoice_at,invoice_id:invoice.id,created_at:nowIso()}).execute();
+      await trx
+        .updateTable('billing_subscriptions')
+        .set({ next_invoice_at: nextInvoiceAt, updated_at: nowIso() })
+        .where('tenant_id', '=', tenantId)
+        .where('id', '=', sub.id)
+        .execute();
+      pending.push({ type: 'billing.invoice.generated', payload: {
+        invoiceId: invoice.id,
+        subscriptionId: sub.id,
+        customerId: sub.customer_id,
+        totalCents: invoice.total_cents,
+      }});
+      return { subscriptionId: sub.id, invoiceId: invoice.id, nextInvoiceAt };
+      });
+      if (committed) {
+        generated.push(committed);
+        for (const event of pending) await ctx.events.emit(tenantId, event.type, event.payload);
       }
-      const { invoice } = await createInvoice({ ...ctx, db: trx, deferredEvents: pending }, tenantId, 'system', {
-      customerId: sub.customer_id,
-      billingAccountId: sub.billing_account_id ?? undefined,
-      lines: [
-        {
-          description: `${sub.plan_name} (${sub.interval})`,
-          quantity: 1,
-          unitPriceCents: sub.amount_cents,
-        },
-      ],
-      taxBps: sub.tax_bps ?? undefined,
-      memo: `Generated from subscription ${sub.id} for period starting ${sub.next_invoice_at}`,
-      sourceEntityType: 'billing.subscription',
-      sourceEntityId: sub.id,
-    });
-    await trx.insertInto('billing_subscription_periods').values({id:id(),tenant_id:tenantId,subscription_id:sub.id,period_start:sub.next_invoice_at,invoice_id:invoice.id,created_at:nowIso()}).execute();
-    await trx
-      .updateTable('billing_subscriptions')
-      .set({ next_invoice_at: nextInvoiceAt, updated_at: nowIso() })
-      .where('tenant_id', '=', tenantId)
-      .where('id', '=', sub.id)
-      .execute();
-    pending.push({ type: 'billing.invoice.generated', payload: {
-      invoiceId: invoice.id,
-      subscriptionId: sub.id,
-      customerId: sub.customer_id,
-      totalCents: invoice.total_cents,
-    }});
-    return { subscriptionId: sub.id, invoiceId: invoice.id, nextInvoiceAt };
-    });
-    if (committed) {
-      for (const event of pending) await ctx.events.emit(tenantId, event.type, event.payload);
-      generated.push(committed);
+    } catch (error) {
+      const failure = { subscriptionId: sub.id, periodStart: sub.next_invoice_at,
+        reason: error instanceof ApiError ? error.message : 'Subscription invoice generation failed; review this subscription.' };
+      await audit(asCoreDb(ctx.db), tenantId, 'system', 'billing.subscription.invoice_failed', 'billing.subscription', sub.id, failure);
+      options.onFailure?.(failure);
     }
   }
   return generated;
@@ -1557,13 +1583,17 @@ export async function getCollectionPlan(db: Kysely<BillingDatabase>, tenantId: s
   const invoice = await getInvoiceRow(db, tenantId, invoiceId);
   if (!invoice) throw ApiError.notFound('Invoice not found.');
   const plan = await db.selectFrom('billing_collection_plans').selectAll().where('tenant_id', '=', tenantId).where('invoice_id', '=', invoiceId).executeTakeFirst();
+  return collectionDetails(invoice, plan);
+}
+
+function collectionDetails(invoice: BillingInvoiceRow, plan?: BillingCollectionPlanRow): CollectionPlanDetails {
   const balanceCents = Math.max(0, invoice.total_cents - invoice.paid_cents);
   const depositRemainingCents = Math.min(balanceCents, Math.max(0, (plan?.deposit_cents ?? 0) - invoice.paid_cents));
   const stage = invoice.status === 'void' ? 'stopped' : balanceCents === 0 ? 'settled' : invoice.status === 'draft' ? 'draft' : depositRemainingCents > 0 ? 'deposit' : 'balance';
   const dueAt = stage === 'deposit' ? plan?.deposit_due_at ?? null : plan?.balance_due_at ?? invoice.due_at;
   const reminderStopReason = stage === 'stopped' ? 'void' : stage === 'settled' ? 'paid' : stage === 'draft' ? 'draft'
     : !plan?.reminders_enabled ? 'disabled' : plan.opted_out ? 'opted_out' : null;
-  return { invoiceId, plan: plan ?? null, totalCents: invoice.total_cents, paidCents: invoice.paid_cents, balanceCents, depositRemainingCents,
+  return { invoiceId: invoice.id, plan: plan ?? null, totalCents: invoice.total_cents, paidCents: invoice.paid_cents, balanceCents, depositRemainingCents,
     overpaidCents: Math.max(0, invoice.paid_cents - invoice.total_cents), stage, dueAt, reminderStopReason };
 }
 
@@ -1640,5 +1670,5 @@ export async function exportPaymentsCsv(db: Kysely<BillingDatabase>, tenantId: s
   const payments = await db.selectFrom('billing_payments').selectAll().where('tenant_id', '=', tenantId).orderBy('received_at').orderBy('id').execute();
   const receipts = await db.selectFrom('billing_payment_receipts').selectAll().where('tenant_id', '=', tenantId).orderBy('created_at').orderBy('id').execute();
   return serializeCsv(payments.map(payment => ({ ...payment, receipt_ref: receipts.find(receipt => receipt.payment_id === payment.id)?.receipt_ref ?? null })),
-    ['id', 'invoice_id', 'amount_cents', 'method', 'status', 'receipt_ref', 'provider', 'provider_ref', 'received_at']);
+    ['id', 'invoice_id', 'amount_cents', 'method', 'status', 'external_ref', 'receipt_ref', 'provider', 'provider_ref', 'received_at']);
 }

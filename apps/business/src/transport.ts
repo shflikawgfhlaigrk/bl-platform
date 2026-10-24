@@ -6,6 +6,14 @@ export interface BusinessTransport {
   tls?: { cert: Buffer; key: Buffer; minVersion: 'TLSv1.2' };
 }
 
+/** Keep the adapter's trusted socket environment when queuing a bounded request. */
+export function businessFetch<Env>(transport: Pick<BusinessTransport, 'publicOrigin' | 'port'>,
+  handle: (request: Request, env: Env) => Response | Promise<Response>,
+  serial: (operation: () => Promise<Response>) => Promise<Response> = operation => operation()) {
+  return (request: Request, env: Env): Promise<Response> =>
+    businessRequest(request, transport, bounded => serial(async () => handle(bounded, env)));
+}
+
 /** Shared access uses this installation's certificate and exact HTTPS origin. */
 export async function businessTransport(env: NodeJS.ProcessEnv): Promise<BusinessTransport> {
   const host = env.BLACKLABEL_BUSINESS_HOST ?? '127.0.0.1';

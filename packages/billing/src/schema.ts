@@ -102,6 +102,8 @@ export interface BillingPaymentRow {
   provider: string | null;
   /** Provider-side reference (e.g. a payment-intent id), else null. */
   provider_ref: string | null;
+  /** Customer-entered reference, independent of the payment operation key. */
+  external_ref: string | null;
   /** Only "succeeded" payments count toward paid_cents. */
   status: 'succeeded' | 'refunded';
   note: string | null;

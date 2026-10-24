@@ -246,4 +246,10 @@ export const billingMigrations: Migration[] = [
       await db.schema.createIndex('billing_reminder_receipts_tenant_operation_idx').on('billing_reminder_receipts').columns(['tenant_id', 'operation_key']).unique().execute();
     },
   },
+  {
+    name: 'billing.0004_payment_external_reference',
+    async up(db) {
+      await db.schema.alterTable('billing_payments').addColumn('external_ref', 'text').execute();
+    },
+  },
 ];
