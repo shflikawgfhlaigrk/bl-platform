@@ -42,6 +42,8 @@ export type { IndustrySummary } from './registry';
 
 // Service
 export { applyIndustry, getAppliedIndustry, getTerminology } from './service';
+export { getIndustryRuntimeReceipt, saveIndustryRuntimeReceipt, industryRuntimeReport } from './runtime';
+export type { IndustryRuntimeInstaller, IndustryRuntimeReceipt, IndustryRuntimeReport, IndustryRuntimeStatus } from './runtime';
 export type {
   AppliedAppointmentType,
   AppliedDashboardWidget,

@@ -305,4 +305,38 @@ export const crmMigrations: Migration[] = [
         .execute();
     },
   },
+  {
+    name: 'crm.0004_owned_next_action_queue',
+    up: async (db) => {
+      await db.schema.alterTable('crm_leads').addColumn('next_action', 'text').execute();
+      await db.schema.alterTable('crm_leads').addColumn('next_action_due_at', 'text').execute();
+      await db.schema.alterTable('crm_leads')
+        .addColumn('next_action_revision', 'integer', (c) => c.notNull().defaultTo(0)).execute();
+      await db.schema.createIndex('crm_leads_tenant_next_action_due_idx')
+        .on('crm_leads').columns(['tenant_id', 'next_action_due_at']).execute();
+      await db.schema.alterTable('crm_lead_stages')
+        .addColumn('is_closed', 'integer', (c) => c.notNull().defaultTo(0)).execute();
+      // Existing won/lost semantics remain closed; custom pipelines opt in explicitly.
+      const tenants = await db.selectFrom('tenants').select('id').execute();
+      for (const tenant of tenants) await db.updateTable('crm_lead_stages').set({ is_closed: 1 })
+        .where('tenant_id', '=', tenant.id).where('key', 'in', ['won', 'lost']).execute();
+      await db.schema.createTable('crm_next_action_completions')
+        .addColumn('id', 'text', (c) => c.primaryKey())
+        .addColumn('tenant_id', 'text', (c) => c.notNull())
+        .addColumn('lead_id', 'text', (c) => c.notNull())
+        .addColumn('idempotency_key', 'text', (c) => c.notNull())
+        .addColumn('revision', 'integer', (c) => c.notNull())
+        .addColumn('action', 'text', (c) => c.notNull())
+        .addColumn('due_at', 'text')
+        .addColumn('owner_user_id', 'text')
+        .addColumn('note', 'text')
+        .addColumn('actor', 'text', (c) => c.notNull())
+        .addColumn('created_at', 'text', (c) => c.notNull())
+        .execute();
+      await db.schema.createIndex('crm_next_action_completions_tenant_key_idx')
+        .on('crm_next_action_completions').columns(['tenant_id', 'idempotency_key']).unique().execute();
+      await db.schema.createIndex('crm_next_action_completions_tenant_lead_idx')
+        .on('crm_next_action_completions').columns(['tenant_id', 'lead_id']).execute();
+    },
+  },
 ];

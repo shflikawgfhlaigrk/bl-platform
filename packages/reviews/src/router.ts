@@ -32,6 +32,9 @@ import {
   listRequests,
   listResponses,
   listTestimonials,
+  listEligibleCompletedJobs,
+  requireEligibleCompletedJob,
+  reconcileReviewDelivery,
   optOutPublic,
   processDueReminders,
   resolveResponse,
@@ -184,10 +187,25 @@ export function reviewsRouter(
     return c.json({ data: { id: c.req.param('id'), deleted: true } });
   });
 
+  // Eligibility comes from verified completed work, without rating filters.
+  app.get('/eligible-customers', async c => c.json({ data: await listEligibleCompletedJobs(db, c.get('tenantId'), provider) }));
+
+  app.post('/campaigns/completed-jobs', async c => {
+    const input = createCampaignSchema.omit({ customerIds: true }).parse(await readJson(c));
+    const { eligible, excluded } = await listEligibleCompletedJobs(db, c.get('tenantId'), provider);
+    if (!eligible.length) throw ApiError.conflict('No completed-job customers are currently eligible.', { excluded });
+    const result = await createCampaign(db, events, c.get('tenantId'), actorOf(c), {
+      ...input, customerIds: eligible.map(job => job.customerId), completedJobs: eligible,
+    });
+    return c.json({ data: { ...result, excluded } }, 201);
+  });
+
   // Campaigns
   app.post('/campaigns', async (c) => {
     const body = createCampaignSchema.parse(await readJson(c));
-    const result = await createCampaign(db, events, c.get('tenantId'), actorOf(c), body);
+    const completedJobs = provider.listCompletedJobs ? await Promise.all([...new Set(body.customerIds)]
+      .map(customerId => requireEligibleCompletedJob(db, c.get('tenantId'), customerId, provider))) : undefined;
+    const result = await createCampaign(db, events, c.get('tenantId'), actorOf(c), { ...body, completedJobs });
     return c.json({ data: result }, 201);
   });
 
@@ -220,7 +238,8 @@ export function reviewsRouter(
   // Requests
   app.post('/requests', async (c) => {
     const body = createRequestSchema.parse(await readJson(c));
-    const request = await createRequest(db, events, c.get('tenantId'), actorOf(c), body);
+    const completedJob = provider.listCompletedJobs ? await requireEligibleCompletedJob(db, c.get('tenantId'), body.customerId, provider) : undefined;
+    const request = await createRequest(db, events, c.get('tenantId'), actorOf(c), { ...body, completedJob });
     return c.json({ data: request }, 201);
   });
 
@@ -249,6 +268,9 @@ export function reviewsRouter(
     const link = await getRequestLink(db, c.get('tenantId'), c.req.param('id'));
     return c.json({ data: link });
   });
+
+  app.post('/requests/:id/delivery', async c => c.json({ data: await reconcileReviewDelivery(db, c.get('tenantId'), actorOf(c),
+    c.req.param('id'), provider) }));
 
   app.post('/requests/:id/reminders', async (c) => {
     const body = scheduleReminderSchema.parse(await readJson(c));
@@ -285,7 +307,14 @@ export function reviewsRouter(
     return c.json({ data: result });
   });
 
-  // Responses (private feedback + gated review records)
+  app.post('/reminders/:id/delivery', async c => {
+    const reminder = await db.selectFrom('reviews_reminders').select('request_id').where('tenant_id', '=', c.get('tenantId'))
+      .where('id', '=', c.req.param('id')).executeTakeFirst();
+    if (!reminder) throw ApiError.notFound('Review reminder not found.');
+    return c.json({ data: await reconcileReviewDelivery(db, c.get('tenantId'), actorOf(c), reminder.request_id, provider, c.req.param('id')) });
+  });
+
+  // Responses (private feedback; destinations are never gated by sentiment)
   app.get('/responses', async (c) => {
     const q = c.req.query();
     const page = parsePagination(q);

@@ -221,4 +221,22 @@ export const messagingMigrations: Migration[] = [
       await db.schema.createIndex('messaging_operations_tenant_idx').on('messaging_operations').column('tenant_id').execute();
     },
   },
+  {
+    name: 'messaging.0011_inbound_receipts_ownership',
+    up: async db => {
+      await db.schema.alterTable('messaging_conversations').addColumn('revision', 'integer', column => column.notNull().defaultTo(0)).execute();
+      await db.schema.createTable('messaging_inbound_receipts')
+        .addColumn('id', 'text', column => column.primaryKey())
+        .addColumn('tenant_id', 'text', column => column.notNull())
+        .addColumn('provider', 'text', column => column.notNull())
+        .addColumn('channel', 'text', column => column.notNull())
+        .addColumn('provider_event_id', 'text', column => column.notNull())
+        .addColumn('request_hash', 'text', column => column.notNull())
+        .addColumn('message_id', 'text')
+        .addColumn('conversation_id', 'text')
+        .addColumn('created_at', 'text', column => column.notNull()).execute();
+      await db.schema.createIndex('messaging_inbound_receipts_event_uq').on('messaging_inbound_receipts')
+        .columns(['tenant_id', 'provider', 'channel', 'provider_event_id']).unique().execute();
+    },
+  },
 ];

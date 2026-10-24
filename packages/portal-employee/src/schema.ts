@@ -58,6 +58,8 @@ export interface AssignmentRow {
   title: string;
   description: string | null;
   status: AssignmentStatus;
+  /** First completion receipt timestamp; never erased when a manager reopens. */
+  completed_at: string | null;
   /** ISO-8601 UTC, or null when unscheduled. */
   scheduled_at: string | null;
   /** Cross-module reference by id string only (e.g. "scheduling.appointment"). */
@@ -86,9 +88,30 @@ export interface TimeEntryRow {
   employee_id: string;
   /** Optional link to the shift being worked. */
   shift_id: string | null;
+  assignment_id: string | null;
   clock_in_at: string;
   /** Null while the entry is open (clocked in, not yet out). */
   clock_out_at: string | null;
+  review_status: 'pending' | 'approved' | 'rejected';
+  reviewed_by: string | null;
+  reviewed_at: string | null;
+  review_note: string | null;
+  created_at: string;
+}
+
+export interface AssignmentExceptionRow {
+  id: string;
+  tenant_id: string;
+  assignment_id: string;
+  checklist_item_id: string | null;
+  idempotency_key: string;
+  reason: string;
+  reported_by: string;
+  status: 'open' | 'resolved';
+  resolution_kind: 'resolved' | 'waived' | null;
+  resolution_note: string | null;
+  resolved_by: string | null;
+  resolved_at: string | null;
   created_at: string;
 }
 
@@ -170,6 +193,7 @@ export interface PortalEmployeeDatabase extends CoreDatabase {
   portal_employee_assignments: AssignmentRow;
   portal_employee_shifts: ShiftRow;
   portal_employee_time_entries: TimeEntryRow;
+  portal_employee_exceptions: AssignmentExceptionRow;
   portal_employee_checklist_templates: ChecklistTemplateRow;
   portal_employee_checklist_template_items: ChecklistTemplateItemRow;
   portal_employee_checklists: ChecklistRow;

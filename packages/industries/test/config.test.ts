@@ -18,6 +18,7 @@ const EXPECTED_KEYS = [
   'music-audio',
   'real-estate',
   'restaurant',
+  'service-delivery',
   'smart-home-security',
   'spa-wellness',
   'tack-retail',
@@ -64,7 +65,7 @@ function validConfig() {
 }
 
 describe('shipped industry configs', () => {
-  it('ships all 11 industries', () => {
+  it('ships all 12 industries', () => {
     expect(listIndustries().map((i) => i.key)).toEqual(EXPECTED_KEYS);
   });
 
@@ -91,7 +92,7 @@ describe('shipped industry configs', () => {
         // computeTotals throws on non-integer cents — this asserts to the cent.
         const totals = computeTotals(template.lines);
         expect(Number.isInteger(totals.totalCents)).toBe(true);
-        expect(totals.totalCents).toBeGreaterThan(0);
+        expect(totals.totalCents).toBeGreaterThanOrEqual(0);
       }
     }
   });

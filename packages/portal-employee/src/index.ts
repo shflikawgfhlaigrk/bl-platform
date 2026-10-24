@@ -9,6 +9,9 @@
  * - portal_employee.task.completed     { assignmentId, employeeId, kind }
  * - portal_employee.assignment.created { assignmentId, employeeId, kind }
  * - portal_employee.employee.created   { employeeId, role }
+ * - portal_employee.exception.reported { assignmentId, exceptionId }
+ * - portal_employee.exception.resolved { assignmentId, exceptionId }
+ * - portal_employee.time_entry.reviewed { timeEntryId, assignmentId, status }
  */
 
 export const MODULE_KEY = 'portal-employee' as const;
@@ -35,6 +38,7 @@ export type {
   AssignmentRow,
   ShiftRow,
   TimeEntryRow,
+  AssignmentExceptionRow,
   ChecklistTemplateRow,
   ChecklistTemplateItemRow,
   ChecklistRow,
@@ -51,6 +55,7 @@ export type {
   ChecklistWithItems,
   ChecklistTemplateWithItems,
   DailySchedule,
+  AssignmentCloseout,
 } from './service';
 
 // Composition may bind authenticated work photos to the shared file vault.

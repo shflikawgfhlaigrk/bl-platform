@@ -14,6 +14,7 @@ import type { BillingDatabase } from './schema';
 import { defaultPaymentProviders, type PaymentProvider } from './providers';
 import {
   buildProviderRegistry,
+  getCollectionPlan, setCollectionPlan, prepareCollectionReminder, recordCollectionReminder, listCollectionReminders, exportPaymentsCsv,
   convertQuoteToInvoice,
   createBillingAccount,
   createInvoice,
@@ -43,6 +44,7 @@ import {
   updateSubscription,
   voidInvoice,
   type BillingCtx,
+  type SubscriptionInvoiceFailure,
 } from './service';
 import { ApiError } from '@blacklabel/core';
 
@@ -51,12 +53,12 @@ import { ApiError } from '@blacklabel/core';
  * ------------------------------------------------------------------ */
 
 const bpsSchema = z.number().int().min(0).max(10000);
-const centsSchema = z.number().int().min(0);
+const centsSchema = z.number().int().min(0).max(Math.floor(Number.MAX_SAFE_INTEGER / 10000));
 const isoSchema = z.string().datetime();
 
 const lineSchema = z.object({
   description: z.string().min(1),
-  quantity: z.number().finite().positive(),
+  quantity: z.number().finite().nonnegative(),
   unitPriceCents: centsSchema,
   discountBps: bpsSchema.optional(),
   discountFixedCents: centsSchema.optional(),
@@ -101,16 +103,21 @@ const fromQuoteSchema = z.object({
 });
 
 const recordPaymentSchema = z.object({
-  amountCents: z.number().int().positive(),
+  amountCents: z.number().int().positive().max(Math.floor(Number.MAX_SAFE_INTEGER / 10000)),
   method: z.string().min(1).optional(),
   providerRef: z.string().optional(),
+  receiptRef: z.string().min(1).max(200).optional(),
+  externalRef: z.string().min(1).max(200).optional(),
   note: z.string().optional(),
   receivedAt: isoSchema.optional(),
 });
 
 const paymentIntentSchema = z.object({
+  purpose: z.enum(['deposit', 'balance']).default('balance'),
   provider: z.string().min(1).default('manual'),
 });
+
+const collectionPlanSchema = z.object({ depositCents: centsSchema, depositDueAt: isoSchema.nullable().optional(), balanceDueAt: isoSchema.nullable().optional(), remindersEnabled: z.boolean().optional(), optedOut: z.boolean().optional() });
 
 const intervalSchema = z.enum(['daily', 'weekly', 'monthly', 'quarterly', 'yearly']);
 
@@ -225,6 +232,21 @@ export function billingRouter(
     return c.json({ data: { markedOverdue: count } });
   });
 
+  app.get('/invoices/:id/collection-plan', async c => c.json({ data: await getCollectionPlan(deps.db, c.get('tenantId'), c.req.param('id')) }));
+  app.put('/invoices/:id/collection-plan', async c => {
+    const input = collectionPlanSchema.parse(await c.req.json());
+    return c.json({ data: await setCollectionPlan(ctx, c.get('tenantId'), actorOf(c), c.req.param('id'), input) });
+  });
+  app.get('/invoices/:id/reminders', async c => c.json({ data: await listCollectionReminders(deps.db, c.get('tenantId'), c.req.param('id')) }));
+  app.post('/invoices/:id/reminders', async c => {
+    const body = z.object({ operationKey: z.string().min(1).max(160) }).parse(await c.req.json());
+    return c.json({ data: await prepareCollectionReminder(ctx, c.get('tenantId'), actorOf(c), c.req.param('id'), body.operationKey) }, 201);
+  });
+  app.post('/invoices/:id/reminders/:reminderId/receipt', async c => {
+    const body = z.object({ deliveryReference: z.string().min(1).max(200) }).parse(await c.req.json());
+    return c.json({ data: await recordCollectionReminder(ctx, c.get('tenantId'), actorOf(c), c.req.param('id'), c.req.param('reminderId'), body.deliveryReference) });
+  });
+
   app.get('/invoices/:id', async (c) => {
     const result = await getInvoice(deps.db, c.get('tenantId'), c.req.param('id'));
     if (!result) throw ApiError.notFound(`invoice not found: ${c.req.param('id')}`);
@@ -255,7 +277,7 @@ export function billingRouter(
   app.post('/invoices/:id/payments', async (c) => {
     const body = recordPaymentSchema.parse(await c.req.json());
     const result = await recordPayment(ctx, c.get('tenantId'), actorOf(c), c.req.param('id'), body);
-    return c.json({ data: { payment: result.payment, invoice: result.invoice } }, 201);
+    return c.json({ data: { payment: result.payment, invoice: result.invoice, replayed: result.replayed ?? false } }, 201);
   });
 
   app.get('/invoices/:id/payments', async (c) => {
@@ -274,11 +296,14 @@ export function billingRouter(
       c.get('tenantId'),
       c.req.param('id'),
       body.provider,
+      body.purpose,
     );
     return c.json({ data: intent }, 201);
   });
 
   /* ---------------- payments ---------------- */
+
+  app.get('/payments/export.csv', async c => c.body(await exportPaymentsCsv(deps.db, c.get('tenantId')), 200, { 'Content-Type': 'text/csv; charset=utf-8' }));
 
   app.get('/payments', async (c) => {
     const query = c.req.query();
@@ -327,8 +352,9 @@ export function billingRouter(
   });
 
   app.post('/subscriptions/tick', async (c) => {
-    const generated = await generateDueInvoices(ctx, c.get('tenantId'));
-    return c.json({ data: { generated, count: generated.length } });
+    const failures: SubscriptionInvoiceFailure[] = [];
+    const generated = await generateDueInvoices(ctx, c.get('tenantId'), undefined, { onFailure: failure => { failures.push(failure); } });
+    return c.json({ data: { generated, count: generated.length, failures, failureCount: failures.length } });
   });
 
   app.get('/subscriptions/:id', async (c) => {

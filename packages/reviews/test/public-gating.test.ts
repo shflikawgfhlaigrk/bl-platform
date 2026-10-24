@@ -23,13 +23,32 @@ async function addPlatform(app: any, tenantId: string, key: string, enabled = tr
 }
 
 describe('public tokenized flow', () => {
+  it.each([1, 2, 3, 4, 5])('offers identical destinations before rating %i, after submit, and on revisit', async rating => {
+    const { app, tenantA } = await setup();
+    await addPlatform(app, tenantA.id, 'alpha');
+    await addPlatform(app, tenantA.id, 'disabled', false);
+    const request = await makeRequest(app, tenantA.id, 5);
+    const landing = (await (await app.request(`/public/requests/${request.token}`, getInit(null))).json() as any).data;
+    const result = (await (await app.request(`/public/requests/${request.token}/submit`, jsonInit(null, { rating }))).json() as any).data;
+    const revisit = (await (await app.request(`/public/requests/${request.token}`, getInit(null))).json() as any).data;
+    expect(landing.platforms).toHaveLength(1);
+    expect(result.platforms).toEqual(landing.platforms);
+    expect(revisit.platforms).toEqual(landing.platforms);
+    expect(revisit.submitted).toBe(true);
+    expect(result.message).toBe('Thank you for your honest feedback. You can also share your experience publicly, if you choose.');
+    await app.request(`/public/requests/${request.token}/opt-out`, jsonInit(null, {}));
+    const optedOut = (await (await app.request(`/public/requests/${request.token}`, getInit(null))).json() as any).data;
+    expect(optedOut.optedOut).toBe(true);
+    expect(optedOut.platforms).toEqual(landing.platforms);
+  });
+
   it('serves the landing view with NO tenant header and marks the request clicked', async () => {
     const { app, db, tenantA } = await setup();
     const request = await makeRequest(app, tenantA.id);
 
     const res = await app.request(`/public/requests/${request.token}`, getInit(null));
     expect(res.status).toBe(200);
-    expect(((await res.json()) as any).data).toEqual({ status: 'clicked', submitted: false });
+    expect(((await res.json()) as any).data).toEqual({ status: 'clicked', submitted: false, optedOut: false, platforms: [] });
 
     const row = await db
       .selectFrom('reviews_requests')
@@ -62,7 +81,7 @@ describe('public tokenized flow', () => {
     ).toBe(404);
   });
 
-  it('positive gate: rating >= threshold returns enabled platform links and completes the request', async () => {
+  it('a high rating retains enabled public links and completes the request', async () => {
     const { app, db, events, tenantA } = await setup();
     const enabledPlatform = await addPlatform(app, tenantA.id, 'alpha', true);
     await addPlatform(app, tenantA.id, 'bravo', false); // disabled — must never be offered
@@ -107,7 +126,7 @@ describe('public tokenized flow', () => {
     });
   });
 
-  it('boundary: a rating exactly at the threshold gates positive', async () => {
+  it('the threshold classifies internal follow-up only', async () => {
     const { app, tenantA } = await setup();
     await addPlatform(app, tenantA.id, 'alpha');
     const request = await makeRequest(app, tenantA.id, 3);
@@ -115,7 +134,7 @@ describe('public tokenized flow', () => {
     expect(((await res.json()) as any).data.gate).toBe('positive');
   });
 
-  it('negative gate: below-threshold captures private feedback flagged for follow-up, no platform links', async () => {
+  it('a low rating flags private follow-up and retains the same public destinations', async () => {
     const { app, events, tenantA } = await setup();
     await addPlatform(app, tenantA.id, 'alpha');
     const request = await makeRequest(app, tenantA.id, 4);
@@ -132,7 +151,8 @@ describe('public tokenized flow', () => {
     expect(res.status).toBe(201);
     const result = ((await res.json()) as any).data;
     expect(result.gate).toBe('negative');
-    expect(result.platforms).toEqual([]); // never funnel unhappy customers to public platforms
+    expect(result.platforms).toHaveLength(1);
+    expect(result.platforms[0].url).toBe('https://example.com/alpha');
     expect(result.response.flagged_for_followup).toBe(true);
     expect(result.response.comment).toBe('The crew arrived two hours late.');
 
@@ -234,7 +254,7 @@ describe('public tokenized flow', () => {
     expect(JSON.stringify(optOut)).not.toContain(tenantA.id);
   });
 
-  it('cross-tenant safety: a positive gate only ever offers the token tenant platforms', async () => {
+  it('cross-tenant safety: all public links belong only to the token tenant', async () => {
     const { app, tenantA, tenantB } = await setup();
     await addPlatform(app, tenantA.id, 'tenant_a_place');
     await addPlatform(app, tenantB.id, 'tenant_b_place');

@@ -70,7 +70,7 @@ describe('durable submission', () => {
   it('the contract never returns success when an external provider is absent', async () => {
     const f = await setup();
     await expect(f.contract.sendMessage({ tenantId: f.a, channel: 'email', to: 'customer@example.test', body: 'Unconnected' }))
-      .rejects.toMatchObject({ status: 409 });
+      .rejects.toMatchObject({ status: 501 });
     await f.db.destroy();
   });
 });

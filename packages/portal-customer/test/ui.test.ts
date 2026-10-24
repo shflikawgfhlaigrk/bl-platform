@@ -183,6 +183,20 @@ describe('server-rendered portal UI', () => {
     expect(html).toContain('&lt;img src=x onerror=alert(2)&gt;');
   });
 
+  it('shows full viewed scope and submits its hash, escaping customer terms and refusing a stale form', async () => {
+    const seedQuotes: Array<{ tenantId: string; quote: PortalQuote }> = [];
+    const quotes = makeQuotesProvider(seedQuotes); const ctx = await setup({ providers: { quotes: quotes.provider } });
+    seedQuotes.push({ tenantId: ctx.tenantA, quote: { id: 'q1', customerId: 'cust_ada', status: 'viewed', totalCents: 9900, subtotalCents: 10000, discountCents: 100, taxCents: 0,
+      notes: '<script>unsafe scope</script>', revisionNumber: 2, payloadHash: 'a'.repeat(64), lines: [{ description: 'Accepted work', quantity: 2, unitPriceCents: 5000, totalCents: 10000 }] } });
+    await createAccountViaApi(ctx.app, ctx.tenantA, { email: 'ada@example.com', customerId: 'cust_ada' });
+    const cookie = await uiLogin(ctx, ctx.tenantA, 'ada@example.com'); const html = await (await uiGet(ctx, ctx.tenantA, '/ui', cookie)).text();
+    expect(html).toContain('Version 2'); expect(html).toContain('Accepted work'); expect(html).toContain('Discount: $1.00');
+    expect(html).toContain(`name="expectedPayloadHash" value="${'a'.repeat(64)}"`); expect(html).toContain('Approve this scope');
+    expect(html).toContain('&lt;script&gt;unsafe scope&lt;/script&gt;'); expect(html).not.toContain('<script>unsafe scope</script>');
+    const stale = await uiForm(ctx, ctx.tenantA, '/ui/quotes/q1/approve', { expectedPayloadHash: 'b'.repeat(64) }, cookie); expect(stale.status).toBe(409); expect(quotes.approvalCalls).toEqual([]);
+    expect((await uiForm(ctx, ctx.tenantA, '/ui/quotes/q1/approve', { expectedPayloadHash: 'a'.repeat(64) }, cookie)).status).toBe(302);
+  });
+
   it('approves a quote and sends a message through the UI forms', async () => {
     const seedQuotes: Array<{ tenantId: string; quote: PortalQuote }> = [];
     const quotes = makeQuotesProvider(seedQuotes);

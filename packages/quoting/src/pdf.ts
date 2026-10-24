@@ -96,7 +96,7 @@ export class HtmlQuoteDocumentAdapter implements QuoteDocumentProvider {
   <header>
     <div>
       <h1>${esc(tenantName)}</h1>
-      <div class="meta">Quote ${esc(quote.id)} &middot; ${esc(quote.title)}</div>
+      <div class="meta">Quote ${esc(quote.id)} &middot; ${esc(quote.title)} &middot; Version ${quote.revision_number}</div>
     </div>
     <div class="meta">
       <div>Status: ${esc(quote.status)}</div>

@@ -28,6 +28,7 @@ export type {
   MessagingTemplateRow,
   MessagingParticipantRow,
   MessagingAssignmentRow,
+  MessagingInboundReceiptRow,
   ChannelType,
   ConversationStatus,
   MessageDirection,

@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { businessRequest, businessTransport } from '../src/transport';
+import { Hono } from 'hono';
+import { serve } from '@hono/node-server';
+import type { HttpBindings } from '@hono/node-server';
+import type { AddressInfo } from 'node:net';
+import { RateLimiter } from '../../api/src/security';
+import { errorHandler } from '@blacklabel/core';
+import { businessFetch, businessRequest, businessTransport } from '../src/transport';
 
 describe('business network boundary', () => {
   const handle = async (request: Request) => new Response(await request.text());
@@ -33,5 +39,32 @@ describe('business network boundary', () => {
     expect((await businessRequest(request, { port: 47832 }, handle, { bytes: 8, timeoutMs: 5 })).status).toBe(408);
     expect((await businessRequest(new Request('http://rebound.example:47832/'), { port: 47832 }, handle)).status).toBe(403);
     expect((await businessRequest(new Request('http://localhost:12345/'), { port: 47832 }, handle)).status).toBe(403);
+  });
+
+  it('forwards the actual Node socket environment through the serialized request handler', async () => {
+    const app = new Hono<{ Bindings: HttpBindings }>();
+    app.get('/', c => c.json({ peer: c.env?.incoming?.socket?.remoteAddress }));
+    let queued = 0;
+    const handler = businessFetch({ port: 0 }, app.fetch, async action => { queued++; return action(); });
+    const server = serve({ hostname: '127.0.0.1', port: 0, fetch: handler });
+    try {
+      if (!server.listening) await new Promise<void>(resolve => server.once('listening', resolve));
+      const port = (server.address() as AddressInfo).port;
+      const response = await fetch(`http://127.0.0.1:${port}/`, { headers: { 'x-forwarded-for': '203.0.113.44', 'cf-connecting-ip': '203.0.113.45' } });
+      expect(response.status).toBe(200); expect(await response.json()).toEqual({ peer: '127.0.0.1' }); expect(queued).toBe(1);
+    } finally { await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())); }
+  });
+
+  it('keeps separate socket identities in separate buckets and ignores spoofed forwarding headers', async () => {
+    const app = new Hono(); app.onError(errorHandler);
+    app.use('*', new RateLimiter({ generalPerMinute: 1, now: () => 0 }).middleware());
+    app.get('/', c => c.text('ok'));
+    const handler = businessFetch({ port: 0 }, app.fetch);
+    const request = () => new Request('http://127.0.0.1/', { headers: { 'x-forwarded-for': randomIp() } });
+    let n = 0; function randomIp() { return `203.0.113.${++n}`; }
+    const env = (peer: string) => ({ incoming: { socket: { remoteAddress: peer } } });
+    expect((await handler(request(), env('192.0.2.1'))).status).toBe(200);
+    expect((await handler(request(), env('192.0.2.1'))).status).toBe(429);
+    expect((await handler(request(), env('192.0.2.2'))).status).toBe(200);
   });
 });

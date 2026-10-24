@@ -14,6 +14,7 @@ import {
   deleteCustomField,
   errorHandler,
   listCustomFields,
+  listUsers,
   parseFilters,
   parsePagination,
   parseSort,
@@ -88,10 +89,12 @@ const leadCreate = z
     contact_id: z.string().nullish(),
     company_id: z.string().nullish(),
     owner_user_id: z.string().nullish(),
+    next_action: z.string().trim().min(1).max(500).nullish(),
+    next_action_due_at: z.string().datetime({ offset: true }).nullish(),
     custom_fields: customFields,
   })
   .strict();
-const leadUpdate = leadCreate.partial();
+const leadUpdate = leadCreate.partial().extend({ expected_next_action_revision: z.number().int().min(0).optional() });
 
 const leadStageChange = z.object({ stage: z.string().min(1) }).strict();
 
@@ -103,6 +106,7 @@ const leadStagesPut = z
           .object({
             key: z.string().min(1),
             label: z.string().optional(),
+            is_closed: z.boolean().optional(),
           })
           .strict(),
       )
@@ -382,6 +386,19 @@ export function crmRouter(deps: ModuleDeps<CrmDatabase>): Hono<TenantEnv> {
 
   /* ---------------- leads ---------------- */
 
+  app.get('/owners', async (c) => {
+    const page = parsePagination(c.req.query());
+    const users = await listUsers(asCoreDb(db), c.get('tenantId'), page);
+    return c.json({ data: users.map(({ id, name, email, role }) => ({ id, name, email, role })), limit: page.limit, offset: page.offset });
+  });
+  app.get('/sales-queue', async (c) => {
+    const query = c.req.query();
+    const bucket = z.enum(svc.SALES_QUEUE_BUCKETS).parse(query.bucket ?? 'all');
+    const page = parsePagination(query);
+    const result = await svc.listSalesQueue(db, c.get('tenantId'), { page, bucket, owner_user_id: query.owner_user_id, q: query.q });
+    return c.json({ data: { ...result, items: result.items.map(present) }, limit: page.limit, offset: page.offset });
+  });
+
   app.post('/leads', async (c) => {
     const input = leadCreate.parse(await jsonBody(c));
     const row = await svc.createLead(db, events, c.get('tenantId'), actorOf(c), input);
@@ -413,6 +430,15 @@ export function crmRouter(deps: ModuleDeps<CrmDatabase>): Hono<TenantEnv> {
     const { stage } = leadStageChange.parse(await jsonBody(c));
     const row = await svc.changeLeadStage(db, events, c.get('tenantId'), actorOf(c), c.req.param('id'), stage);
     return c.json({ data: present(row) });
+  });
+  app.post('/leads/:id/next-action/complete', async (c) => {
+    const input = z.object({
+      idempotency_key: z.string().min(8).max(200),
+      revision: z.number().int().min(0),
+      note: z.string().max(2000).optional(),
+    }).strict().parse(await jsonBody(c));
+    const result = await svc.completeLeadNextAction(db, events, c.get('tenantId'), actorOf(c), c.req.param('id'), input);
+    return c.json({ data: result });
   });
   app.get('/leads/:id/timeline', async (c) => {
     const tenantId = c.get('tenantId');

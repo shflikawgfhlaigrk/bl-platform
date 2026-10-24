@@ -103,9 +103,10 @@ describe('campaign dispatch — schedule & throttle', () => {
       name: 'No contract',
       customerIds: ['c1'],
     });
-    await expect(dispatchCampaign(db, tenantA.id, 'system', campaign.id, {})).rejects.toThrow('not connected');
+    expect(await dispatchCampaign(db, tenantA.id, 'system', campaign.id, {})).toEqual({ dispatched: 0, reason: 'needs_attention', failed: 1 });
     const row = await db.selectFrom('reviews_requests').selectAll().where('tenant_id', '=', tenantA.id).where('campaign_id', '=', campaign.id).executeTakeFirstOrThrow();
     expect(row.sent_at).toBeNull();
+    expect(row.delivery_status).toBe('blocked');
   });
 });
 

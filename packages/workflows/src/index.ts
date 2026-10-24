@@ -39,6 +39,7 @@ export type {
 
 // Migrations
 export { workflowsMigrations } from './migrations';
+export { installWorkflowRecipe, listWorkflowRecipes } from './recipes';
 
 // Router factory
 export { workflowsRouter } from './router';

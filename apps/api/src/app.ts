@@ -182,6 +182,7 @@ import { buildHealthProbes } from './admin-wiring';
 import { businessLeadStages, businessPortalProviders, isBusinessPortalRoute } from './business-wiring';
 import { businessQuoteConversion } from './business-conversion';
 import { businessReminderDelivery } from './business-reminders';
+import { businessIndustryRuntime } from './business-industry-wiring';
 import {
   posClaimedOrderGuard,
   posRouter,
@@ -697,7 +698,8 @@ export async function createApp(options: CreateAppOptions): Promise<PlatformApp>
   app.route('/api/workflows', workflowsRouter(deps<WorkflowsDatabase>()));
   app.route('/api/billing', billingRouter(deps<BillingDatabase>(), options.billing));
   app.route('/api/files', filesRouter({ ...deps<FilesDatabase>(), storage }));
-  app.route('/api/industries', industriesRouter(deps<IndustriesDatabase>()));
+  app.route('/api/industries', industriesRouter(deps<IndustriesDatabase>(), options.businessPortals
+    ? { installRuntime: businessIndustryRuntime(db, events) } : {}));
   app.route('/api/retail', retailRouter(deps<RetailDatabase>()));
 
   // New modules with their extra-arg injections.

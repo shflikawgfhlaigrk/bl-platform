@@ -19,6 +19,7 @@ meetings — same primitives everywhere.
 | Appointment | `scheduling_appointments` | status machine, internal `notes`, materialized occurrences |
 | — staff/resource assignment | `scheduling_appointment_staff` / `scheduling_appointment_resources` | many-to-many |
 | Reminder | `scheduling_reminders` | `send_at` + provider-stub delivery |
+| Appointment receipt | `scheduling_appointment_receipts` | tenant-scoped contract retry key + payload hash + original appointment id |
 
 Every table carries `tenant_id`; every query filters by it. The tenant comes
 from the core `x-tenant-id` middleware — never from the body. The acting user
@@ -80,7 +81,27 @@ curl -X POST /api/scheduling/availability-exceptions -H 'x-tenant-id: T' \
 # Free slots for a local date (windows − exceptions − bookings incl. buffers), returned as UTC intervals
 curl '/api/scheduling/availability?owner_type=staff&owner_id=STAFF_ID&date=2027-06-07&timezone=America/Chicago' \
   -H 'x-tenant-id: T'
+
+# Duration-sized suggestions requiring both staff and every selected resource.
+# calendar_id makes hours use the same timezone as booking admission.
+curl '/api/scheduling/next-available?appointment_type_id=TYPE_ID&calendar_id=CAL_ID&staff=any&resource_ids=ROOM_ID,VEHICLE_ID&from=2027-06-07&days=7' \
+  -H 'x-tenant-id: T'
+# slots carry starts_at, ends_at, staff_id, resource_ids and local date.
 ```
+
+Booking and rescheduling enforce configured weekly hours and dated time off
+for every assigned staff member and resource, including before/after buffers.
+Hours follow the selected calendar's timezone; a timestamp parsing timezone
+does not redefine them. Time off wins over added hours regardless of exception
+ordering. A denied recurring occurrence rejects the entire new series. Existing
+appointments are not moved or canceled when hours change.
+
+For compatibility, an owner with no weekly hours remains manually bookable,
+subject to explicit dated hours and time off. Suggested slots require staff
+hours; resources without weekly hours may accompany those slots subject to their
+dated exceptions and existing bookings. Suggestions are advisory: booking
+rechecks conflicts and hours in its transaction. Rescheduling changes the
+selected occurrence only.
 
 ### Appointments
 
@@ -103,6 +124,8 @@ curl -X POST /api/scheduling/appointments -H 'x-tenant-id: T' \
 # → 409 on staff/resource double-booking (buffers included):
 #   { "error": { "code": "conflict", "details": { "conflicts": [
 #       { "owner_type": "staff", "owner_id": "…", "appointment_id": "…", "starts_at": "…", "ends_at": "…" } ] } } }
+# → 409 outside hours: details.unavailable names owner_type, owner_id and
+#   local date; details.timezone is the calendar's zone.
 
 # Recurring (RRULE-lite): daily/weekly/monthly, interval, count XOR until.
 # Occurrences are materialized as appointment rows sharing scheduleRuleId.
@@ -173,6 +196,21 @@ transports (`StubReminderProvider` ships as default). Inject real ones via
 `CreateAppointmentContract`: books on the tenant's first calendar (creating a
 "Default" UTC calendar if none exists) and resolves `assigneeUserId` to a
 staff member via `staff.user_id` (unassigned if no match).
+
+An optional `idempotencyKey` records the appointment and receipt in one
+transaction. Concurrent calls/retries with the same tenant, key, and normalized
+payload return the original appointment id without another booking, scheduled
+event, or calendar operation. A changed payload or dangling receipt returns
+`409` for review. Retries reconcile the original appointment even if it was
+later canceled; they do not rebook canceled work. Workflow actions supply a
+stable execution/action key and retain their original retry payload.
+
+The contract supports an existing caller transaction; the caller injects a
+deferred event bus and owns event release after commit. External calendar sync
+stays pending in that case, so a rolled-back outer transaction reaches no
+external calendar. Ordinary calls synchronize after their own commit. This
+receipt protects local booking writes; it does not prove remote-provider
+delivery or durable event replay across a process crash.
 
 ## Seed & tests
 

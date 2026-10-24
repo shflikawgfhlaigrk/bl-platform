@@ -14,13 +14,39 @@ async function fixture(provider?: ChannelProvider) {
   const data=async(route:string,method='GET',body?:unknown)=>{const response=await platform.app.request('/api/'+route,{method,headers:{'x-tenant-id':tenant,'x-user-id':ownerUserId,'content-type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});expect(response.status,await response.clone().text()).toBeLessThan(300);return(await response.json() as any).data;};
   await data('messaging/channels','POST',{type:'email',name:'Fixture sender',address:'sender@example.test'});
   const customer=await data('crm/customers','POST',{name:'Fixture customer',email:'customer@example.test'});
+  const job=await data('crm/jobs','POST',{title:'Completed review fixture job',customer_id:customer.id,status:'completed'});
   const request=await data('reviews/requests','POST',{customerId:customer.id});
   const context={tenantId:tenant,customerId:customer.id,requestId:request.id,link:`/api/reviews/public/requests/${request.token}`};
   const reviews=businessReviewProvider(db,platform.events,messaging,()=> 'https://company.example.test');
-  return{db,platform,tenant,other,data,customer,request,context,reviews,close:async()=>{platform.detachEngine();await db.destroy();}};
+  return{db,platform,tenant,other,data,customer,job,request,context,reviews,close:async()=>{platform.detachEngine();await db.destroy();}};
 }
 
 describe('installed business review delivery boundary',()=>{
+ it('enforces completed work and reads receipts without another provider send',async()=>{
+  const send=vi.fn(async()=>({status:'sent' as const,providerMessageId:'provider-review-fixture'}));const f=await fixture({type:'email',send});
+  try{
+   const jobs=await f.reviews.listCompletedJobs!(f.tenant);expect(jobs).toContainEqual(expect.objectContaining({customerId:f.customer.id,jobId:f.job.id,sourceType:'crm.job',contactReady:true}));
+   expect(await f.reviews.getDeliveryStatus!(f.context)).toEqual({status:'blocked'});
+   const result=await f.reviews.sendReviewRequest({...f.context,sourceJobId:f.job.id,sourceJobType:'crm.job'});
+   expect(await f.reviews.getDeliveryStatus!(f.context)).toEqual({status:'submitted',messageId:result.messageId});
+   await f.db.updateTable('messaging_messages').set({delivery_status:'delivered'}).where('tenant_id','=',f.tenant).where('id','=',result.messageId!).execute();
+   expect(await f.reviews.getDeliveryStatus!(f.context)).toEqual({status:'delivered',messageId:result.messageId});
+   await f.db.updateTable('messaging_messages').set({delivery_status:'bounced'}).where('tenant_id','=',f.tenant).where('id','=',result.messageId!).execute();
+   expect(await f.reviews.getDeliveryStatus!(f.context)).toEqual({status:'needs_attention',messageId:result.messageId});
+   expect(send).toHaveBeenCalledTimes(1);
+   await f.data(`crm/jobs/${f.job.id}`,'PATCH',{status:'in_progress'});
+   await expect(f.reviews.sendReviewRequest({...f.context,requestId:'another-operation'})).rejects.toThrow('completed customer job');
+   expect(send).toHaveBeenCalledTimes(1);
+  }finally{await f.close();}
+ });
+
+ it('stops a future operation after the customer opts out',async()=>{
+  const send=vi.fn(async()=>({status:'sent' as const,providerMessageId:'fixture'}));const f=await fixture({type:'email',send});
+  try{
+   const response=await f.platform.app.request(`/api/reviews/public/requests/${f.request.token}/opt-out`,{method:'POST'});expect(response.status).toBe(200);
+   await expect(f.reviews.sendReviewRequest(f.context)).rejects.toThrow('opted out');expect(send).not.toHaveBeenCalled();
+  }finally{await f.close();}
+ });
  it('uses one stable email submission and distinguishes accepted from delivered',async()=>{
   const send=vi.fn(async()=>({status:'sent' as const,providerMessageId:'provider-review-fixture'}));const f=await fixture({type:'email',send});
   try{

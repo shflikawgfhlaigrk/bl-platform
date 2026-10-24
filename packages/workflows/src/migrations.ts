@@ -158,4 +158,30 @@ export const workflowsMigrations: Migration[] = [
         .execute();
     },
   },
+  {
+    name: 'workflows.0004_recovery_receipts',
+    up: async (db) => {
+      await db.schema.alterTable('workflows_workflows').addColumn('recipe_key', 'text').execute();
+      await db.schema.createIndex('workflows_recipe_tenant_key_idx').on('workflows_workflows')
+        .columns(['tenant_id', 'recipe_key']).unique().execute();
+      for (const column of ['trigger_event_id', 'actions_snapshot_json', 'claim_token', 'claim_expires_at']) {
+        await db.schema.alterTable('workflows_executions').addColumn(column, 'text').execute();
+      }
+      await db.schema.alterTable('workflows_executions').addColumn('retry_limit', 'integer').execute();
+      await db.schema.createIndex('workflows_execution_tenant_event_idx').on('workflows_executions')
+        .columns(['tenant_id', 'workflow_id', 'trigger_event_id']).unique().execute();
+      await db.schema.createTable('workflows_action_receipts')
+        .addColumn('id', 'text', c => c.primaryKey())
+        .addColumn('tenant_id', 'text', c => c.notNull())
+        .addColumn('execution_id', 'text', c => c.notNull())
+        .addColumn('action_id', 'text', c => c.notNull())
+        .addColumn('operation_key', 'text', c => c.notNull())
+        .addColumn('request_json', 'text', c => c.notNull())
+        .addColumn('status', 'text', c => c.notNull())
+        .addColumn('output_json', 'text')
+        .addColumn('created_at', 'text', c => c.notNull()).execute();
+      await db.schema.createIndex('workflows_receipt_tenant_operation_idx').on('workflows_action_receipts')
+        .columns(['tenant_id', 'operation_key']).unique().execute();
+    },
+  },
 ];

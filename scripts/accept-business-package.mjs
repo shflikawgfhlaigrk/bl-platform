@@ -23,7 +23,7 @@ async function start(){let stdout='';stderr='';child=spawn(node,[path.join(app,'
 async function stop(){if(!child||child.exitCode!==null)return;const exited=once(child,'exit');child.send({type:'blacklabel:shutdown'});await Promise.race([exited,new Promise((_,reject)=>setTimeout(()=>reject(Error('Runtime did not shut down gracefully')),10000))]);}
 const puppeteer=createRequire(import.meta.url)(process.env.BLACKLABEL_PUPPETEER);
 async function submit(selector){await page.click(`${selector} button:not([type=button])`);}
-async function nav(key,selector){await page.click(`nav a[data-module="${key}"]`);if(selector)await page.waitForSelector(selector);}
+async function nav(key,selector){await page.click(`nav a[data-module="${key}"]`);if(key==='crm')await page.evaluate(()=>{location.hash='/crm/customers';});if(selector)await page.waitForSelector(selector);}
 async function read(route){return page.evaluate(async(route)=>{const response=await fetch(`/api/${route}`);const body=await response.json();if(!response.ok)throw Error(body.error?.message||String(response.status));return body.data;},route);}
 const browserErrors=[];
 try{
@@ -39,7 +39,7 @@ try{
   await nav('quoting','#quote-add');await page.select('#quote-add [name=customerId]',customerId);await page.type('#quote-add [name=title]','Fixture Service Estimate');await page.type('#quote-add [name=description]','Service visit');await page.type('#quote-add [name=price]','125.50');await submit('#quote-add');
   await page.waitForFunction(()=>document.querySelector('tbody')?.textContent.includes('Fixture Service Estimate'));await page.click('[data-action=publish]');await page.waitForFunction(()=>document.querySelector('tbody')?.textContent.includes('sent'));
   assert.equal((await read('quoting/quotes'))[0].total_cents,12550);checks.push('quote calculation and customer-portal publication');
-  await nav('scheduling','#calendar-add');await page.type('#calendar-add [name=name]','Service calendar');await submit('#calendar-add');
+  await nav('scheduling','#calendar-add');await page.type('#calendar-add [name=name]','Service calendar');await page.$eval('#calendar-add [name=timezone]',e=>{e.value='America/Chicago';});await submit('#calendar-add');
   await page.waitForFunction(()=>document.querySelector('#appointment-add [name=calendarId]')?.options.length>1);
   const calendarId=await page.$eval('#appointment-add [name=calendarId]',s=>s.options[1].value);await page.select('#appointment-add [name=calendarId]',calendarId);await page.select('#appointment-add [name=customerId]',customerId);await page.type('#appointment-add [name=title]','Fixture Service Visit');
   await page.$eval('#appointment-add [name=startsAt]',e=>{e.value='2027-01-12T10:00';e.dispatchEvent(new Event('input',{bubbles:true}));});
@@ -49,7 +49,7 @@ try{
   await (await page.$('#file-upload [name=file]')).uploadFile(file);await page.select('#file-upload [name=customer]',customerId);await submit('#file-upload');
   await page.waitForFunction(()=>document.querySelector('tbody')?.textContent.includes('fixture-document.txt'));const files=await read('files/files');assert.equal(files.length,1);
   const downloaded=await page.evaluate(async(id)=>fetch(`/api/files/files/${id}/content`).then(r=>r.text()),files[0].id);assert.equal(downloaded,fileText);checks.push('upload, explicit customer sharing, and exact file download');
-  for(const [key,selector] of [['billing','#invoice-add'],['messaging','#conversation-add'],['workflows','#workflow-add'],['portal-customer','#portal-account'],['portal-employee','#employee-add'],['reviews','#review-request'],['industries','[data-action=apply]'],['connections','#company']]){
+  for(const [key,selector] of [['billing','#invoice-add'],['messaging','#conversation-add'],['workflows','#workflow-add'],['portal-customer','#portal-account'],['portal-employee','#employee-add'],['reviews','#testimonial-add'],['industries','[data-action=apply]'],['connections','#company']]){
     await nav(key,selector);assert.equal(await page.$eval('#notice',e=>e.classList.contains('error')),false,`Module error: ${key}`);
   }
   checks.push('all twelve module views are reachable');
@@ -91,18 +91,21 @@ try{
   const quoteId=(await read('quoting/quotes'))[0].id;const conversion=await read(`quoting/quotes/${quoteId}/conversion`);assert.equal((await read(`crm/jobs/${conversion.job_id}`)).title,'Fixture Service Estimate');assert.equal((await read(`billing/invoices/${conversion.invoice_id}`)).total_cents,12550);checks.push('approved quote creates a persisted CRM job and exact billing invoice with linked conversion receipt');
   await customerPage.screenshot({path:path.join(out,'customer-portal.png'),fullPage:true});checks.push('isolated customer browser uses a local fixture sign-in link and approves its quote with quoting readback; email delivery is untested');
   await nav('billing','#invoice-add');await page.waitForSelector('[data-action=publish]');await page.click(`[data-action=publish][data-id="${conversion.invoice_id}"]`);await page.waitForSelector('[data-action=payment]');
-  const invoice=await read(`billing/invoices/${conversion.invoice_id}`);await page.click('[data-action=payment]');await page.type('#record-payment [name=amount]','50.25');await page.type('#record-payment [name=reference]','Fixture manual receipt only');await submit('#record-payment');await page.waitForFunction(()=>document.querySelector('tbody')?.textContent.includes('partial'));
+  const invoice=await read(`billing/invoices/${conversion.invoice_id}`);await page.click(`[data-action=payment][data-id="${conversion.invoice_id}"]`);await page.type('#record-payment [name=amount]','50.25');await page.type('#record-payment [name=reference]','Fixture manual receipt only');await submit('#record-payment');await page.waitForFunction(()=>document.querySelector('tbody')?.textContent.includes('partial'));
   assert.equal((await read(`billing/invoices/${invoice.id}`)).paid_cents,5025);await customerPage.reload({waitUntil:'networkidle0'});assert.match(await customerPage.$eval('body',e=>e.textContent),/75\.25/);checks.push('manual partial payment is recorded exactly and remaining balance appears in the customer portal; no payment processed');
   await customerPage.type('form[action$="/messages"] [name=subject]','Fixture portal follow-up');await customerPage.type('form[action$="/messages"] [name=body]','Please confirm the fixture service arrival window.');
   await Promise.all([customerPage.waitForNavigation({waitUntil:'networkidle0'}),customerPage.click('form[action$="/messages"] button')]);assert.match(await customerPage.$eval('body',e=>e.textContent),/Please confirm the fixture service arrival window/);
   const portalThreads=await read('messaging/conversations');const portalThread=portalThreads.find(t=>t.subject==='Fixture portal follow-up');assert(portalThread);assert.match(JSON.stringify(await read(`messaging/conversations/${portalThread.id}`)),/Please confirm the fixture service arrival window/);checks.push('customer portal message form persists the customer message and relays it into the owner inbox with exact body readback');
+  await page.evaluate(async id=>{const r=await fetch(`/api/crm/jobs/${id}`,{method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify({status:'completed'})});if(!r.ok)throw Error('Completed synthetic job fixture failed');},conversion.job_id);
   await nav('reviews','#review-request');await page.select('#review-request [name=customerId]',customerId);await submit('#review-request');await page.waitForSelector('[data-action=link]');await page.click('[data-action=link]');await page.waitForSelector('a[href^="/review#"]');const reviewPath=await page.$eval('a[href^="/review#"]',e=>e.getAttribute('href'));
   await customerPage.goto(`${base}${reviewPath}`,{waitUntil:'networkidle0'});await customerPage.select('#review-form [name=rating]','3');await customerPage.type('#review-form [name=comment]','Fixture feedback from the customer browser.');await customerPage.click('#review-form button');await customerPage.waitForFunction(()=>document.querySelector('#review-content h2')?.textContent==='Feedback recorded');assert.equal((await read('reviews/requests'))[0].status,'completed');
   await customerPage.screenshot({path:path.join(out,'customer-feedback.png'),fullPage:true});checks.push('public review form records customer feedback and owner readback');
-  await teamContext.close();await customerContext.close();
   await acceptBusinessControls({page,read,customerId,checks,out});
   await acceptOperationsControls({page,read,customerId,checks,out});
-  await nav('dashboard','.grid');await page.screenshot({path:path.join(out,'dashboard.png'),fullPage:true});
+  const {acceptModuleOutcomeControls}=await import('./business-module-outcome-journeys.mjs');
+  await acceptModuleOutcomeControls({page,customerPage,teamPage,read,customerId,assignment,worker,owner:(await read('business/users'))[0],base,checks,out});
+  await teamContext.close();await customerContext.close();
+  await nav('dashboard','[data-queue-freshness]');await page.screenshot({path:path.join(out,'dashboard.png'),fullPage:true});
   await nav('recovery','[data-action=backup]');await page.click('[data-action=backup]');await page.waitForFunction(()=>document.body.textContent.includes('Backup created'));
   const backups=(await fs.readdir(path.join(data,'backups'))).filter(n=>n.endsWith('.tar.gz'));assert.equal(backups.length,1);const backup=path.join(data,'backups',backups[0]);checks.push('database and file-vault backup');
   await page.screenshot({path:path.join(out,'backup.png'),fullPage:true});

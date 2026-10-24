@@ -361,6 +361,8 @@ export function schedulingRouter(
     const parsed = z
       .object({
         appointment_type_id: z.string().min(1),
+        calendar_id: z.string().min(1).optional(),
+        resource_ids: z.string().max(2048).optional(),
         from: z.string().min(1),
         days: z.coerce.number().int().optional(),
         timezone: z.string().optional(),
@@ -373,6 +375,8 @@ export function schedulingRouter(
     const staffAny = parsed.staff === 'any';
     const result = await findNextAvailable(ctx, c.get('tenantId'), {
       appointmentTypeId: parsed.appointment_type_id,
+      calendarId: parsed.calendar_id,
+      resourceIds: parsed.resource_ids?.split(',').map((value) => value.trim()).filter(Boolean),
       from: parsed.from,
       days: parsed.days,
       timezone: parsed.timezone,

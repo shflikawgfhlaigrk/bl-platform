@@ -102,6 +102,8 @@ export interface ReviewProviderSendContext {
   customerId: string;
   /** Public tokenized link the customer should receive. */
   link: string;
+  sourceJobId?: string;
+  sourceJobType?: string;
 }
 
 export interface ReviewProviderReminderContext extends ReviewProviderSendContext {
@@ -116,6 +118,23 @@ export interface ReviewProviderSyncContext {
 
 export interface ReviewDeliveryResult { delivered: boolean; submitted?: boolean; messageId?: string }
 
+export type ReviewDeliveryStatus = 'not_sent' | 'sending' | 'blocked' | 'submitted' | 'delivered' | 'needs_attention';
+
+/** Verified by the composition layer; modules never join another module's tables. */
+export interface ReviewCompletedJob {
+  jobId: string;
+  sourceType: string;
+  customerId: string;
+  customerName?: string;
+  completedAt: string;
+  contactReady: boolean;
+}
+
+export interface ReviewDeliveryReadback {
+  status: 'blocked' | 'submitted' | 'delivered' | 'needs_attention';
+  messageId?: string;
+}
+
 /**
  * Outbound delivery + platform integration seam. A real implementation would
  * deliver the request/reminder (email/SMS via the messaging module or an
@@ -127,6 +146,10 @@ export interface ReviewProvider {
   sendReviewRequest(ctx: ReviewProviderSendContext): Promise<ReviewDeliveryResult>;
   sendReminder(ctx: ReviewProviderReminderContext): Promise<ReviewDeliveryResult>;
   syncExternalReviews(ctx: ReviewProviderSyncContext): Promise<{ imported: number }>;
+  /** Real completed jobs and contact availability; no sentiment filtering. */
+  listCompletedJobs?(tenantId: string): Promise<ReviewCompletedJob[]>;
+  /** Read-only reconciliation. This method must never submit a message. */
+  getDeliveryStatus?(ctx: ReviewProviderSendContext & { reminderId?: string }): Promise<ReviewDeliveryReadback>;
 }
 
 /**
@@ -276,7 +299,7 @@ export async function deletePlatform(
   await audit(asCoreDb(db), tenantId, actor, 'reviews.platform.deleted', 'reviews.platform', platformId);
 }
 
-/** Enabled platforms only — what a positively-gated customer is offered. */
+/** Enabled destinations are offered to every customer, independently of ratings. */
 async function enabledPlatformLinks(
   db: Db,
   tenantId: string,
@@ -303,6 +326,51 @@ export interface CreateCampaignInput {
   ratingThreshold?: number;
   throttlePerDay?: number;
   scheduleStartAt?: string;
+  /** Internal verified provenance supplied by the composition layer. */
+  completedJobs?: ReviewCompletedJob[];
+}
+
+async function isOptedOut(db: Db, tenantId: string, customerId: string): Promise<boolean> {
+  return !!await db.selectFrom('reviews_opt_outs').select('id').where('tenant_id', '=', tenantId)
+    .where('customer_id', '=', customerId).executeTakeFirst();
+}
+
+/** One latest completed job per contactable customer, excluding already-issued jobs and opt-outs. */
+export async function listEligibleCompletedJobs(db: Db, tenantId: string, provider: ReviewProvider): Promise<{
+  eligible: ReviewCompletedJob[];
+  excluded: Array<ReviewCompletedJob & { reason: 'no_contact' | 'opted_out' | 'already_requested' }>;
+}> {
+  if (!provider.listCompletedJobs) throw new ApiError(501, 'Completed-job eligibility is not connected.');
+  const completed = await provider.listCompletedJobs(tenantId);
+  const latest = new Map<string, ReviewCompletedJob>();
+  for (const job of completed.sort((a, b) => b.completedAt.localeCompare(a.completedAt) || a.jobId.localeCompare(b.jobId))) {
+    if (Number.isNaN(Date.parse(job.completedAt)) || Date.parse(job.completedAt) > Date.now()) continue;
+    if (!latest.has(job.customerId)) latest.set(job.customerId, job);
+  }
+  const requests = await db.selectFrom('reviews_requests').selectAll().where('tenant_id', '=', tenantId)
+    .orderBy('created_at').orderBy('id').execute();
+  const optedOut = new Set((await db.selectFrom('reviews_opt_outs').select('customer_id')
+    .where('tenant_id', '=', tenantId).orderBy('id').execute()).map(row => row.customer_id));
+  const eligible: ReviewCompletedJob[] = [];
+  const excluded: Array<ReviewCompletedJob & { reason: 'no_contact' | 'opted_out' | 'already_requested' }> = [];
+  for (const job of latest.values()) {
+    const reason = optedOut.has(job.customerId) ? 'opted_out' : !job.contactReady ? 'no_contact'
+      : requests.some(row => row.customer_id === job.customerId &&
+        (row.source_job_id ? row.source_job_id === job.jobId && row.source_job_type === job.sourceType : row.created_at >= job.completedAt))
+        ? 'already_requested' : undefined;
+    if (reason) excluded.push({ ...job, reason });
+    else eligible.push(job);
+  }
+  return { eligible, excluded };
+}
+
+export async function requireEligibleCompletedJob(db: Db, tenantId: string, customerId: string,
+  provider: ReviewProvider): Promise<ReviewCompletedJob> {
+  const { eligible, excluded } = await listEligibleCompletedJobs(db, tenantId, provider);
+  const job = eligible.find(row => row.customerId === customerId);
+  if (!job) throw ApiError.conflict('A completed job with usable contact details and no prior request or opt-out is required.',
+    { reason: excluded.find(row => row.customerId === customerId)?.reason ?? 'no_completed_job' });
+  return job;
 }
 
 export async function createCampaign(
@@ -312,7 +380,10 @@ export async function createCampaign(
   actor: string,
   input: CreateCampaignInput,
 ): Promise<{ campaign: ReviewCampaignRow; requests: ReviewRequestRow[] }> {
-  const customerIds = [...new Set(input.customerIds)];
+  const customerIds: string[] = [];
+  for (const customerId of [...new Set(input.customerIds)]) {
+    if (!await isOptedOut(db, tenantId, customerId)) customerIds.push(customerId);
+  }
   const now = nowIso();
   const campaign: ReviewCampaignRow = {
     id: id(),
@@ -325,8 +396,6 @@ export async function createCampaign(
     created_at: now,
     updated_at: now,
   };
-  await db.insertInto('reviews_campaigns').values(campaign).execute();
-
   const requests: ReviewRequestRow[] = customerIds.map((customerId) => ({
     id: id(),
     tenant_id: tenantId,
@@ -341,14 +410,23 @@ export async function createCampaign(
     opted_out_at: null,
     created_at: now,
     updated_at: now,
+    source_job_id: input.completedJobs?.find(job => job.customerId === customerId)?.jobId ?? null,
+    source_job_type: input.completedJobs?.find(job => job.customerId === customerId)?.sourceType ?? null,
+    source_job_completed_at: input.completedJobs?.find(job => job.customerId === customerId)?.completedAt ?? null,
+    delivery_status: 'not_sent',
   }));
-  if (requests.length > 0) {
-    await db.insertInto('reviews_requests').values(requests).execute();
-  }
-
-  await audit(asCoreDb(db), tenantId, actor, 'reviews.campaign.created', 'reviews.campaign', campaign.id, {
-    name: campaign.name,
-    requestCount: requests.length,
+  await db.transaction().execute(async transaction => {
+    for (const request of requests) {
+      if (!request.source_job_id || !request.source_job_type) continue;
+      const previous = await transaction.selectFrom('reviews_requests').select('id').where('tenant_id', '=', tenantId)
+        .where('source_job_id', '=', request.source_job_id).where('source_job_type', '=', request.source_job_type).executeTakeFirst();
+      if (previous) throw ApiError.conflict('A review request already exists for this completed job.');
+    }
+    await transaction.insertInto('reviews_campaigns').values(campaign).execute();
+    if (requests.length) await transaction.insertInto('reviews_requests').values(requests).execute();
+    await audit(asCoreDb(transaction), tenantId, actor, 'reviews.campaign.created', 'reviews.campaign', campaign.id, {
+      name: campaign.name, requestCount: requests.length,
+    });
   });
   await events.emit(tenantId, 'reviews.campaign.created', {
     campaignId: campaign.id,
@@ -454,7 +532,8 @@ export async function updateCampaign(
 
 export interface DispatchResult {
   dispatched: number;
-  reason: 'not_started' | 'throttled' | 'no_pending' | null;
+  reason: 'not_started' | 'throttled' | 'no_pending' | 'needs_attention' | null;
+  failed?: number;
 }
 
 export interface DispatchOptions {
@@ -512,6 +591,7 @@ export async function dispatchCampaign(
     .where('campaign_id', '=', campaignId)
     .where('status', '=', 'pending')
     .where('sent_at', 'is', null)
+    .where('delivery_status', 'in', ['not_sent', 'blocked'])
     .orderBy('created_at')
     .orderBy('id')
     .limit(quota)
@@ -520,24 +600,42 @@ export async function dispatchCampaign(
     return { dispatched: 0, reason: 'no_pending' };
   }
 
+  let dispatched = 0;
+  let failed = 0;
   for (const request of batch) {
+    if (await isOptedOut(db, tenantId, request.customer_id)) continue;
+    const claim = await db.updateTable('reviews_requests').set({ delivery_status: 'sending', delivery_attempted_at: now, delivery_error: null })
+      .where('tenant_id', '=', tenantId).where('id', '=', request.id).where('status', '=', 'pending')
+      .where('delivery_status', 'in', ['not_sent', 'blocked']).executeTakeFirst();
+    if (claim.numUpdatedRows === 0n) continue;
     const link = reviewRequestPublicPath(request.token);
-    const result = await provider.sendReviewRequest({
-      tenantId,
-      requestId: request.id,
-      customerId: request.customer_id,
-      link,
-    });
-    if (!result.delivered && !result.submitted) throw ApiError.conflict('Review delivery is not connected or has not been accepted.');
-    await db.updateTable('reviews_requests').set({ sent_at: now, updated_at: now })
-      .where('tenant_id', '=', tenantId).where('id', '=', request.id).execute();
+    try {
+      const result = await provider.sendReviewRequest({ tenantId, requestId: request.id, customerId: request.customer_id, link,
+        sourceJobId: request.source_job_id ?? undefined, sourceJobType: request.source_job_type ?? undefined });
+      const accepted = result.delivered || result.submitted;
+      await db.updateTable('reviews_requests').set({ sent_at: accepted ? now : null, updated_at: now,
+        delivery_status: result.delivered ? 'delivered' : result.submitted ? 'submitted' : 'blocked',
+        delivery_message_id: result.messageId ?? null,
+        delivery_error: accepted ? null : 'Delivery is not connected or has not been accepted.' })
+        .where('tenant_id', '=', tenantId).where('id', '=', request.id).execute();
+      if (accepted) dispatched += 1;
+      else failed += 1;
+    } catch {
+      // An exception does not prove no external submission occurred. Hold this
+      // operation for readback rather than automatically resending it.
+      await db.updateTable('reviews_requests').set({ delivery_status: 'needs_attention',
+        delivery_error: 'Submission could not be verified. Reconcile the saved message before retrying.', updated_at: now })
+        .where('tenant_id', '=', tenantId).where('id', '=', request.id).execute();
+      failed += 1;
+    }
   }
 
   await audit(asCoreDb(db), tenantId, actor, 'reviews.campaign.dispatched', 'reviews.campaign', campaignId, {
-    dispatched: batch.length,
+    dispatched,
+    failed,
     at: now,
   });
-  return { dispatched: batch.length, reason: null };
+  return failed ? { dispatched, reason: 'needs_attention', failed } : { dispatched, reason: null };
 }
 
 /* ------------------------------------------------------------------ *
@@ -548,6 +646,7 @@ export interface CreateRequestInput {
   customerId: string;
   campaignId?: string;
   ratingThreshold?: number;
+  completedJob?: ReviewCompletedJob;
 }
 
 export async function createRequest(
@@ -557,6 +656,13 @@ export async function createRequest(
   actor: string,
   input: CreateRequestInput,
 ): Promise<ReviewRequestRow> {
+  if (await isOptedOut(db, tenantId, input.customerId)) throw ApiError.conflict('This customer opted out of review requests.');
+  if (input.completedJob) {
+    if (input.completedJob.customerId !== input.customerId) throw ApiError.badRequest('Completed job customer does not match.');
+    const previous = await db.selectFrom('reviews_requests').select('id').where('tenant_id', '=', tenantId)
+      .where('source_job_id', '=', input.completedJob.jobId).where('source_job_type', '=', input.completedJob.sourceType).executeTakeFirst();
+    if (previous) throw ApiError.conflict('A review request already exists for this completed job.');
+  }
   let threshold = input.ratingThreshold ?? DEFAULT_RATING_THRESHOLD;
   if (input.campaignId) {
     const campaign = await getCampaign(db, tenantId, input.campaignId); // 404s cross-tenant
@@ -577,6 +683,10 @@ export async function createRequest(
     opted_out_at: null,
     created_at: now,
     updated_at: now,
+    source_job_id: input.completedJob?.jobId ?? null,
+    source_job_type: input.completedJob?.sourceType ?? null,
+    source_job_completed_at: input.completedJob?.completedAt ?? null,
+    delivery_status: 'not_sent',
   };
   await db.insertInto('reviews_requests').values(row).execute();
   await audit(asCoreDb(db), tenantId, actor, 'reviews.request.created', 'reviews.request', row.id, {
@@ -728,7 +838,7 @@ export async function processDueReminders(
   tenantId: string,
   actor: string,
   options: ProcessRemindersOptions = {},
-): Promise<{ sent: number; canceled: number }> {
+): Promise<{ sent: number; canceled: number; failed?: number }> {
   const now = options.now ?? nowIso();
   const provider: ReviewProvider = options.provider ?? new GoogleBusinessProvider();
   const due = await db
@@ -736,6 +846,7 @@ export async function processDueReminders(
     .selectAll()
     .where('tenant_id', '=', tenantId)
     .where('status', '=', 'scheduled')
+    .where('delivery_status', 'in', ['not_sent', 'blocked'])
     .where('send_at', '<=', now)
     .orderBy('send_at')
     .orderBy('id')
@@ -743,6 +854,7 @@ export async function processDueReminders(
 
   let sent = 0;
   let canceled = 0;
+  let failed = 0;
   for (const reminder of due) {
     const request = await db
       .selectFrom('reviews_requests')
@@ -751,7 +863,7 @@ export async function processDueReminders(
       .where('id', '=', reminder.request_id)
       .executeTakeFirst();
 
-    if (!request || request.status === 'completed' || request.status === 'opted_out') {
+    if (!request || request.status === 'completed' || request.status === 'opted_out' || await isOptedOut(db, tenantId, request.customer_id)) {
       await db
         .updateTable('reviews_reminders')
         .set({ status: 'canceled' })
@@ -766,27 +878,61 @@ export async function processDueReminders(
       continue;
     }
 
+    const claim = await db.updateTable('reviews_reminders').set({ delivery_status: 'sending', delivery_attempted_at: now, delivery_error: null })
+      .where('tenant_id', '=', tenantId).where('id', '=', reminder.id).where('status', '=', 'scheduled')
+      .where('delivery_status', 'in', ['not_sent', 'blocked']).executeTakeFirst();
+    if (claim.numUpdatedRows === 0n) continue;
     const link = reviewRequestPublicPath(request.token);
-    const result = await provider.sendReminder({
-      tenantId,
-      reminderId: reminder.id,
-      requestId: request.id,
-      customerId: request.customer_id,
-      link,
-    });
-    if (!result.delivered && !result.submitted) throw ApiError.conflict('Review reminder delivery is not connected or has not been accepted.');
-    await db
-      .updateTable('reviews_reminders')
-      .set({ status: 'sent', sent_at: now })
-      .where('tenant_id', '=', tenantId)
-      .where('id', '=', reminder.id)
-      .execute();
-    await audit(asCoreDb(db), tenantId, actor, 'reviews.reminder.sent', 'reviews.reminder', reminder.id, {
-      requestId: request.id,
-    });
-    sent += 1;
+    try {
+      const result = await provider.sendReminder({ tenantId, reminderId: reminder.id, requestId: request.id, customerId: request.customer_id, link,
+        sourceJobId: request.source_job_id ?? undefined, sourceJobType: request.source_job_type ?? undefined });
+      const accepted = result.delivered || result.submitted;
+      await db.updateTable('reviews_reminders').set({ status: accepted ? 'sent' : 'scheduled', sent_at: accepted ? now : null,
+        delivery_status: result.delivered ? 'delivered' : result.submitted ? 'submitted' : 'blocked',
+        delivery_message_id: result.messageId ?? null,
+        delivery_error: accepted ? null : 'Delivery is not connected or has not been accepted.' })
+        .where('tenant_id', '=', tenantId).where('id', '=', reminder.id).execute();
+      if (accepted) {
+        await audit(asCoreDb(db), tenantId, actor, 'reviews.reminder.sent', 'reviews.reminder', reminder.id,
+          { requestId: request.id, deliveryStatus: result.delivered ? 'delivered' : 'submitted', messageId: result.messageId });
+        sent += 1;
+      } else failed += 1;
+    } catch {
+      await db.updateTable('reviews_reminders').set({ delivery_status: 'needs_attention',
+        delivery_error: 'Submission could not be verified. Reconcile the saved message before retrying.' })
+        .where('tenant_id', '=', tenantId).where('id', '=', reminder.id).execute();
+      failed += 1;
+    }
   }
-  return { sent, canceled };
+  return failed ? { sent, canceled, failed } : { sent, canceled };
+}
+
+/** Reconcile an existing operation from provider readback, without a new send. */
+export async function reconcileReviewDelivery(db: Db, tenantId: string, actor: string, requestId: string,
+  provider: ReviewProvider, reminderId?: string): Promise<ReviewDeliveryReadback> {
+  const request = await getRequest(db, tenantId, requestId);
+  if (reminderId) {
+    const reminder = await db.selectFrom('reviews_reminders').select('id').where('tenant_id', '=', tenantId)
+      .where('id', '=', reminderId).where('request_id', '=', requestId).executeTakeFirst();
+    if (!reminder) throw ApiError.notFound('Review reminder not found.');
+  }
+  if (!provider.getDeliveryStatus) throw new ApiError(501, 'Review delivery readback is not connected.');
+  const result = await provider.getDeliveryStatus({ tenantId, requestId, customerId: request.customer_id,
+    link: reviewRequestPublicPath(request.token), ...(reminderId ? { reminderId } : {}) });
+  const accepted = result.status === 'submitted' || result.status === 'delivered';
+  const at = nowIso();
+  const fields = { delivery_status: result.status, delivery_message_id: result.messageId ?? null,
+    delivery_error: result.status === 'needs_attention' ? 'Check the saved message in the company inbox.' : null };
+  if (reminderId) {
+    await db.updateTable('reviews_reminders').set({ ...fields, ...(accepted ? { status: 'sent', sent_at: at } : {}) })
+      .where('tenant_id', '=', tenantId).where('id', '=', reminderId).execute();
+  } else {
+    await db.updateTable('reviews_requests').set({ ...fields, updated_at: at, ...(accepted && !request.sent_at ? { sent_at: at } : {}) })
+      .where('tenant_id', '=', tenantId).where('id', '=', requestId).execute();
+  }
+  await audit(asCoreDb(db), tenantId, actor, 'reviews.delivery.reconciled', reminderId ? 'reviews.reminder' : 'reviews.request',
+    reminderId ?? requestId, { status: result.status, messageId: result.messageId });
+  return result;
 }
 
 /* ------------------------------------------------------------------ *
@@ -812,6 +958,8 @@ async function findRequestByToken(db: Db, token: string): Promise<ReviewRequestR
 export interface PublicRequestView {
   status: string;
   submitted: boolean;
+  optedOut: boolean;
+  platforms: Array<{ id: string; key: string; name: string; url: string }>;
 }
 
 /** Landing view: marks a pending request as clicked. */
@@ -820,23 +968,21 @@ export async function getPublicRequest(db: Db, token: string): Promise<PublicReq
   let status = request.status;
   if (request.status === 'pending') {
     const now = nowIso();
-    await db
+    const clicked = await db
       .updateTable('reviews_requests')
       .set({ status: 'clicked', clicked_at: now, updated_at: now })
       .where('tenant_id', '=', request.tenant_id)
       .where('id', '=', request.id)
-      .execute();
-    await audit(
-      asCoreDb(db),
-      request.tenant_id,
-      `customer:${request.customer_id}`,
-      'reviews.request.clicked',
-      'reviews.request',
-      request.id,
-    );
-    status = 'clicked';
+      .where('status', '=', 'pending')
+      .executeTakeFirst();
+    if (clicked.numUpdatedRows) {
+      await audit(asCoreDb(db), request.tenant_id, `customer:${request.customer_id}`,
+        'reviews.request.clicked', 'reviews.request', request.id);
+      status = 'clicked';
+    } else status = (await getRequest(db, request.tenant_id, request.id)).status;
   }
-  return { status, submitted: status === 'completed' };
+  return { status, submitted: status === 'completed', optedOut: await isOptedOut(db, request.tenant_id, request.customer_id),
+    platforms: await enabledPlatformLinks(db, request.tenant_id) };
 }
 
 export interface SubmitReviewInput {
@@ -868,21 +1014,17 @@ function toPublicResponse(row: ReviewResponseRow): PublicReviewResponse {
 }
 
 export interface GatedSubmitResult {
+  /** Legacy classification field retained for clients; it never gates links. */
   gate: ReviewSentiment;
   response: PublicReviewResponse;
-  /** Only populated on the positive path — where to leave a public review. */
+  /** Same public destinations for every rating. */
   platforms: Array<{ id: string; key: string; name: string; url: string }>;
   message: string;
 }
 
 /**
- * Positive/negative gating flow.
- * - rating >= the request's threshold → record the response and offer the
- *   tenant's enabled platform links (the customer chooses to post — we never
- *   post for them).
- * - rating below threshold → capture the private feedback form as a
- *   ReviewResponse flagged for follow-up. No platform links.
- * Both paths emit `reviews.review.submitted`.
+ * Capture optional private feedback and keep public-review access equal for
+ * all ratings. Low ratings can create internal follow-up flags only.
  */
 export async function submitPublicReview(
   db: Db,
@@ -891,7 +1033,7 @@ export async function submitPublicReview(
   input: SubmitReviewInput,
 ): Promise<GatedSubmitResult> {
   const request = await findRequestByToken(db, token);
-  if (request.status === 'opted_out') {
+  if (request.status === 'opted_out' || await isOptedOut(db, request.tenant_id, request.customer_id)) {
     throw ApiError.conflict('this review request has been opted out');
   }
   if (request.status === 'completed') {
@@ -912,29 +1054,17 @@ export async function submitPublicReview(
     resolved_at: null,
     created_at: now,
   };
-  await db.insertInto('reviews_responses').values(response).execute();
-  await db
-    .updateTable('reviews_requests')
-    .set({
-      status: 'completed',
-      completed_at: now,
-      clicked_at: request.clicked_at ?? now,
-      updated_at: now,
-    })
-    .where('tenant_id', '=', request.tenant_id)
-    .where('id', '=', request.id)
-    .execute();
-  await cancelScheduledReminders(db, request.tenant_id, request.id);
-
-  await audit(
-    asCoreDb(db),
-    request.tenant_id,
-    `customer:${request.customer_id}`,
-    'reviews.review.submitted',
-    'reviews.response',
-    response.id,
-    { rating: input.rating, sentiment },
-  );
+  await db.transaction().execute(async transaction => {
+    if (await isOptedOut(transaction, request.tenant_id, request.customer_id)) throw ApiError.conflict('This customer opted out of review requests.');
+    const claimed = await transaction.updateTable('reviews_requests').set({ status: 'completed', completed_at: now,
+      clicked_at: request.clicked_at ?? now, updated_at: now }).where('tenant_id', '=', request.tenant_id)
+      .where('id', '=', request.id).where('status', 'in', ['pending', 'clicked']).executeTakeFirst();
+    if (!claimed.numUpdatedRows) throw ApiError.conflict('A review was already submitted or this request was opted out.');
+    await transaction.insertInto('reviews_responses').values(response).execute();
+    await cancelScheduledReminders(transaction, request.tenant_id, request.id);
+    await audit(asCoreDb(transaction), request.tenant_id, `customer:${request.customer_id}`,
+      'reviews.review.submitted', 'reviews.response', response.id, { rating: input.rating, sentiment });
+  });
   await events.emit(request.tenant_id, 'reviews.review.submitted', {
     reviewId: response.id,
     requestId: request.id,
@@ -943,19 +1073,11 @@ export async function submitPublicReview(
     sentiment,
   });
 
-  if (sentiment === 'positive') {
-    return {
-      gate: 'positive',
-      response: toPublicResponse(response),
-      platforms: await enabledPlatformLinks(db, request.tenant_id),
-      message: 'Thank you! If you have a moment, sharing your experience publicly means the world to us.',
-    };
-  }
   return {
-    gate: 'negative',
+    gate: sentiment,
     response: toPublicResponse(response),
-    platforms: [],
-    message: 'Thank you for the honest feedback — someone from the team will follow up with you.',
+    platforms: await enabledPlatformLinks(db, request.tenant_id),
+    message: 'Thank you for your honest feedback. You can also share your experience publicly, if you choose.',
   };
 }
 
@@ -963,31 +1085,27 @@ export interface OptOutResult {
   status: string;
 }
 
-/** Opt the customer out: no more requests or reminders for this link. Idempotent. */
+/** Customer-wide review opt-out; stops future requests and all pending reminders. */
 export async function optOutPublic(db: Db, events: EventBus, token: string): Promise<OptOutResult> {
   const request = await findRequestByToken(db, token);
-  if (request.status === 'opted_out') {
+  if (await isOptedOut(db, request.tenant_id, request.customer_id)) {
     return { status: 'opted_out' };
   }
-  if (request.status === 'completed') {
-    throw ApiError.conflict('a review was already submitted for this request');
-  }
   const now = nowIso();
-  await db
-    .updateTable('reviews_requests')
-    .set({ status: 'opted_out', opted_out_at: now, updated_at: now })
-    .where('tenant_id', '=', request.tenant_id)
-    .where('id', '=', request.id)
-    .execute();
-  await cancelScheduledReminders(db, request.tenant_id, request.id);
-  await audit(
-    asCoreDb(db),
-    request.tenant_id,
-    `customer:${request.customer_id}`,
-    'reviews.request.opted_out',
-    'reviews.request',
-    request.id,
-  );
+  const changed = await db.transaction().execute(async transaction => {
+    if (await isOptedOut(transaction, request.tenant_id, request.customer_id)) return false;
+    await transaction.insertInto('reviews_opt_outs').values({ id: id(), tenant_id: request.tenant_id,
+      customer_id: request.customer_id, created_at: now }).execute();
+    const requests = await transaction.selectFrom('reviews_requests').select('id').where('tenant_id', '=', request.tenant_id)
+      .where('customer_id', '=', request.customer_id).orderBy('id').execute();
+    await transaction.updateTable('reviews_requests').set({ status: 'opted_out', opted_out_at: now, updated_at: now })
+      .where('tenant_id', '=', request.tenant_id).where('customer_id', '=', request.customer_id).where('status', '!=', 'completed').execute();
+    for (const row of requests) await cancelScheduledReminders(transaction, request.tenant_id, row.id);
+    await audit(asCoreDb(transaction), request.tenant_id, `customer:${request.customer_id}`,
+      'reviews.request.opted_out', 'reviews.request', request.id);
+    return true;
+  });
+  if (!changed) return { status: 'opted_out' };
   await events.emit(request.tenant_id, 'reviews.request.opted_out', {
     requestId: request.id,
     customerId: request.customer_id,

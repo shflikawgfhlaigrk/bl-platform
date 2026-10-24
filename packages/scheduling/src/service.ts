@@ -7,6 +7,7 @@
  * which luxon converts to UTC at the boundary.
  */
 import type { Kysely } from 'kysely';
+import { createHash } from 'node:crypto';
 import { DateTime, IANAZone } from 'luxon';
 import {
   ApiError,
@@ -225,8 +226,24 @@ function overlaps(a: Interval, b: Interval): boolean {
   return a.start < b.end && a.end > b.start;
 }
 
+function intersectIntervals(a: Interval[], b: Interval[]): Interval[] {
+  const out: Interval[] = [];
+  for (const left of a) {
+    for (const right of b) {
+      const start = Math.max(left.start, right.start);
+      const end = Math.min(left.end, right.end);
+      if (start < end) out.push({ start, end });
+    }
+  }
+  return mergeIntervals(out);
+}
+
 function dedupe(ids: readonly string[] | undefined): string[] {
   return [...new Set(ids ?? [])];
+}
+
+function inSchedulingTransaction<T>(db: Kysely<SchedulingDatabase>, run: (db: Kysely<SchedulingDatabase>) => Promise<T>): Promise<T> {
+  return db.isTransaction ? run(db) : db.transaction().execute(run);
 }
 
 export interface SchedulingReadinessConfig {
@@ -664,6 +681,9 @@ export async function createAppointmentType(
   if (!Number.isInteger(input.durationMinutes) || input.durationMinutes <= 0) {
     throw ApiError.badRequest('durationMinutes must be a positive integer');
   }
+  for (const buffer of [input.bufferBeforeMinutes, input.bufferAfterMinutes]) {
+    if (buffer !== undefined && (!Number.isSafeInteger(buffer) || buffer < 0)) throw ApiError.badRequest('appointment buffers must be nonnegative integer minutes');
+  }
   const row: SchedulingAppointmentTypeRow = {
     id: id(),
     tenant_id: tenantId,
@@ -825,7 +845,9 @@ export async function createAvailabilityException(
   actor = 'system',
 ): Promise<SchedulingAvailabilityExceptionRow> {
   await assertOwner(ctx, tenantId, input.ownerType, input.ownerId);
-  if (!DATE_RE.test(input.date)) throw ApiError.badRequest('date must be "YYYY-MM-DD"');
+  if (!DATE_RE.test(input.date) || !DateTime.fromISO(input.date, { zone: 'UTC' }).isValid) {
+    throw ApiError.badRequest('date must be a valid "YYYY-MM-DD"');
+  }
   const hasTimes = input.startTime !== undefined || input.endTime !== undefined;
   if (hasTimes) {
     if (
@@ -910,8 +932,14 @@ interface ConflictQuery {
   excludeAppointmentId?: string;
 }
 
-/** Slack around the candidate window so other appointments' buffers are caught. */
-const CONFLICT_SLACK_MS = 24 * 60 * 60 * 1000;
+/** Bound scans by actual tenant buffers; multi-day resources may exceed a day. */
+async function maximumTypeBuffers(ctx: SchedulingCtx, tenantId: string): Promise<{ before: number; after: number }> {
+  const row = await ctx.db.selectFrom('scheduling_appointment_types').select((eb) => [
+    eb.fn.max<number | null>('buffer_before_minutes').as('before'),
+    eb.fn.max<number | null>('buffer_after_minutes').as('after'),
+  ]).where('tenant_id', '=', tenantId).executeTakeFirstOrThrow();
+  return { before: Math.max(0, Number(row.before ?? 0)), after: Math.max(0, Number(row.after ?? 0)) };
+}
 
 /**
  * Find staff/resource double-bookings for a candidate time slot. Buffers on
@@ -927,8 +955,9 @@ export async function findConflicts(
     start: ms(q.startsAt) - q.bufferBeforeMinutes * 60_000,
     end: ms(q.endsAt) + q.bufferAfterMinutes * 60_000,
   };
-  const windowStart = new Date(candidate.start - CONFLICT_SLACK_MS).toISOString();
-  const windowEnd = new Date(candidate.end + CONFLICT_SLACK_MS).toISOString();
+  const maximum = await maximumTypeBuffers(ctx, tenantId);
+  const windowStart = new Date(candidate.start - maximum.after * 60_000).toISOString();
+  const windowEnd = new Date(candidate.end + maximum.before * 60_000).toISOString();
 
   interface Hit {
     owner_id: string;
@@ -1243,6 +1272,8 @@ export async function createAppointment(
   actor = 'system',
   /** Internal composition hook; never parsed from a public appointment body. */
   admission?: (transaction: SchedulingCtx) => Promise<{ customerId: string }>,
+  /** A caller transaction owns event release and calendar sync after commit. */
+  deferEffects = false,
 ): Promise<{ appointments: AppointmentWithAssignments[]; scheduleRule: SchedulingScheduleRuleRow | null }> {
   if (!input.title.trim()) throw ApiError.badRequest('title is required');
   const calendar = await getCalendar(ctx, tenantId, input.calendarId);
@@ -1327,11 +1358,19 @@ export async function createAppointment(
   // SQLite is the single-process source of truth. Keep conflict detection,
   // recurrence materialization, assignments, and audit rows in one serialized
   // transaction so parallel requests cannot both reserve the same owner/time.
-  const created = await ctx.db.transaction().execute(async (trx) => {
+  const created = await inSchedulingTransaction(ctx.db, async (trx) => {
     const txCtx: SchedulingCtx = { ...ctx, db: trx };
     const admitted = await admission?.(txCtx);
     const allConflicts: ConflictDetail[] = [];
     for (const occ of occurrences) {
+      await assertBookableHours(txCtx, tenantId, {
+        startsAt: occ.starts_at,
+        endsAt: occ.ends_at,
+        bufferBeforeMinutes: bufferBefore,
+        bufferAfterMinutes: bufferAfter,
+        staffIds,
+        resourceIds,
+      }, calendar.timezone);
       allConflicts.push(
         ...(await findConflicts(txCtx, tenantId, {
           startsAt: occ.starts_at,
@@ -1400,13 +1439,15 @@ export async function createAppointment(
     return rows;
   });
 
-  for (const row of created) {
-    await ctx.events.emit(tenantId, 'scheduling.appointment.scheduled', {
-      appointmentId: row.id,
-      customerId: row.customer_id,
-      startsAt: row.starts_at,
-    });
-    await syncAppointment(ctx, row);
+  if (!deferEffects) {
+    for (const row of created) {
+      await ctx.events.emit(tenantId, 'scheduling.appointment.scheduled', {
+        appointmentId: row.id,
+        customerId: row.customer_id,
+        startsAt: row.starts_at,
+      });
+      await syncAppointment(ctx, row);
+    }
   }
 
   const refreshed = await Promise.all(created.map((row) => getAppointment(ctx, tenantId, row.id)));
@@ -1554,6 +1595,14 @@ export async function rescheduleAppointment(
 
   await ctx.db.transaction().execute(async (trx) => {
     const txCtx: SchedulingCtx = { ...ctx, db: trx };
+    await assertBookableHours(txCtx, tenantId, {
+      startsAt,
+      endsAt,
+      bufferBeforeMinutes: type?.buffer_before_minutes ?? 0,
+      bufferAfterMinutes: type?.buffer_after_minutes ?? 0,
+      staffIds: existing.staff_ids,
+      resourceIds: existing.resource_ids,
+    }, calendar.timezone);
     const conflicts = await findConflicts(txCtx, tenantId, {
       startsAt,
       endsAt,
@@ -1672,40 +1721,40 @@ export interface FreeInterval {
   ends_at: string;
 }
 
-/**
- * Free time for a staff member/resource on one local date: weekly windows,
- * adjusted by dated exceptions, minus booked (requested/confirmed)
- * appointments including their type buffers. Returns UTC ISO intervals.
- */
-export async function getAvailability(
+interface AvailabilityQuery {
+  ownerType: OwnerType;
+  ownerId: string;
+  date: string;
+  timezone?: string;
+}
+
+/** Weekly hours and dated exceptions, without subtracting appointments. */
+async function getOwnerHours(
   ctx: SchedulingCtx,
   tenantId: string,
-  q: { ownerType: OwnerType; ownerId: string; date: string; timezone?: string },
-): Promise<{ date: string; timezone: string; free: FreeInterval[] }> {
-  await assertOwner(ctx, tenantId, q.ownerType, q.ownerId);
+  q: AvailabilityQuery,
+  unconfiguredOpen = false,
+): Promise<{ dayStart: DateTime; base: Interval[] }> {
   if (!DATE_RE.test(q.date)) throw ApiError.badRequest('date must be "YYYY-MM-DD"');
   const zone = q.timezone ?? 'UTC';
   assertZone(zone);
   const dayStart = DateTime.fromISO(q.date, { zone });
   if (!dayStart.isValid) throw ApiError.badRequest(`invalid date: "${q.date}"`);
-
   const localInterval = (start: string, end: string): Interval => ({
     start: DateTime.fromISO(`${q.date}T${start}`, { zone }).toMillis(),
     end: DateTime.fromISO(`${q.date}T${end}`, { zone }).toMillis(),
   });
-
+  // Load every weekday to distinguish an unconfigured owner from a closed day.
   const windows = await ctx.db
     .selectFrom('scheduling_availability_windows')
     .selectAll()
     .where('tenant_id', '=', tenantId)
     .where('owner_type', '=', q.ownerType)
     .where('owner_id', '=', q.ownerId)
-    .where('weekday', '=', dayStart.weekday)
+    .orderBy('weekday')
     .orderBy('start_time')
     .orderBy('id')
     .execute();
-  let base: Interval[] = windows.map((w) => localInterval(w.start_time, w.end_time));
-
   const exceptions = await ctx.db
     .selectFrom('scheduling_availability_exceptions')
     .selectAll()
@@ -1715,20 +1764,83 @@ export async function getAvailability(
     .where('date', '=', q.date)
     .orderBy('id')
     .execute();
-  for (const ex of exceptions) {
-    if (ex.available === 1) {
-      base.push(localInterval(ex.start_time!, ex.end_time!));
-    } else if (ex.start_time !== null && ex.end_time !== null) {
-      base = subtractIntervals(base, [localInterval(ex.start_time, ex.end_time)]);
-    } else {
-      base = []; // whole day off
+  const addedHours = exceptions.filter((ex) => ex.available === 1);
+  let base = windows.filter((w) => w.weekday === dayStart.weekday).map((w) => localInterval(w.start_time, w.end_time));
+  // Preserve legacy manual bookings when hours were never configured. Explicit
+  // dated hours/time off still govern that date; search requires staff hours.
+  if (unconfiguredOpen && windows.length === 0 && addedHours.length === 0) {
+    base = [{ start: dayStart.toMillis(), end: dayStart.plus({ days: 1 }).toMillis() }];
+  }
+  base.push(...addedHours.map((ex) => localInterval(ex.start_time!, ex.end_time!)));
+  // Time off wins over extra hours, regardless of random id ordering.
+  if (exceptions.some((ex) => ex.available === 0 && (ex.start_time === null || ex.end_time === null))) {
+    return { dayStart, base: [] };
+  }
+  const timeOff = exceptions.filter((ex) => ex.available === 0).map((ex) => localInterval(ex.start_time!, ex.end_time!));
+  return { dayStart, base: subtractIntervals(base, timeOff) };
+}
+
+/** Admission and reschedule share the same buffered availability policy. */
+async function assertBookableHours(
+  ctx: SchedulingCtx,
+  tenantId: string,
+  q: ConflictQuery,
+  zone: string,
+): Promise<void> {
+  const candidate = {
+    start: ms(q.startsAt) - q.bufferBeforeMinutes * 60_000,
+    end: ms(q.endsAt) + q.bufferAfterMinutes * 60_000,
+  };
+  const owners: { ownerType: OwnerType; ownerId: string }[] = [
+    ...q.staffIds.map((ownerId) => ({ ownerType: 'staff' as const, ownerId })),
+    ...q.resourceIds.map((ownerId) => ({ ownerType: 'resource' as const, ownerId })),
+  ];
+  const unavailable: { owner_type: OwnerType; owner_id: string; date: string }[] = [];
+  for (const owner of owners) {
+    let day = DateTime.fromMillis(candidate.start, { zone }).startOf('day');
+    while (day.toMillis() < candidate.end) {
+      const nextDay = day.plus({ days: 1 });
+      const date = day.toFormat('yyyy-MM-dd');
+      const { base } = await getOwnerHours(ctx, tenantId, { ...owner, date, timezone: zone }, true);
+      const segment = { start: Math.max(candidate.start, day.toMillis()), end: Math.min(candidate.end, nextDay.toMillis()) };
+      if (!base.some((hours) => hours.start <= segment.start && hours.end >= segment.end)) {
+        unavailable.push({ owner_type: owner.ownerType, owner_id: owner.ownerId, date });
+      }
+      day = nextDay;
     }
   }
-  base = mergeIntervals(base);
+  if (unavailable.length > 0) {
+    throw ApiError.conflict('scheduling conflict: staff or resource is outside available hours', { unavailable, timezone: zone });
+  }
+}
+
+/**
+ * Free time for a staff member/resource on one local date: weekly windows,
+ * adjusted by dated exceptions, minus booked (requested/confirmed)
+ * appointments including their type buffers. Returns UTC ISO intervals.
+ */
+export async function getAvailability(
+  ctx: SchedulingCtx,
+  tenantId: string,
+  q: AvailabilityQuery,
+): Promise<{ date: string; timezone: string; free: FreeInterval[] }> {
+  return ownerAvailability(ctx, tenantId, q);
+}
+
+async function ownerAvailability(
+  ctx: SchedulingCtx,
+  tenantId: string,
+  q: AvailabilityQuery,
+  unconfiguredOpen = false,
+): Promise<{ date: string; timezone: string; free: FreeInterval[] }> {
+  await assertOwner(ctx, tenantId, q.ownerType, q.ownerId);
+  const zone = q.timezone ?? 'UTC';
+  const { dayStart, base } = await getOwnerHours(ctx, tenantId, q, unconfiguredOpen);
 
   // Booked time (with buffers) for this owner around the local day.
-  const rangeStart = dayStart.minus({ days: 1 }).toUTC().toISO()!;
-  const rangeEnd = dayStart.plus({ days: 2 }).toUTC().toISO()!;
+  const maximum = await maximumTypeBuffers(ctx, tenantId);
+  const rangeStart = dayStart.minus({ minutes: maximum.after }).toUTC().toISO()!;
+  const rangeEnd = dayStart.plus({ days: 1 }).plus({ minutes: maximum.before }).toUTC().toISO()!;
   const busySource =
     q.ownerType === 'staff'
       ? await ctx.db
@@ -1791,12 +1903,17 @@ export interface AvailableSlot {
   /** UTC ISO. */
   ends_at: string;
   staff_id: string;
+  resource_ids: string[];
   /** Local date (query timezone) the slot falls on. */
   date: string;
 }
 
 export interface NextAvailableQuery {
   appointmentTypeId: string;
+  /** When supplied, hours use this calendar's zone, matching booking admission. */
+  calendarId?: string;
+  /** All listed resources must be free for the whole buffered appointment. */
+  resourceIds?: string[];
   /** Inclusive local start date "YYYY-MM-DD". */
   from: string;
   /** Forward scan length in days (default 14, max 60). */
@@ -1845,7 +1962,9 @@ export async function findNextAvailable(
   const type = await getAppointmentType(ctx, tenantId, q.appointmentTypeId);
   if (type.active !== 1) throw ApiError.conflict(`appointment type is inactive: ${type.id}`);
   if (!DATE_RE.test(q.from)) throw ApiError.badRequest('from must be "YYYY-MM-DD"');
-  const zone = q.timezone ?? 'UTC';
+  const zone = q.calendarId
+    ? (await getCalendar(ctx, tenantId, q.calendarId)).timezone
+    : q.timezone ?? 'UTC';
   assertZone(zone);
   const fromDt = DateTime.fromISO(q.from, { zone });
   if (!fromDt.isValid) throw ApiError.badRequest(`invalid from date: "${q.from}"`);
@@ -1866,6 +1985,8 @@ export async function findNextAvailable(
     throw ApiError.badRequest('granularityMinutes must be a positive integer');
   }
   const afterMs = q.after === undefined ? undefined : ms(toUtcIso(q.after, 'utc'));
+  const resourceIds = dedupe(q.resourceIds);
+  for (const resourceId of resourceIds) await assertOwner(ctx, tenantId, 'resource', resourceId);
 
   const staffList: string[] = q.staffId
     ? [
@@ -1885,6 +2006,12 @@ export async function findNextAvailable(
 
   for (let d = 0; d < days; d++) {
     const date = fromDt.plus({ days: d }).toFormat('yyyy-MM-dd');
+    let resourceFree: Interval[] | null = null;
+    for (const resourceId of resourceIds) {
+      const { free } = await ownerAvailability(ctx, tenantId, { ownerType: 'resource', ownerId: resourceId, date, timezone: zone }, true);
+      const blocks = free.map((block) => ({ start: ms(block.starts_at), end: ms(block.ends_at) }));
+      resourceFree = resourceFree === null ? blocks : intersectIntervals(resourceFree, blocks);
+    }
     for (const staffId of staffList) {
       const { free } = await getAvailability(ctx, tenantId, {
         ownerType: 'staff',
@@ -1892,9 +2019,14 @@ export async function findNextAvailable(
         date,
         timezone: zone,
       });
-      for (const block of free) {
-        const blockEnd = ms(block.ends_at);
-        for (let s = ms(block.starts_at); s + durationMs <= blockEnd; s += stepMs) {
+      const staffFree = free.map((block) => ({ start: ms(block.starts_at), end: ms(block.ends_at) }));
+      const blocks = resourceFree === null ? staffFree : intersectIntervals(staffFree, resourceFree);
+      for (const block of blocks) {
+        // Preparation/travel/cleanup time belongs inside hours and must fit
+        // every selected owner, just like the appointment itself.
+        const firstStart = block.start + type.buffer_before_minutes * 60_000;
+        const lastEnd = block.end - type.buffer_after_minutes * 60_000;
+        for (let s = firstStart; s + durationMs <= lastEnd; s += stepMs) {
           if (afterMs !== undefined && s <= afterMs) continue;
           const startsAt = DateTime.fromMillis(s, { zone: 'utc' }).toISO()!;
           const endsAt = DateTime.fromMillis(s + durationMs, { zone: 'utc' }).toISO()!;
@@ -1904,10 +2036,10 @@ export async function findNextAvailable(
             bufferBeforeMinutes: type.buffer_before_minutes,
             bufferAfterMinutes: type.buffer_after_minutes,
             staffIds: [staffId],
-            resourceIds: [],
+            resourceIds,
           });
           if (conflicts.length === 0) {
-            slots.push({ starts_at: startsAt, ends_at: endsAt, staff_id: staffId, date });
+            slots.push({ starts_at: startsAt, ends_at: endsAt, staff_id: staffId, resource_ids: [...resourceIds], date });
           }
         }
       }
@@ -2189,35 +2321,61 @@ export function createSchedulingContract(deps: {
   const ctx = createSchedulingContext(deps);
   return {
     async createAppointment(input: CreateAppointmentInput): Promise<{ id: string }> {
-      const calendars = await listCalendars(ctx, input.tenantId, { limit: 1, offset: 0 });
-      const calendar =
-        calendars[0] ?? (await createCalendar(ctx, input.tenantId, { name: 'Default', timezone: 'UTC' }));
-
-      let staffIds: string[] = [];
-      if (input.assigneeUserId) {
-        const staff = await ctx.db
-          .selectFrom('scheduling_staff_members')
-          .select('id')
-          .where('tenant_id', '=', input.tenantId)
-          .where('user_id', '=', input.assigneeUserId)
-          .where('active', '=', 1)
-          .orderBy('created_at')
-          .orderBy('id')
-          .executeTakeFirst();
-        if (staff) staffIds = [staff.id];
-      }
-
-      const { appointments } = await createAppointment(ctx, input.tenantId, {
-        calendarId: calendar.id,
-        title: input.serviceKey ?? 'Appointment',
+      const key = input.idempotencyKey?.trim();
+      if (input.idempotencyKey !== undefined && (!key || key.length > 200)) throw ApiError.badRequest('appointment request key must contain 1..200 characters');
+      const canonical = {
         customerId: input.customerId,
-        startsAt: input.startsAt,
-        endsAt: input.endsAt,
-        timezone: 'utc',
-        notes: input.notes,
-        staffIds,
+        startsAt: toUtcIso(input.startsAt, 'utc'), endsAt: toUtcIso(input.endsAt, 'utc'),
+        assigneeUserId: input.assigneeUserId ?? null,
+        title: (input.serviceKey ?? 'Appointment').trim(), notes: input.notes ?? null,
+      };
+      const hash = createHash('sha256').update(JSON.stringify(canonical)).digest('hex');
+      const result = await inSchedulingTransaction(ctx.db, async (tx) => {
+        const txCtx = { ...ctx, db: tx };
+        if (key) {
+          const receipt = await tx.selectFrom('scheduling_appointment_receipts').selectAll()
+            .where('tenant_id', '=', input.tenantId).where('idempotency_key', '=', key).executeTakeFirst();
+          if (receipt) {
+            if (receipt.payload_hash !== hash) throw ApiError.conflict('appointment request key was already used for different details');
+            try { await getAppointment(txCtx, input.tenantId, receipt.appointment_id); }
+            catch (error) {
+              if (error instanceof ApiError && error.status === 404) throw ApiError.conflict('recorded appointment is missing; review its receipt before retrying');
+              throw error;
+            }
+            return { id: receipt.appointment_id, created: false };
+          }
+        }
+        const calendars = await listCalendars(txCtx, input.tenantId, { limit: 1, offset: 0 });
+        const calendar = calendars[0] ?? await createCalendar(txCtx, input.tenantId, { name: 'Default', timezone: 'UTC' });
+        let staffIds: string[] = [];
+        if (input.assigneeUserId) {
+          const staff = await tx.selectFrom('scheduling_staff_members').select('id')
+            .where('tenant_id', '=', input.tenantId).where('user_id', '=', input.assigneeUserId)
+            .where('active', '=', 1).orderBy('created_at').orderBy('id').executeTakeFirst();
+          if (staff) staffIds = [staff.id];
+        }
+        const { appointments: [appointment] } = await createAppointment(txCtx, input.tenantId, {
+          calendarId: calendar.id, title: canonical.title, customerId: canonical.customerId,
+          startsAt: canonical.startsAt, endsAt: canonical.endsAt, timezone: 'utc', notes: input.notes, staffIds,
+        }, 'system', undefined, true);
+        if (key) {
+          const receipt = { id: id(), tenant_id: input.tenantId, idempotency_key: key, payload_hash: hash, appointment_id: appointment.id, created_at: nowIso() };
+          await tx.insertInto('scheduling_appointment_receipts').values(receipt).execute();
+          await audit(asCoreDb(tx), input.tenantId, 'system', 'scheduling.receipt.created', 'scheduling.appointment_receipt', receipt.id, { appointmentId: appointment.id });
+        }
+        return { id: appointment.id, created: true };
       });
-      return { id: appointments[0].id };
+      if (result.created) {
+        const appointment = await getAppointment(ctx, input.tenantId, result.id);
+        await ctx.events.emit(input.tenantId, 'scheduling.appointment.scheduled', {
+          appointmentId: appointment.id, customerId: appointment.customer_id, startsAt: appointment.starts_at,
+        });
+        // A composing caller owns the outer commit and injects its deferred
+        // EventBus. Leave sync pending until that caller commits; no external
+        // calendar may observe an appointment whose transaction later rolls back.
+        if (!ctx.db.isTransaction) await syncAppointment(ctx, appointment);
+      }
+      return { id: result.id };
     },
   };
 }

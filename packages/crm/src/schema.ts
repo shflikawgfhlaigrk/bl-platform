@@ -87,6 +87,11 @@ export interface CrmLeadRow {
   contact_id: string | null;
   company_id: string | null;
   owner_user_id: string | null;
+  /** Primary follow-up owned by this lead, included in CRM without Workflow. */
+  next_action: string | null;
+  next_action_due_at: string | null;
+  /** Optimistic revision prevents a stale completion from clearing a replacement. */
+  next_action_revision: number;
   custom_fields: string | null;
   created_at: string;
   updated_at: string;
@@ -99,6 +104,21 @@ export interface CrmLeadStageRow {
   key: string;
   label: string;
   sort_order: number;
+  is_closed: number;
+  created_at: string;
+}
+
+export interface CrmNextActionCompletionRow {
+  id: string;
+  tenant_id: string;
+  lead_id: string;
+  idempotency_key: string;
+  revision: number;
+  action: string;
+  due_at: string | null;
+  owner_user_id: string | null;
+  note: string | null;
+  actor: string;
   created_at: string;
 }
 
@@ -226,6 +246,7 @@ export interface CrmDatabase extends CoreDatabase {
   crm_contacts: CrmContactRow;
   crm_leads: CrmLeadRow;
   crm_lead_stages: CrmLeadStageRow;
+  crm_next_action_completions: CrmNextActionCompletionRow;
   crm_deals: CrmDealRow;
   crm_jobs: CrmJobRow;
   crm_notes: CrmNoteRow;

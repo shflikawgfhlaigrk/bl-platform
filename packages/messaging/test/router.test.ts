@@ -18,6 +18,7 @@ async function setup() {
   await runMigrations(db, [...coreMigrations, ...messagingMigrations]);
   const tenantA = await createTenant(asCoreDb(db), { name: 'Tenant A' });
   const tenantB = await createTenant(asCoreDb(db), { name: 'Tenant B' });
+  for (const agent of ['agent-1', 'agent-2']) await db.insertInto('users').values({ id: agent, tenant_id: tenantA.id, name: agent, email: `${agent}@example.test`, role: 'member', created_at: '2026-07-01T00:00:00.000Z' }).execute();
   const events = new EventBus();
   const app = messagingRouter({ db, events, contracts: {} });
   return { db, events, app, a: tenantA.id, b: tenantB.id };
@@ -104,13 +105,8 @@ describe('conversations & messages over HTTP', () => {
       `/conversations/${conversation.id}/messages`,
       json('POST', { body: 'Thanks for reaching out' }, a),
     );
-    expect(reply.status).toBe(201);
-    expect(((await reply.json()) as any).data).toMatchObject({
-      direction: 'out',
-      status: 'failed',
-      to_address: 'pat@a.test',
-      failed_reason: 'No email provider is configured.',
-    });
+    expect(reply.status).toBe(501);
+    expect(((await reply.json()) as any).error.code).toBe('not_connected');
 
     const assign = await app.request(
       `/conversations/${conversation.id}/assign`,
@@ -129,7 +125,7 @@ describe('conversations & messages over HTTP', () => {
     expect(((await closed.json()) as any).data.status).toBe('closed');
 
     const detail = (await (await app.request(`/conversations/${conversation.id}`, get(a))).json()) as any;
-    expect(detail.data.messages).toHaveLength(2);
+    expect(detail.data.messages).toHaveLength(1); // unavailable transport never records a fictional send
     expect(detail.data.participants).toHaveLength(1);
     expect(detail.data.assignments).toHaveLength(1);
     expect(detail.data.assigned_user_id).toBe('agent-1');

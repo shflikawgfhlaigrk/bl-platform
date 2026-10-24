@@ -107,4 +107,33 @@ export const portalCustomerMigrations: Migration[] = [
         .execute();
     },
   },
+  {
+    name: 'portal-customer.0002_service_requests',
+    up: async (db) => {
+      await db.schema.createTable('portal_customer_service_requests')
+        .addColumn('id', 'text', (c) => c.primaryKey())
+        .addColumn('tenant_id', 'text', (c) => c.notNull())
+        .addColumn('account_id', 'text', (c) => c.notNull())
+        .addColumn('customer_id', 'text', (c) => c.notNull())
+        .addColumn('kind', 'text', (c) => c.notNull())
+        .addColumn('reference_id', 'text', (c) => c.notNull())
+        .addColumn('source_title', 'text', (c) => c.notNull())
+        .addColumn('requested_starts_at', 'text')
+        .addColumn('requested_ends_at', 'text')
+        .addColumn('requested_timezone', 'text', (c) => c.notNull())
+        .addColumn('note', 'text')
+        .addColumn('status', 'text', (c) => c.notNull())
+        .addColumn('response', 'text')
+        .addColumn('version', 'integer', (c) => c.notNull())
+        .addColumn('idempotency_key', 'text', (c) => c.notNull())
+        .addColumn('payload_hash', 'text', (c) => c.notNull())
+        .addColumn('created_at', 'text', (c) => c.notNull())
+        .addColumn('updated_at', 'text', (c) => c.notNull())
+        .execute();
+      await db.schema.createIndex('portal_customer_requests_tenant_account_key_uq')
+        .unique().on('portal_customer_service_requests').columns(['tenant_id', 'account_id', 'idempotency_key']).execute();
+      await db.schema.createIndex('portal_customer_requests_tenant_status_idx')
+        .on('portal_customer_service_requests').columns(['tenant_id', 'status', 'created_at']).execute();
+    },
+  },
 ];

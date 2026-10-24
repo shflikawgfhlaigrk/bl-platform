@@ -57,6 +57,10 @@ export interface QuoteRow {
   converted_at: string | null;
   /** Billing invoice id created on conversion (string reference only). */
   invoice_id: string | null;
+  /** Explicit lineage; earlier versions remain readable and cannot be approved. */
+  revision_number: number;
+  supersedes_quote_id: string | null;
+  superseded_by_quote_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -152,6 +156,9 @@ export interface ApprovalEventRow {
   signer_ip: string | null;
   /** sha256 hex of the canonical quote payload at event time. */
   payload_hash: string;
+  /** 1 = legacy pricing-only hash; 2 = immutable full customer scope. */
+  payload_schema_version: number;
+  payload_json: string | null;
   note: string | null;
   created_at: string;
 }

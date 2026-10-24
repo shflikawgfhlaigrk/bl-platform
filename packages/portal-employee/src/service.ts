@@ -17,6 +17,7 @@ import {
 import type {
   AssignmentRow,
   AssignmentStatus,
+  AssignmentExceptionRow,
   ChecklistItemRow,
   ChecklistRow,
   ChecklistTemplateItemRow,
@@ -383,6 +384,7 @@ export async function createAssignment(
     title: input.title.trim(),
     description: input.description ?? null,
     status: 'assigned',
+    completed_at: null,
     scheduled_at: input.scheduledAt === undefined ? null : normalizeIso(input.scheduledAt, 'scheduledAt'),
     related_entity_type: input.relatedEntityType ?? null,
     related_entity_id: input.relatedEntityId ?? null,
@@ -469,40 +471,194 @@ export async function updateAssignmentStatus(
   status: AssignmentStatus,
   note?: string,
 ): Promise<Assignment> {
-  const assignment = await getAssignmentForActor(db, tenantId, actor, assignmentId);
-  const now = nowIso();
-  await db
-    .updateTable('portal_employee_assignments')
-    .set({ status, updated_at: now })
-    .where('tenant_id', '=', tenantId)
-    .where('id', '=', assignmentId)
-    .execute();
-
-  const log: WorkLogRow = {
-    id: id(),
-    tenant_id: tenantId,
-    assignment_id: assignmentId,
-    employee_id: actor.id,
-    kind: 'status_update',
-    body: note ?? `status changed: ${assignment.status} -> ${status}`,
-    status,
-    seq: await nextWorkLogSeq(db, tenantId, assignmentId),
-    created_at: now,
-  };
-  await db.insertInto('portal_employee_work_logs').values(log).execute();
-
-  await audit(asCoreDb(db), tenantId, actor.id, 'portal_employee.assignment.status_changed', 'portal_employee.assignment', assignmentId, {
-    before: { status: assignment.status },
-    after: { status },
+  const result = await db.transaction().execute(async (trx) => {
+    const assignment = await getAssignmentForActor(trx, tenantId, actor, assignmentId);
+    if (assignment.status === status) return { assignment, emitCompleted: false };
+    if (['completed', 'canceled'].includes(assignment.status) && !isManager(actor)) {
+      throw ApiError.forbidden('A manager must reopen closed work');
+    }
+    if (status === 'completed') {
+      const closeout = await getAssignmentCloseout(trx, tenantId, assignmentId);
+      if (closeout.blockers.length) throw ApiError.conflict('Resolve the closeout items before completing this work', { blockers: closeout.blockers });
+    }
+    const now = nowIso();
+    const emitCompleted = status === 'completed' && assignment.completed_at === null;
+    await trx.updateTable('portal_employee_assignments')
+      .set({ status, updated_at: now, completed_at: emitCompleted ? now : assignment.completed_at })
+      .where('tenant_id', '=', tenantId).where('id', '=', assignmentId).execute();
+    const log: WorkLogRow = {
+      id: id(), tenant_id: tenantId, assignment_id: assignmentId, employee_id: actor.id,
+      kind: 'status_update', body: note?.trim() || `status changed: ${assignment.status} -> ${status}`,
+      status, seq: await nextWorkLogSeq(trx, tenantId, assignmentId), created_at: now,
+    };
+    await trx.insertInto('portal_employee_work_logs').values(log).execute();
+    await audit(asCoreDb(trx), tenantId, actor.id, 'portal_employee.assignment.status_changed', 'portal_employee.assignment', assignmentId, {
+      before: { status: assignment.status }, after: { status }, completedAt: emitCompleted ? now : assignment.completed_at,
+    });
+    return { assignment: await getAssignment(trx, tenantId, assignmentId), emitCompleted };
   });
-  if (status === 'completed') {
+  if (result.emitCompleted) {
     await events.emit(tenantId, 'portal_employee.task.completed', {
       assignmentId,
-      employeeId: assignment.employee_id,
-      kind: assignment.kind,
+      employeeId: result.assignment.employee_id,
+      kind: result.assignment.kind,
     });
   }
-  return getAssignment(db, tenantId, assignmentId);
+  return result.assignment;
+}
+
+export interface AssignmentCloseout {
+  assignment: Assignment;
+  checklists: ChecklistWithItems[];
+  exceptions: AssignmentExceptionRow[];
+  time_entries: TimeEntryRow[];
+  blockers: { kind: 'checklist' | 'exception' | 'open_time' | 'time_review'; id: string; message: string }[];
+}
+
+/** Each assignment includes its own checklist, exceptions and reviewed-time closeout. */
+export async function getAssignmentCloseout(db: Db, tenantId: string, assignmentId: string): Promise<AssignmentCloseout> {
+  const assignment = await getAssignment(db, tenantId, assignmentId);
+  const checklists = await listChecklistsForAssignment(db, tenantId, assignmentId);
+  const exceptions = await db.selectFrom('portal_employee_exceptions').selectAll()
+    .where('tenant_id', '=', tenantId).where('assignment_id', '=', assignmentId)
+    .orderBy('created_at').orderBy('id').execute();
+  const timeEntries = await db.selectFrom('portal_employee_time_entries').selectAll()
+    .where('tenant_id', '=', tenantId).where('assignment_id', '=', assignmentId)
+    .orderBy('clock_in_at').orderBy('id').execute();
+  const waived = new Set(exceptions.filter((row) => row.status === 'resolved' && row.resolution_kind === 'waived')
+    .map((row) => row.checklist_item_id));
+  const blockers: AssignmentCloseout['blockers'] = [];
+  for (const list of checklists) for (const item of list.items) if (!item.checked && !waived.has(item.id)) {
+    blockers.push({ kind: 'checklist', id: item.id, message: `Complete or obtain a manager waiver: ${item.label}` });
+  }
+  for (const issue of exceptions) if (issue.status === 'open') {
+    blockers.push({ kind: 'exception', id: issue.id, message: `Manager resolution needed: ${issue.reason}` });
+  }
+  for (const entry of timeEntries) {
+    if (entry.clock_out_at === null) blockers.push({ kind: 'open_time', id: entry.id, message: 'Clock out linked work time' });
+    else if (entry.review_status !== 'approved') blockers.push({ kind: 'time_review', id: entry.id, message: `Manager approval needed for linked time (${entry.review_status})` });
+  }
+  return { assignment, checklists, exceptions, time_entries: timeEntries, blockers };
+}
+
+function reviewActor(actor: Employee | string): string {
+  if (typeof actor === 'string') return actor; // Trusted back-office auth belongs to composition.
+  if (!isManager(actor)) throw ApiError.forbidden('Only managers can review closeout');
+  return actor.id;
+}
+
+export async function reportAssignmentException(
+  db: Db, events: EventBus, tenantId: string, actor: Employee, assignmentId: string,
+  input: { reason: string; checklist_item_id?: string; idempotency_key: string },
+): Promise<AssignmentExceptionRow> {
+  const reason = input.reason.trim();
+  if (!reason || reason.length > 2000) throw ApiError.badRequest('Explain the exception in 1–2000 characters');
+  const result = await db.transaction().execute(async (trx) => {
+    const assignment = await getAssignmentForActor(trx, tenantId, actor, assignmentId);
+    const prior = await trx.selectFrom('portal_employee_exceptions').selectAll()
+      .where('tenant_id', '=', tenantId).where('idempotency_key', '=', input.idempotency_key).executeTakeFirst();
+    if (prior) {
+      if (prior.assignment_id !== assignmentId || prior.reason !== reason || prior.reported_by !== actor.id ||
+        prior.checklist_item_id !== (input.checklist_item_id ?? null)) throw ApiError.conflict('Exception key was already used for another report');
+      return { row: prior, created: false };
+    }
+    if (['completed', 'canceled'].includes(assignment.status)) throw ApiError.conflict('Reopen closed work before reporting an exception');
+    if (input.checklist_item_id) {
+      const lists = await listChecklistsForAssignment(trx, tenantId, assignmentId);
+      if (!lists.some((list) => list.items.some((item) => item.id === input.checklist_item_id))) throw ApiError.notFound('Checklist item does not belong to this work');
+    }
+    const row: AssignmentExceptionRow = {
+      id: id(), tenant_id: tenantId, assignment_id: assignmentId,
+      checklist_item_id: input.checklist_item_id ?? null, idempotency_key: input.idempotency_key,
+      reason, reported_by: actor.id, status: 'open', resolution_kind: null, resolution_note: null,
+      resolved_by: null, resolved_at: null, created_at: nowIso(),
+    };
+    await trx.insertInto('portal_employee_exceptions').values(row).execute();
+    await audit(asCoreDb(trx), tenantId, actor.id, 'portal_employee.exception.reported', 'portal_employee.exception', row.id, { assignmentId, reason, checklistItemId: row.checklist_item_id });
+    await addWorkLog(trx, tenantId, actor, assignmentId, { kind: 'note', body: `Exception: ${reason}` });
+    return { row, created: true };
+  });
+  if (result.created) await events.emit(tenantId, 'portal_employee.exception.reported', { assignmentId, exceptionId: result.row.id });
+  return result.row;
+}
+
+export async function resolveAssignmentException(
+  db: Db, events: EventBus, tenantId: string, actor: Employee | string, exceptionId: string,
+  input: { resolution_note: string; waive_item?: boolean },
+): Promise<AssignmentExceptionRow> {
+  const actorId = reviewActor(actor), note = input.resolution_note.trim();
+  if (!note || note.length > 2000) throw ApiError.badRequest('Record the manager resolution in 1–2000 characters');
+  const result = await db.transaction().execute(async (trx) => {
+    const issue = await trx.selectFrom('portal_employee_exceptions').selectAll()
+      .where('tenant_id', '=', tenantId).where('id', '=', exceptionId).executeTakeFirst();
+    if (!issue) throw ApiError.notFound('Exception not found');
+    await getAssignment(trx, tenantId, issue.assignment_id);
+    if (input.waive_item && !issue.checklist_item_id) throw ApiError.badRequest('A waiver must identify a checklist item');
+    const kind = input.waive_item ? 'waived' : 'resolved';
+    if (issue.status === 'resolved') {
+      if (issue.resolution_note !== note || issue.resolution_kind !== kind) throw ApiError.conflict('This exception already has a recorded resolution');
+      return { row: issue, changed: false };
+    }
+    const patch = { status: 'resolved' as const, resolution_kind: kind as 'waived' | 'resolved', resolution_note: note, resolved_by: actorId, resolved_at: nowIso() };
+    await trx.updateTable('portal_employee_exceptions').set(patch).where('tenant_id', '=', tenantId).where('id', '=', exceptionId).execute();
+    await audit(asCoreDb(trx), tenantId, actorId, 'portal_employee.exception.resolved', 'portal_employee.exception', exceptionId, { assignmentId: issue.assignment_id, ...patch });
+    const log: WorkLogRow = {
+      id: id(), tenant_id: tenantId, assignment_id: issue.assignment_id, employee_id: actorId,
+      kind: 'manager_comment', body: `Exception ${kind}: ${note}`, status: null,
+      seq: await nextWorkLogSeq(trx, tenantId, issue.assignment_id), created_at: patch.resolved_at,
+    };
+    await trx.insertInto('portal_employee_work_logs').values(log).execute();
+    return { row: { ...issue, ...patch }, changed: true };
+  });
+  if (result.changed) await events.emit(tenantId, 'portal_employee.exception.resolved', { assignmentId: result.row.assignment_id, exceptionId });
+  return result.row;
+}
+
+export async function reviewTimeEntry(
+  db: Db, events: EventBus, tenantId: string, actor: Employee | string, entryId: string,
+  input: { status: 'approved' | 'rejected'; note: string },
+): Promise<TimeEntryRow> {
+  const actorId = reviewActor(actor), note = input.note.trim();
+  if (!note || note.length > 2000) throw ApiError.badRequest('Record the time review reason in 1–2000 characters');
+  const result = await db.transaction().execute(async (trx) => {
+    const entry = await trx.selectFrom('portal_employee_time_entries').selectAll()
+      .where('tenant_id', '=', tenantId).where('id', '=', entryId).executeTakeFirst();
+    if (!entry) throw ApiError.notFound('Time entry not found');
+    if (!entry.clock_out_at) throw ApiError.conflict('Clock out before reviewing time');
+    if (entry.review_status === input.status && entry.review_note === note) return { row: entry, changed: false };
+    if (entry.assignment_id) {
+      const work = await getAssignment(trx, tenantId, entry.assignment_id);
+      if (work.status === 'completed') throw ApiError.conflict('Reopen completed work before changing its approved time');
+    }
+    const patch = { review_status: input.status, reviewed_by: actorId, reviewed_at: nowIso(), review_note: note };
+    await trx.updateTable('portal_employee_time_entries').set(patch).where('tenant_id', '=', tenantId).where('id', '=', entryId).execute();
+    await audit(asCoreDb(trx), tenantId, actorId, 'portal_employee.time_entry.reviewed', 'portal_employee.time_entry', entryId, { before: { status: entry.review_status }, after: patch, assignmentId: entry.assignment_id });
+    return { row: { ...entry, ...patch }, changed: true };
+  });
+  if (result.changed) await events.emit(tenantId, 'portal_employee.time_entry.reviewed', { timeEntryId: entryId, assignmentId: result.row.assignment_id, status: input.status });
+  return result.row;
+}
+
+export async function listTimeReviewQueue(
+  db: Db, tenantId: string, page: Pagination, status?: 'pending' | 'approved' | 'rejected',
+): Promise<{ items: (TimeEntryRow & { employee_name: string; duration_minutes: number | null })[]; summary: { pending: number; approved: number; rejected: number; open: number }; generated_at: string }> {
+  const base = db.selectFrom('portal_employee_time_entries').where('tenant_id', '=', tenantId);
+  const counts = await base.select((eb) => [
+    eb.fn.sum<number>(eb.case().when('review_status', '=', 'pending').then(1).else(0).end()).as('pending'),
+    eb.fn.sum<number>(eb.case().when('review_status', '=', 'approved').then(1).else(0).end()).as('approved'),
+    eb.fn.sum<number>(eb.case().when('review_status', '=', 'rejected').then(1).else(0).end()).as('rejected'),
+    eb.fn.sum<number>(eb.case().when('clock_out_at', 'is', null).then(1).else(0).end()).as('open'),
+  ]).executeTakeFirstOrThrow();
+  const rows = await (status ? base.where('review_status', '=', status) : base).selectAll()
+    .orderBy('clock_in_at', 'desc').orderBy('id').limit(page.limit).offset(page.offset).execute();
+  const items = await Promise.all(rows.map(async (entry) => ({ ...entry,
+    employee_name: await getEmployee(db, tenantId, entry.employee_id).then((employee) => employee.name).catch((error: unknown) => {
+      if (error instanceof ApiError && error.status === 404) return 'Former team member';
+      throw error;
+    }),
+    duration_minutes: entry.clock_out_at ? Math.max(0, Math.floor((Date.parse(entry.clock_out_at) - Date.parse(entry.clock_in_at)) / 60000)) : null,
+  })));
+  return { items, summary: { pending: Number(counts.pending ?? 0), approved: Number(counts.approved ?? 0), rejected: Number(counts.rejected ?? 0), open: Number(counts.open ?? 0) }, generated_at: nowIso() };
 }
 
 /* ------------------------------------------------------------------ *
@@ -662,18 +818,24 @@ async function findOpenTimeEntry(
  * Clock in. Open-entry guard: an employee with an open entry (no clock-out)
  * cannot clock in again — 409 conflict. Emits portal_employee.shift.clocked_in.
  */
-export async function clockIn(
+async function writeClockIn(
   db: Db,
-  events: EventBus,
   tenantId: string,
   actor: Employee,
-  options: { shiftId?: string } = {},
+  options: { shiftId?: string; assignmentId?: string } = {},
 ): Promise<TimeEntryRow> {
   const open = await findOpenTimeEntry(db, tenantId, actor.id);
   if (open) {
     throw ApiError.conflict('already clocked in — clock out first', { openTimeEntryId: open.id });
   }
   let shiftId: string | null = null;
+  let assignmentId: string | null = null;
+  if (options.assignmentId !== undefined) {
+    const assignment = await getAssignment(db, tenantId, options.assignmentId);
+    if (assignment.employee_id !== actor.id) throw ApiError.forbidden('Clock time only against your own assignment');
+    if (['completed', 'canceled'].includes(assignment.status)) throw ApiError.conflict('Reopen closed work before clocking time');
+    assignmentId = assignment.id;
+  }
   if (options.shiftId !== undefined) {
     const shift = await db
       .selectFrom('portal_employee_shifts')
@@ -693,21 +855,35 @@ export async function clockIn(
     tenant_id: tenantId,
     employee_id: actor.id,
     shift_id: shiftId,
+    assignment_id: assignmentId,
     clock_in_at: at,
     clock_out_at: null,
+    review_status: 'pending',
+    reviewed_by: null,
+    reviewed_at: null,
+    review_note: null,
     created_at: at,
   };
   await db.insertInto('portal_employee_time_entries').values(row).execute();
   await audit(asCoreDb(db), tenantId, actor.id, 'portal_employee.shift.clocked_in', 'portal_employee.time_entry', row.id, {
     shiftId,
+    assignmentId,
     at,
   });
+  return row;
+}
+
+export async function clockIn(
+  db: Db, events: EventBus, tenantId: string, actor: Employee,
+  options: { shiftId?: string; assignmentId?: string } = {},
+): Promise<TimeEntryRow> {
+  const row = await db.transaction().execute((trx) => writeClockIn(trx, tenantId, actor, options));
   await events.emit(tenantId, 'portal_employee.shift.clocked_in', {
-    shiftId,
+    shiftId: row.shift_id,
     timeEntryId: row.id,
     employeeId: actor.id,
     userId: actor.user_id ?? actor.id,
-    at,
+    at: row.clock_in_at,
   });
   return row;
 }
@@ -724,12 +900,14 @@ export async function clockOut(
     throw ApiError.conflict('not clocked in');
   }
   const at = nowIso();
-  await db
+  const changed = await db
     .updateTable('portal_employee_time_entries')
     .set({ clock_out_at: at })
     .where('tenant_id', '=', tenantId)
     .where('id', '=', open.id)
-    .execute();
+    .where('clock_out_at', 'is', null)
+    .executeTakeFirst();
+  if (changed.numUpdatedRows !== 1n) throw ApiError.conflict('Already clocked out. Refresh the time entry');
   await audit(asCoreDb(db), tenantId, actor.id, 'portal_employee.shift.clocked_out', 'portal_employee.time_entry', open.id, {
     shiftId: open.shift_id,
     at,
@@ -872,7 +1050,8 @@ export async function instantiateChecklist(
   assignmentId: string,
   input: { templateId?: string; name?: string; items?: string[] },
 ): Promise<ChecklistWithItems> {
-  await getAssignment(db, tenantId, assignmentId); // 404 if absent
+  const assignment = await getAssignment(db, tenantId, assignmentId); // 404 if absent
+  if (['completed', 'canceled'].includes(assignment.status)) throw ApiError.conflict('Reopen closed work before adding a checklist');
   const now = nowIso();
   let name = input.name;
   let labels = input.items;
@@ -985,6 +1164,8 @@ export async function setChecklistItemChecked(
   if (!checklist) throw ApiError.notFound('checklist not found');
   const assignment = await getAssignment(db, tenantId, checklist.assignment_id);
   assertCanAccessEmployee(actor, assignment.employee_id);
+
+  if (['completed', 'canceled'].includes(assignment.status)) throw ApiError.conflict('Reopen closed work before changing its checklist');
 
   const at = nowIso();
   await db

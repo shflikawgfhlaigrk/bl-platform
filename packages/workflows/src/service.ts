@@ -101,6 +101,7 @@ export interface WorkflowDto {
   condition: WorkflowCondition | null;
   enabled: boolean;
   maxAttempts: number;
+  recipeKey?: string;
   actions: { id: string; position: number; type: string; config: Record<string, unknown> }[];
   createdAt: string;
   updatedAt: string;
@@ -110,6 +111,7 @@ export interface ExecutionDto {
   id: string;
   workflowId: string;
   triggerEvent: string;
+  triggerEventId: string | null;
   triggerPayload: unknown;
   status: string;
   attempts: number;
@@ -118,6 +120,7 @@ export interface ExecutionDto {
   startedAt: string;
   finishedAt: string | null;
   actions?: ExecutionActionDto[];
+  receipts?: { actionId: string; operationKey: string; status: string; output: unknown; createdAt: string }[];
 }
 
 export interface ExecutionActionDto {
@@ -154,6 +157,7 @@ function toWorkflowDto(row: WorkflowRow, actions: WorkflowActionRow[]): Workflow
     condition: row.condition_json ? (JSON.parse(row.condition_json) as WorkflowCondition) : null,
     enabled: row.enabled === 1,
     maxAttempts: row.max_attempts,
+    ...(row.recipe_key ? { recipeKey: row.recipe_key } : {}),
     actions: actions.map((a) => ({
       id: a.id,
       position: a.position,
@@ -174,6 +178,7 @@ export function toExecutionDto(
     workflowId: row.workflow_id,
     triggerEvent: row.trigger_event,
     triggerPayload: JSON.parse(row.trigger_payload_json),
+    triggerEventId: row.trigger_event_id ?? null,
     status: row.status,
     attempts: row.attempts,
     nextRetryAt: row.next_retry_at,
@@ -226,6 +231,8 @@ export interface CreateWorkflowInput {
   actions: WorkflowActionInput[];
   enabled?: boolean;
   maxAttempts?: number;
+  /** Composition-owned stable installation identity; repeat installs preserve owner edits. */
+  recipeKey?: string;
 }
 
 export async function createWorkflow(
@@ -243,6 +250,16 @@ export async function createWorkflow(
   if (!input.actions || input.actions.length === 0) {
     throw ApiError.badRequest('a workflow needs at least one action');
   }
+  if (!input.name?.trim() || input.name.length > 200 || input.actions.length > 20) throw ApiError.badRequest('Use a workflow name up to 200 characters and at most 20 actions.');
+  if (input.maxAttempts !== undefined && (!Number.isInteger(input.maxAttempts) || input.maxAttempts < 1 || input.maxAttempts > 10)) {
+    throw ApiError.badRequest('Workflow attempts must be an integer from 1 to 10.');
+  }
+  if (input.recipeKey !== undefined && !/^[a-zA-Z0-9:_-]{1,200}$/.test(input.recipeKey)) throw ApiError.badRequest('Invalid recipe installation key.');
+  if (input.recipeKey) {
+    const installed = await db.selectFrom('workflows_workflows').select('id').where('tenant_id', '=', tenantId)
+      .where('recipe_key', '=', input.recipeKey).executeTakeFirst();
+    if (installed) return getWorkflow(db, tenantId, installed.id);
+  }
   for (const action of input.actions) {
     if (!ACTION_TYPES.includes(action.type)) {
       throw ApiError.badRequest(`unknown action type "${action.type}"`, { allowed: ACTION_TYPES });
@@ -257,11 +274,10 @@ export async function createWorkflow(
     condition_json: input.condition ? JSON.stringify(conditionSchema.parse(input.condition)) : null,
     enabled: input.enabled === false ? 0 : 1,
     max_attempts: input.maxAttempts ?? 3,
+    recipe_key: input.recipeKey ?? null,
     created_at: now,
     updated_at: now,
   };
-  await db.insertInto('workflows_workflows').values(row).execute();
-
   const actionRows: WorkflowActionRow[] = input.actions.map((a, i) => ({
     id: id(),
     tenant_id: tenantId,
@@ -271,15 +287,22 @@ export async function createWorkflow(
     config_json: JSON.stringify(a.config ?? {}),
     created_at: now,
   }));
-  for (const actionRow of actionRows) {
-    await db.insertInto('workflows_workflow_actions').values(actionRow).execute();
+  try {
+    await db.transaction().execute(async trx => {
+      await trx.insertInto('workflows_workflows').values(row).execute();
+      for (const actionRow of actionRows) await trx.insertInto('workflows_workflow_actions').values(actionRow).execute();
+      await audit(asCoreDb(trx), tenantId, actor, 'workflows.workflow.created', 'workflows.workflow', row.id, {
+        name: row.name, triggerEvent: row.trigger_event, actionCount: actionRows.length,
+      });
+    });
+  } catch (error) {
+    if (input.recipeKey) {
+      const winner = await db.selectFrom('workflows_workflows').select('id').where('tenant_id', '=', tenantId)
+        .where('recipe_key', '=', input.recipeKey).executeTakeFirst();
+      if (winner) return getWorkflow(db, tenantId, winner.id);
+    }
+    throw error;
   }
-
-  await audit(asCoreDb(db), tenantId, actor, 'workflows.workflow.created', 'workflows.workflow', row.id, {
-    name: row.name,
-    triggerEvent: row.trigger_event,
-    actionCount: actionRows.length,
-  });
   await events.emit(tenantId, 'workflows.workflow.created', { workflowId: row.id });
   return toWorkflowDto(row, actionRows);
 }
@@ -359,7 +382,7 @@ export async function updateWorkflow(
   const existing = await loadWorkflowRow(db, tenantId, workflowId);
   const set: Partial<WorkflowRow> = { updated_at: nowIso() };
   if (patch.name !== undefined) {
-    if (patch.name.trim() === '') throw ApiError.badRequest('workflow name cannot be blank');
+    if (patch.name.trim() === '' || patch.name.length > 200) throw ApiError.badRequest('Use a workflow name from 1 to 200 characters.');
     set.name = patch.name.trim();
   }
   if (patch.triggerEvent !== undefined) {
@@ -376,11 +399,12 @@ export async function updateWorkflow(
   }
   if (patch.enabled !== undefined) set.enabled = patch.enabled ? 1 : 0;
   if (patch.maxAttempts !== undefined) {
-    if (!Number.isInteger(patch.maxAttempts) || patch.maxAttempts < 1) {
-      throw ApiError.badRequest('maxAttempts must be a positive integer');
+    if (!Number.isInteger(patch.maxAttempts) || patch.maxAttempts < 1 || patch.maxAttempts > 10) {
+      throw ApiError.badRequest('maxAttempts must be an integer from 1 to 10');
     }
     set.max_attempts = patch.maxAttempts;
   }
+  if (patch.actions && (patch.actions.length < 1 || patch.actions.length > 20)) throw ApiError.badRequest('Use between 1 and 20 workflow actions.');
 
   await db
     .updateTable('workflows_workflows')
@@ -511,7 +535,11 @@ export async function getExecution(db: Db, tenantId: string, executionId: string
     .orderBy('position')
     .orderBy('id')
     .execute();
-  return toExecutionDto(row, actions);
+  const receipts = await db.selectFrom('workflows_action_receipts').selectAll().where('tenant_id', '=', tenantId)
+    .where('execution_id', '=', executionId).orderBy('created_at').orderBy('id').execute();
+  return { ...toExecutionDto(row, actions), receipts: receipts.map(receipt => ({ actionId: receipt.action_id,
+    operationKey: receipt.operation_key, status: receipt.status,
+    output: receipt.output_json ? JSON.parse(receipt.output_json) : null, createdAt: receipt.created_at })) };
 }
 
 /* ------------------------------------------------------------------ *

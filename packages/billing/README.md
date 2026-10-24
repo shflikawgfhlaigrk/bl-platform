@@ -169,3 +169,35 @@ service boundary). The customer portal module should list only
   subscription tick, quote conversion mapping, CSV export, provider adapters
   + webhooks (incl. duplicate-delivery dedup), contract impl, and
   tenant-isolation denials for every entity.
+
+## Collection plans and receipts
+
+A deposit is a first installment of the existing invoice, not another charge.
+`PUT /invoices/:id/collection-plan` sets integer `depositCents`, optional UTC
+`depositDueAt`/`balanceDueAt`, `remindersEnabled`, and `optedOut`. The GET reports
+remaining deposit, total balance, stage and overpayment. Reconciled terms stay
+fixed after a payment; reminder preferences remain editable. Payment intents
+accept `purpose: deposit | balance`; the default adapter provides offline
+instructions and creates no charge. The connected customer portal displays and
+requests the outstanding deposit separately from the full balance.
+
+Manual payment recording accepts `receiptRef` (`externalRef` is a compatibility
+alias). The receipt, payment and invoice balance commit together. Reusing the
+same reference and payload returns the original payment; different amount,
+method or invoice returns 409. Invoice contract actions with stable
+`sourceEntityType`/`sourceEntityId` likewise write one invoice and a source receipt
+atomically, and reject altered retry scope. Subscription periods keep their
+separate period receipts. Accepted quote pricing cannot be edited in its draft
+invoice; a price change requires a separately approved quote.
+
+`POST /invoices/:id/reminders` with a stable `operationKey` prepares a reviewable
+reminder draft and receipt only. Drafts stop for paid/void/draft invoices, optout,
+disabled reminders, missing or future due dates, and reconciled balance changes.
+`POST /invoices/:id/reminders/:reminderId/receipt` records an actual manual
+`deliveryReference`; it does not send a message or verify an external provider.
+There is no automatic reminder sender in this module. Repeated operation and
+delivery references return the saved receipt instead of duplicating it.
+
+Invoice CSV includes exact balance and source references; payment CSV at
+`/payments/export.csv` includes offline receipt and provider references. These
+are collection/reconciliation exports, not full accounting or tax filing.

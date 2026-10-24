@@ -313,7 +313,15 @@
   ],
   [
     "GET",
+    "/api/billing/invoices/:id/collection-plan"
+  ],
+  [
+    "GET",
     "/api/billing/invoices/:id/payments"
+  ],
+  [
+    "GET",
+    "/api/billing/invoices/:id/reminders"
   ],
   [
     "GET",
@@ -330,6 +338,10 @@
   [
     "GET",
     "/api/billing/payments"
+  ],
+  [
+    "GET",
+    "/api/billing/payments/export.csv"
   ],
   [
     "GET",
@@ -513,6 +525,14 @@
   ],
   [
     "GET",
+    "/api/crm/owners"
+  ],
+  [
+    "GET",
+    "/api/crm/sales-queue"
+  ],
+  [
+    "GET",
     "/api/crm/source-attributions"
   ],
   [
@@ -621,6 +641,10 @@
   ],
   [
     "GET",
+    "/api/dashboard/exceptions"
+  ],
+  [
+    "GET",
     "/api/dashboard/export"
   ],
   [
@@ -682,6 +706,10 @@
   [
     "GET",
     "/api/dashboard/widgets/website-traffic"
+  ],
+  [
+    "GET",
+    "/api/files/evidence"
   ],
   [
     "GET",
@@ -917,6 +945,10 @@
   ],
   [
     "GET",
+    "/api/messaging/inbound-receipts"
+  ],
+  [
+    "GET",
     "/api/messaging/inbox"
   ],
   [
@@ -1061,6 +1093,10 @@
   ],
   [
     "GET",
+    "/api/portal-customer/me/requests"
+  ],
+  [
+    "GET",
     "/api/portal-customer/me/reviews/pending"
   ],
   [
@@ -1069,7 +1105,19 @@
   ],
   [
     "GET",
+    "/api/portal-customer/requests"
+  ],
+  [
+    "GET",
+    "/api/portal-customer/requests/:requestId"
+  ],
+  [
+    "GET",
     "/api/portal-customer/ui"
+  ],
+  [
+    "GET",
+    "/api/portal-customer/ui/files/:fileId/content"
   ],
   [
     "GET",
@@ -1078,6 +1126,10 @@
   [
     "GET",
     "/api/portal-customer/ui/logout"
+  ],
+  [
+    "GET",
+    "/api/portal-customer/ui/requests/:requestId"
   ],
   [
     "GET",
@@ -1094,6 +1146,10 @@
   [
     "GET",
     "/api/portal-employee/assignments/:assignmentId/checklists"
+  ],
+  [
+    "GET",
+    "/api/portal-employee/assignments/:assignmentId/closeout"
   ],
   [
     "GET",
@@ -1129,6 +1185,10 @@
   ],
   [
     "GET",
+    "/api/portal-employee/portal/assignments/:assignmentId/closeout"
+  ],
+  [
+    "GET",
     "/api/portal-employee/portal/assignments/:assignmentId/logs"
   ],
   [
@@ -1161,7 +1221,15 @@
   ],
   [
     "GET",
+    "/api/portal-employee/portal/time-entries"
+  ],
+  [
+    "GET",
     "/api/portal-employee/shifts"
+  ],
+  [
+    "GET",
+    "/api/portal-employee/time-entries"
   ],
   [
     "GET",
@@ -1373,6 +1441,10 @@
   ],
   [
     "GET",
+    "/api/reviews/eligible-customers"
+  ],
+  [
+    "GET",
     "/api/reviews/platforms"
   ],
   [
@@ -1573,6 +1645,10 @@
   ],
   [
     "GET",
+    "/api/workflows/recipes"
+  ],
+  [
+    "GET",
     "/api/workflows/tags"
   ],
   [
@@ -1750,6 +1826,10 @@
   [
     "PATCH",
     "/api/portal-customer/me/contact"
+  ],
+  [
+    "PATCH",
+    "/api/portal-customer/requests/:requestId"
   ],
   [
     "PATCH",
@@ -1933,6 +2013,14 @@
   ],
   [
     "POST",
+    "/api/billing/invoices/:id/reminders"
+  ],
+  [
+    "POST",
+    "/api/billing/invoices/:id/reminders/:reminderId/receipt"
+  ],
+  [
+    "POST",
     "/api/billing/invoices/:id/send"
   ],
   [
@@ -2058,6 +2146,10 @@
   [
     "POST",
     "/api/crm/leads"
+  ],
+  [
+    "POST",
+    "/api/crm/leads/:id/next-action/complete"
   ],
   [
     "POST",
@@ -2549,11 +2641,19 @@
   ],
   [
     "POST",
+    "/api/portal-customer/me/requests"
+  ],
+  [
+    "POST",
     "/api/portal-customer/me/uploads"
   ],
   [
     "POST",
     "/api/portal-customer/ui/invoices/:invoiceId/pay"
+  ],
+  [
+    "POST",
+    "/api/portal-customer/ui/invoices/:invoiceId/reminder-preference"
   ],
   [
     "POST",
@@ -2566,6 +2666,14 @@
   [
     "POST",
     "/api/portal-customer/ui/quotes/:quoteId/:decision"
+  ],
+  [
+    "POST",
+    "/api/portal-customer/ui/requests"
+  ],
+  [
+    "POST",
+    "/api/portal-customer/ui/uploads"
   ],
   [
     "POST",
@@ -2589,7 +2697,15 @@
   ],
   [
     "POST",
+    "/api/portal-employee/exceptions/:exceptionId/resolve"
+  ],
+  [
+    "POST",
     "/api/portal-employee/portal/assignments/:assignmentId/comments"
+  ],
+  [
+    "POST",
+    "/api/portal-employee/portal/assignments/:assignmentId/exceptions"
   ],
   [
     "POST",
@@ -2617,7 +2733,19 @@
   ],
   [
     "POST",
+    "/api/portal-employee/portal/exceptions/:exceptionId/resolve"
+  ],
+  [
+    "POST",
+    "/api/portal-employee/portal/time-entries/:entryId/review"
+  ],
+  [
+    "POST",
     "/api/portal-employee/shifts"
+  ],
+  [
+    "POST",
+    "/api/portal-employee/time-entries/:entryId/review"
   ],
   [
     "POST",
@@ -2837,6 +2965,10 @@
   ],
   [
     "POST",
+    "/api/quoting/quotes/:id/revise"
+  ],
+  [
+    "POST",
     "/api/quoting/quotes/:id/send"
   ],
   [
@@ -2885,6 +3017,14 @@
   ],
   [
     "POST",
+    "/api/reviews/campaigns/completed-jobs"
+  ],
+  [
+    "POST",
+    "/api/reviews/phone-request"
+  ],
+  [
+    "POST",
     "/api/reviews/platforms"
   ],
   [
@@ -2897,11 +3037,19 @@
   ],
   [
     "POST",
+    "/api/reviews/reminders/:id/delivery"
+  ],
+  [
+    "POST",
     "/api/reviews/reminders/process"
   ],
   [
     "POST",
     "/api/reviews/requests"
+  ],
+  [
+    "POST",
+    "/api/reviews/requests/:id/delivery"
   ],
   [
     "POST",
@@ -2954,6 +3102,10 @@
   [
     "POST",
     "/api/scheduling/locations"
+  ],
+  [
+    "POST",
+    "/api/scheduling/phone-bookings"
   ],
   [
     "POST",
@@ -3057,6 +3209,10 @@
   ],
   [
     "POST",
+    "/api/workflows/recipes/:key/install"
+  ],
+  [
+    "POST",
     "/api/workflows/run-pending"
   ],
   [
@@ -3133,6 +3289,10 @@
   ],
   [
     "PUT",
+    "/api/billing/invoices/:id/collection-plan"
+  ],
+  [
+    "PUT",
     "/api/billing/memberships/:id"
   ],
   [
@@ -3173,6 +3333,10 @@
   ],
   [
     "PUT",
+    "/api/portal-customer/me/invoices/:invoiceId/reminder-preference"
+  ],
+  [
+    "PUT",
     "/api/pos/auth/operators/:userId/pin"
   ],
   [
@@ -3186,13 +3350,5 @@
   [
     "PUT",
     "/api/workforce/session-policy"
-  ],
-  [
-    "POST",
-    "/api/scheduling/phone-bookings"
-  ],
-  [
-    "POST",
-    "/api/reviews/phone-request"
   ]
 ]

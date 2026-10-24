@@ -48,7 +48,7 @@ describe('industries router', () => {
     const res = await app.request('/', { headers: headers(tenantA.id) });
     expect(res.status).toBe(200);
     const body = (await res.json()) as any;
-    expect(body.data).toHaveLength(11);
+    expect(body.data).toHaveLength(12);
     expect(body.limit).toBe(50);
     expect(body.offset).toBe(0);
     expect(body.data[0]).toMatchObject({
@@ -64,7 +64,7 @@ describe('industries router', () => {
     const body = (await res.json()) as any;
     expect(body.limit).toBe(3);
     expect(body.offset).toBe(8);
-    expect(body.data.map((i: any) => i.key)).toEqual(['spa-wellness', 'tack-retail', 'window-cleaning']);
+    expect(body.data.map((i: any) => i.key)).toEqual(['smart-home-security', 'spa-wellness', 'tack-retail']);
   });
 
   it('GET /:key returns the full config; 404 for unknown', async () => {

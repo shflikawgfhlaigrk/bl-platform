@@ -6,6 +6,7 @@ import { z } from 'zod';
 import type { GoogleCalendarConnection } from '@blacklabel/scheduling';
 import type { PlatformApp } from '../../api/src/app';
 import { isBusinessPortalRoute, type businessEmployeeFiles } from '../../api/src/business-wiring';
+import type { customerRecordIntegration } from './integrations';
 
 export interface BusinessSettings { companyName: string; email?: { apiKey: string; from: string }; publicOrigin?: string; googleCalendar?: GoogleCalendarConnection }
 export interface BusinessAppOptions {
@@ -18,6 +19,9 @@ export interface BusinessAppOptions {
   buildId?: string;
   installationId?: string;
   employeeFiles?: ReturnType<typeof businessEmployeeFiles>;
+  customerRecords?: ReturnType<typeof customerRecordIntegration>;
+  /** Trusted installation metadata; shared basics remain included with every module. */
+  purchasedModules?: readonly string[];
 }
 
 /** Customer composition surface. Tenant and acting owner are bound by the server. */
@@ -117,9 +121,24 @@ export function createBusinessApp(options: BusinessAppOptions) {
     const settings = await options.settings();
     return c.json({ data: { companyName: settings.companyName, version: options.version, ownerUserId: options.ownerUserId,
       email: { connected: !!settings.email?.apiKey, from: settings.email?.from ?? '' },
+      supportedChannels: ['email', 'internal'],
       googleCalendar: { connected: !!settings.googleCalendar, calendarId: settings.googleCalendar?.calendarId ?? '' },
       customerPortal: `${settings.publicOrigin ?? ''}/api/portal-customer/ui`, publicOrigin: settings.publicOrigin ?? null,
-      onboardingComplete: settings.companyName !== 'Your company' } });
+      onboardingComplete: settings.companyName !== 'Your company',
+      moduleAccess: { purchased: options.purchasedModules ?? [], sharedBasicsIncluded: true, purchaseVerified: false },
+      customerRecordImport: { available: !!options.customerRecords, adapter: 'customer-records-json-v1', sourceWrites: false } } });
+  });
+  app.post('/api/business/integrations/customers/preview', async c => {
+    if (!options.customerRecords) throw new ApiError(501, 'Customer records import is not connected.');
+    return c.json({ data: await options.customerRecords.preview(await c.req.json()) });
+  });
+  app.post('/api/business/integrations/customers/apply', async c => {
+    if (!options.customerRecords) throw new ApiError(501, 'Customer records import is not connected.');
+    return c.json({ data: await options.customerRecords.apply(await c.req.json()) });
+  });
+  app.get('/api/business/integrations/receipts', async c => {
+    if (!options.customerRecords) throw new ApiError(501, 'Customer records import is not connected.');
+    return c.json({ data: await options.customerRecords.receipts() });
   });
   app.get('/api/business/users', async (c) => c.json({ data: await listUsers(asCoreDb(options.platform.db), options.tenantId, { limit: 200, offset: 0 }) }));
   app.patch('/api/business/settings', async (c) => {
@@ -153,6 +172,9 @@ export function createBusinessApp(options: BusinessAppOptions) {
     if (!options.backup) throw new ApiError(501, 'Backup storage is not connected.');
     return c.json({ data: await options.backup() });
   });
+  app.post('/api/billing/invoices/from-quote', () => {
+    throw ApiError.conflict('Open the accepted quote in Quotes and use its job handoff. Submitted invoice lines cannot prove approved scope.');
+  });
   app.all('/api/*', async (c) => {
     const headers = new Headers(c.req.raw.headers);
     headers.set('x-tenant-id', options.tenantId); headers.delete('x-user-id');
@@ -161,10 +183,10 @@ export function createBusinessApp(options: BusinessAppOptions) {
     }
     // A public portal request never receives the caller-supplied staff identity.
     if (!portalPath(c.req.path)) headers.set('x-user-id', options.ownerUserId);
-    return options.platform.app.fetch(new Request(c.req.raw, { headers }));
+    return options.platform.app.fetch(new Request(c.req.raw, { headers }), c.env);
   });
   for (const [route, name, mime] of [['/', 'index.html', 'text/html'], ['/app.js', 'app.js', 'text/javascript'], ['/crm.js', 'crm.js', 'text/javascript'], ['/scheduling.js', 'scheduling.js', 'text/javascript'], ['/quoting.js', 'quoting.js', 'text/javascript'], ['/app.css', 'app.css', 'text/css'], ['/brand.svg', 'brand.svg', 'image/svg+xml'],
-    ...['workflows','files','billing','messaging','reviews','industries'].map(name => [`/${name}.js`, `${name}.js`, 'text/javascript']),
+    ...['workflows','files','billing','messaging','reviews','industries','integrations','dashboard','portal-customer','employee'].map(name => [`/${name}.js`, `${name}.js`, 'text/javascript']),
     ['/team', 'team.html', 'text/html'], ['/team.js', 'team.js', 'text/javascript'], ['/review', 'review.html', 'text/html'], ['/review.js', 'review.js', 'text/javascript']]) {
     app.get(route, async (c) => { c.header('Content-Type', `${mime}; charset=utf-8`); return c.body(new Uint8Array(await options.asset(name))); });
   }

@@ -51,6 +51,7 @@ import {
   listPermissions,
   parseTags,
   readFileContent,
+  exportEvidence,
   resolveActor,
   revokePermission,
   updateFile,
@@ -150,6 +151,12 @@ export function filesRouter(deps: FilesModuleDeps): Hono<TenantEnv> {
 
   const actorOf = (c: Context<TenantEnv, string>) =>
     resolveActor(db, c.get('tenantId'), c.req.header('x-user-id'));
+  app.get('/evidence',async c=>{
+    const input=z.object({entity_type:z.string().min(1).max(100),entity_id:z.string().min(1).max(200)}).parse(c.req.query());
+    const packet=await exportEvidence(db,storage,c.get('tenantId'),await actorOf(c),input.entity_type,input.entity_id);
+    c.header('Content-Disposition','attachment; filename="job-evidence.json"');
+    return c.json({data:packet});
+  });
 
   /**
    * Permission-check middleware for /files/:id routes: owner/admin/system and

@@ -208,4 +208,43 @@ export const portalEmployeeMigrations: Migration[] = [
         .execute();
     },
   },
+  {
+    name: 'portal_employee.0003_reviewed_job_closeout',
+    up: async (db) => {
+      await db.schema.alterTable('portal_employee_assignments').addColumn('completed_at', 'text').execute();
+      const tenants = await db.selectFrom('tenants').select('id').execute();
+      for (const tenant of tenants) {
+        const completed = await db.selectFrom('portal_employee_assignments').select(['id', 'updated_at'])
+          .where('tenant_id', '=', tenant.id).where('status', '=', 'completed').execute();
+        for (const row of completed) await db.updateTable('portal_employee_assignments').set({ completed_at: row.updated_at })
+          .where('tenant_id', '=', tenant.id).where('id', '=', row.id).execute();
+      }
+      await db.schema.alterTable('portal_employee_time_entries').addColumn('assignment_id', 'text').execute();
+      await db.schema.alterTable('portal_employee_time_entries')
+        .addColumn('review_status', 'text', (c) => c.notNull().defaultTo('pending')).execute();
+      for (const column of ['reviewed_by', 'reviewed_at', 'review_note']) {
+        await db.schema.alterTable('portal_employee_time_entries').addColumn(column, 'text').execute();
+      }
+      await db.schema.createIndex('portal_employee_time_entries_tenant_assignment_idx')
+        .on('portal_employee_time_entries').columns(['tenant_id', 'assignment_id']).execute();
+      await db.schema.createTable('portal_employee_exceptions')
+        .addColumn('id', 'text', (c) => c.primaryKey())
+        .addColumn('tenant_id', 'text', (c) => c.notNull())
+        .addColumn('assignment_id', 'text', (c) => c.notNull())
+        .addColumn('checklist_item_id', 'text')
+        .addColumn('idempotency_key', 'text', (c) => c.notNull())
+        .addColumn('reason', 'text', (c) => c.notNull())
+        .addColumn('reported_by', 'text', (c) => c.notNull())
+        .addColumn('status', 'text', (c) => c.notNull())
+        .addColumn('resolution_kind', 'text')
+        .addColumn('resolution_note', 'text')
+        .addColumn('resolved_by', 'text')
+        .addColumn('resolved_at', 'text')
+        .addColumn('created_at', 'text', (c) => c.notNull()).execute();
+      await db.schema.createIndex('portal_employee_exceptions_tenant_assignment_idx')
+        .on('portal_employee_exceptions').columns(['tenant_id', 'assignment_id']).execute();
+      await db.schema.createIndex('portal_employee_exceptions_tenant_key_idx')
+        .on('portal_employee_exceptions').columns(['tenant_id', 'idempotency_key']).unique().execute();
+    },
+  },
 ];

@@ -44,7 +44,9 @@ describe('connected business customer portal', () => {
       expect(quotes).toMatchObject([{ id: quoteId, totalCents: 9000, status: 'sent' }]);
       expect(await f.data('portal-customer/me/quotes', 'GET', undefined, b.session)).toEqual([]);
       expect((await f.request(`portal-customer/me/quotes/${quoteId}/approve`, 'POST', {}, b.session)).status).toBe(404);
-      const decision = await f.data(`portal-customer/me/quotes/${quoteId}/approve`, 'POST', { comment: 'Approved fixture scope' }, a.session);
+      expect((await f.request(`portal-customer/me/quotes/${quoteId}/approve`, 'POST', {}, a.session)).status).toBe(400);
+      expect((await f.request(`portal-customer/me/quotes/${quoteId}/approve`, 'POST', { expectedPayloadHash: 'f'.repeat(64) }, a.session)).status).toBe(409);
+      const decision = await f.data(`portal-customer/me/quotes/${quoteId}/approve`, 'POST', { comment: 'Approved fixture scope', expectedPayloadHash: quotes[0].payloadHash }, a.session);
       expect(decision.decision).toBe('approved');
       const readback = await f.data(`quoting/quotes/${quoteId}`);
       expect(readback.quote.status).toBe('approved');
@@ -68,6 +70,15 @@ describe('connected business customer portal', () => {
       await f.data(`billing/invoices/${invoice.id}/send`, 'POST', {});
       expect(await f.data('portal-customer/me/invoices', 'GET', undefined, a.session)).toMatchObject([{ id: invoice.id, balanceCents: 9999 }]);
       expect(await f.data('portal-customer/me/invoices', 'GET', undefined, b.session)).toEqual([]);
+      await f.data(`billing/invoices/${invoice.id}/collection-plan`, 'PUT', { depositCents: 3000, depositDueAt: '2020-01-01T00:00:00.000Z', balanceDueAt: '2020-01-02T00:00:00.000Z' });
+      expect(await f.data('portal-customer/me/invoices', 'GET', undefined, a.session)).toMatchObject([{ depositRemainingCents: 3000 }]);
+      expect((await f.request(`portal-customer/me/invoices/${invoice.id}/reminder-preference`, 'PUT', { optedOut: true }, b.session)).status).toBe(404);
+      await f.data(`portal-customer/me/invoices/${invoice.id}/reminder-preference`, 'PUT', { optedOut: true }, a.session);
+      expect(await f.data('portal-customer/me/invoices', 'GET', undefined, a.session)).toMatchObject([{ remindersOptedOut: true }]);
+      expect((await f.data(`billing/invoices/${invoice.id}/collection-plan`)).plan.opted_out).toBe(1);
+      const deposit = await f.data(`portal-customer/me/invoices/${invoice.id}/pay`, 'POST', { purpose: 'deposit' }, a.session);
+      expect(deposit).toMatchObject({ provider: 'manual', status: 'requires_action', amountCents: 3000 });
+      expect((await f.request(`portal-customer/me/invoices/${invoice.id}/pay`, 'POST', { purpose: 'deposit' }, b.session)).status).toBe(404);
       const instructions = await f.data(`portal-customer/me/invoices/${invoice.id}/pay`, 'POST', {}, a.session);
       expect(instructions).toMatchObject({ provider: 'manual', status: 'requires_action', amountCents: 9999 });
       expect(instructions.clientSecret).toBeUndefined();

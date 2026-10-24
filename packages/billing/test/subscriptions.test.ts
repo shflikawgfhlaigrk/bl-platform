@@ -130,4 +130,42 @@ describe('subscriptions', () => {
     expect(aSub.data.status).toBe('active');
     expect(aSub.data.next_invoice_at).toBe(sub.next_invoice_at);
   });
+  it('rejects billing accounts belonging to another customer or company', async () => {
+    const ctx = await setupBilling();
+    try {
+      const account = (await json(await api(ctx.app, ctx.tenantA.id, 'POST', '/accounts', { customerId: 'account-owner', name: 'Owner billing' }))).data;
+      const foreign = (await json(await api(ctx.app, ctx.tenantB.id, 'POST', '/accounts', { customerId: 'sub-cust', name: 'Foreign billing' }))).data;
+      for (const billingAccountId of [account.id, foreign.id]) {
+        const result = await api(ctx.app, ctx.tenantA.id, 'POST', '/subscriptions', { customerId: 'sub-cust', billingAccountId,
+          planName: 'Wrong owner', amountCents: 5000, interval: 'monthly', nextInvoiceAt: '2000-01-01T00:00:00.000Z' });
+        expect(result.status).toBe(400);
+      }
+      expect((await json(await api(ctx.app, ctx.tenantA.id, 'GET', '/subscriptions'))).data).toEqual([]);
+      expect((await json(await api(ctx.app, ctx.tenantA.id, 'GET', '/invoices'))).data).toEqual([]);
+    } finally { await ctx.db.destroy(); }
+  });
+
+  it('reports a broken legacy subscription and still invoices every later healthy subscription', async () => {
+    const ctx = await setupBilling();
+    try {
+      const account = (await json(await api(ctx.app, ctx.tenantA.id, 'POST', '/accounts', { customerId: 'sub-cust', name: 'Matching account' }))).data;
+      const broken = await makeSubscription(ctx, ctx.tenantA.id, { billingAccountId: account.id, nextInvoiceAt: '2000-01-01T00:00:00.000Z' });
+      await ctx.db.updateTable('billing_subscriptions').set({ customer_id: 'legacy-wrong-customer' }).where('id', '=', broken.id).execute();
+      const good = await makeSubscription(ctx, ctx.tenantA.id, { nextInvoiceAt: DateTime.utc().minus({ minutes: 2 }).toISO()! });
+      const alsoGood = await makeSubscription(ctx, ctx.tenantA.id, { nextInvoiceAt: DateTime.utc().minus({ minutes: 1 }).toISO()! });
+      const response = await api(ctx.app, ctx.tenantA.id, 'POST', '/subscriptions/tick', {});
+      expect(response.status).toBe(200); const result = (await json(response)).data;
+      expect(result.count).toBe(2); expect(result.failureCount).toBe(1);
+      expect(result.failures[0]).toMatchObject({ subscriptionId: broken.id, periodStart: broken.next_invoice_at });
+      expect(result.failures[0].reason).toContain('does not belong');
+      expect(result.generated.map((row: any) => row.subscriptionId).sort()).toEqual([good.id, alsoGood.id].sort());
+      expect((await json(await api(ctx.app, ctx.tenantA.id, 'GET', `/subscriptions/${broken.id}`))).data.next_invoice_at).toBe(broken.next_invoice_at);
+      const failures = await ctx.db.selectFrom('audit_log').selectAll().where('action', '=', 'billing.subscription.invoice_failed').execute();
+      expect(failures).toHaveLength(1); expect(failures[0].entity_id).toBe(broken.id);
+      const again = (await json(await api(ctx.app, ctx.tenantA.id, 'POST', '/subscriptions/tick', {}))).data;
+      expect(again).toMatchObject({ count: 0, failureCount: 1 });
+      expect((await json(await api(ctx.app, ctx.tenantA.id, 'GET', '/invoices'))).data).toHaveLength(2);
+    } finally { await ctx.db.destroy(); }
+  });
+
 });

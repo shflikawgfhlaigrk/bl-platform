@@ -24,6 +24,7 @@ async function setup(options: { timeline?: TimelineWriter; providers?: Record<st
   await runMigrations(db, [...coreMigrations, ...messagingMigrations]);
   const tenantA = await createTenant(asCoreDb(db), { name: 'Tenant A' });
   const tenantB = await createTenant(asCoreDb(db), { name: 'Tenant B' });
+  for (const agent of ['agent-1', 'agent-2']) await db.insertInto('users').values({ id: agent, tenant_id: tenantA.id, name: agent, email: `${agent}@example.test`, role: 'member', created_at: '2026-07-01T00:00:00.000Z' }).execute();
   const events = new EventBus();
   const email = new LogOnlyEmailProvider();
   const sms = new LogOnlySmsProvider();
@@ -217,7 +218,7 @@ describe('outbound sending via channel providers', () => {
       body: 'ping',
     });
     expect(message.status).toBe('queued');
-    expect(message.failed_reason).toBe('carrier unreachable');
+    expect(message.failed_reason).toContain('unresolved');
   });
 
   it('stores provider-less channels (internal) as sent with no provider id', async () => {

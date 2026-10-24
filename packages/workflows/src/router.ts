@@ -11,6 +11,7 @@ import {
 } from '@blacklabel/core';
 import { createWorkflowEngine, type WorkflowEngineOptions } from './engine';
 import type { WorkflowsDatabase } from './schema';
+import { installWorkflowRecipe, listWorkflowRecipes } from './recipes';
 import {
   ACTION_TYPES,
   TRIGGER_EVENTS,
@@ -81,6 +82,14 @@ export function workflowsRouter(
   app.get('/meta', (c) =>
     c.json({ data: { triggerEvents: TRIGGER_EVENTS, actionTypes: ACTION_TYPES } }),
   );
+
+  app.get('/recipes', c => c.json({ data: listWorkflowRecipes() }));
+  app.post('/recipes/:key/install', async c => {
+    const input = z.object({ assigneeUserId: z.string().min(1).max(200), dueInHours: z.number().int().min(1).max(168).optional() })
+      .strict().parse(await c.req.json());
+    return c.json({ data: await installWorkflowRecipe(db, events, c.get('tenantId'), c.req.param('key'), input,
+      actor(c.req.header('x-user-id'))) }, 201);
+  });
 
   /* ---------------- engine tick ---------------- */
 

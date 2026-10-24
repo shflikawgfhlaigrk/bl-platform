@@ -1,0 +1,847 @@
+{
+  "schemaVersion": 2,
+  "status": "NOT DONE",
+  "checkpoint": "implemented private candidate slices; consolidated unchanged-source checks and independent buyer/device acceptance remain open",
+  "source": {
+    "repo": "shflikawgfhlaigrk/bl-platform",
+    "originalCommit": "5296833500059a9247e25880c02c8715ab1f3f83",
+    "snapshotCommit": "d4a8c3a99da0a74be4291004bc9a847ec1b69dfe",
+    "originManifest": "../source-snapshot.json",
+    "candidateDirty": true,
+    "implementationPath": "/Users/michaelbarber/BlackLabelPlatform",
+    "candidatePath": "/Users/michaelbarber/Documents/Codex/2026-10-03/task-6/platform",
+    "finalCommitOrArtifactHash": null,
+    "branch": "codex/module-outcomes-20261003",
+    "prPreservationBaselineCommit": "c645d3f965fc9536780b7fa4c906bfa745ca8eb7",
+    "baselineNote": "Original d4a8c3a snapshot preserved; original cart assets copied in separate preservation commit before the reviewable platform implementation diff."
+  },
+  "standalone": {
+    "status": "NOT DONE",
+    "sharedCore": "Business composition includes customer/job records, identity/permissions, essential local actions/notifications and basic module reports without sibling subscription checks. One-module purchase/install journeys remain unproved.",
+    "purchaseProvisioning": "Business settings disclose purchased module declarations and purchaseVerified=false; declarations are not verified payment/provisioning receipts.",
+    "pricingChanged": false,
+    "nextAction": "Verify sandbox purchase receipt to company/module provisioning and cancel/refund/access lifecycle; run a clean one-module journey with required basics included.",
+    "owner": "root platform integrator",
+    "checkpoint": "G1 isolated one-module installation matrix",
+    "nextCheck": "Every advertised job completes with only its own purchased module and included basics; prices/billing unchanged."
+  },
+  "roles": {
+    "owner": "opaque owner cookie or task-local tool key; installed tenant binds headers",
+    "customer": "customer token/session, customer-owned records; no injected staff identity",
+    "crew": "employee token/session, assigned work only",
+    "api": "default-deny reviewed method/path RBAC inventory"
+  },
+  "modules": [
+    {
+      "key": "CRM",
+      "job": "owned-next-action-sales-queue",
+      "routes": [
+        "GET /api/crm/sales-queue",
+        "GET /api/crm/owners",
+        "PATCH /api/crm/leads/:id",
+        "POST /api/crm/leads/:id/next-action/complete",
+        "GET /api/crm/leads/:id/timeline",
+        "GET /api/crm/leads/export.csv"
+      ],
+      "includedCore": [
+        "customers",
+        "jobs",
+        "users",
+        "CRM tasks",
+        "queue summary"
+      ],
+      "evidence": {
+        "kind": "source and scoped synthetic checks; not product acceptance",
+        "tests": [
+          "packages/crm/test/sales-queue.test.ts"
+        ],
+        "sliceOwnerReport": {
+          "owner": "crm_queue",
+          "result": "62/62 CRM focused tests; isolated strict TypeScript and JS syntax passed."
+        }
+      },
+      "status": "NOT DONE",
+      "gates": {
+        "G1": "NOT DONE",
+        "G2": "NOT DONE",
+        "G3": "NOT DONE",
+        "G4": "NOT DONE"
+      },
+      "price": 80,
+      "implemented": [
+        "Owned next-action sales queue with bucket counts, tenant-owned assignees, revision checks and replay-safe completion receipts.",
+        "Legacy open leads are surfaced without inventing completed actions."
+      ],
+      "sources": [
+        "packages/crm/src/service.ts",
+        "packages/crm/src/router.ts",
+        "packages/crm/test/sales-queue.test.ts"
+      ],
+      "implementationOwner": "crm_queue",
+      "remaining": {
+        "requirement": "Actual external due reminders, standalone provisioning and fresh owner/device/large-queue acceptance remain root-owned.",
+        "cause": "Scoped implementation and synthetic evidence do not establish the complete advertised standalone job or live provider behavior.",
+        "owner": "root integrates; crm_queue owns module fixes; independent checker owns G3",
+        "nextAction": "Close the listed gap, then replay the exact final candidate with synthetic fixtures and the included basics.",
+        "checkpoint": "final unchanged-source check \u2192 isolated one-module/private preview \u2192 independent G3 \u2192 founder G4",
+        "nextCheck": "Original failure, tenant/permission negative cases, restart/recovery, value and included reports on fresh buyer/device.",
+        "founderActionNow": null
+      }
+    },
+    {
+      "key": "Scheduling",
+      "job": "book-and-reschedule-with-capacity",
+      "routes": [
+        "POST /api/scheduling/appointments",
+        "POST /api/scheduling/appointments/:id/reschedule",
+        "POST /api/scheduling/appointments/:id/cancel",
+        "GET /api/scheduling/next-available",
+        "GET /api/scheduling/appointments/:id/reminders"
+      ],
+      "includedCore": [
+        "customers",
+        "jobs",
+        "reminders",
+        "customer booking actions",
+        "reports"
+      ],
+      "evidence": {
+        "kind": "source and scoped synthetic checks; not product acceptance",
+        "tests": [
+          "packages/scheduling/test/availability-guards.test.ts",
+          "packages/scheduling/test/contract-receipts.test.ts",
+          "apps/api/test/business-reminders.test.ts"
+        ],
+        "sliceOwnerReport": {
+          "owner": "scheduler_resources",
+          "result": "179/179 checks in 20 overlapping files:111 Scheduling/Workflow/neighbors plus 68 Portal/API/business compatibility; scoped TypeScript, UI syntax and whitespace passed."
+        }
+      },
+      "status": "NOT DONE",
+      "gates": {
+        "G1": "NOT DONE",
+        "G2": "NOT DONE",
+        "G3": "NOT DONE",
+        "G4": "NOT DONE"
+      },
+      "price": 27,
+      "implemented": [
+        "Admission and next-available use staff/resource hours, time off, buffers, timezone/DST rules and recurrence; terminal edits are guarded.",
+        "Contract booking receipt atomically binds tenant/key/canonical payload to one appointment; identical replay returns its ID, drift 409.",
+        "Reminder queue holds ambiguous submission and reconciles saved message evidence."
+      ],
+      "sources": [
+        "packages/scheduling/src/service.ts",
+        "packages/scheduling/test/availability-guards.test.ts",
+        "packages/scheduling/test/contract-receipts.test.ts",
+        "apps/api/test/business-reminders.test.ts"
+      ],
+      "implementationOwner": "scheduler_resources",
+      "remaining": {
+        "requirement": "Clean-user booking/reschedule/resource/recurrence/device journey; live calendar conflicts/import and reminder delivery unverified. Recurrence edit changes an occurrence only. An outer caller transaction leaves calendar sync pending for its after-commit owner; no durable event outbox proof.",
+        "cause": "Scoped implementation and synthetic evidence do not establish the complete advertised standalone job or live provider behavior.",
+        "owner": "root integrates; scheduler_resources owns module fixes; independent checker owns G3",
+        "nextAction": "Close the listed gap, then replay the exact final candidate with synthetic fixtures and the included basics.",
+        "checkpoint": "final unchanged-source check \u2192 isolated one-module/private preview \u2192 independent G3 \u2192 founder G4",
+        "nextCheck": "Original failure, tenant/permission negative cases, restart/recovery, value and included reports on fresh buyer/device.",
+        "founderActionNow": null
+      }
+    },
+    {
+      "key": "Quoting",
+      "job": "versioned-offer-acceptance-single-job-handoff",
+      "routes": [
+        "POST /api/quoting/quotes/:id/revise",
+        "POST /api/quoting/quotes/:id/approve",
+        "POST /api/quoting/quotes/:id/convert",
+        "GET /api/quoting/quotes/:id/conversion",
+        "POST /api/portal-customer/me/quotes/:quoteId/approve"
+      ],
+      "includedCore": [
+        "customers",
+        "jobs",
+        "basic invoice",
+        "approval screens",
+        "files",
+        "reports"
+      ],
+      "evidence": {
+        "kind": "source and scoped synthetic checks; not product acceptance",
+        "tests": [
+          "packages/quoting/test/integrity.test.ts",
+          "apps/api/test/business-conversion.test.ts",
+          "apps/business/test/billing-boundary.test.ts"
+        ],
+        "sliceOwnerReport": {
+          "owner": "quoting_integrity",
+          "result": "163/163 tests / 21 overlapping Quoting/Billing/portal/conversion/Team files plus 2/2 installed billing-boundary wrapper tests; TypeScript passed."
+        }
+      },
+      "status": "NOT DONE",
+      "gates": {
+        "G1": "NOT DONE",
+        "G2": "NOT DONE",
+        "G3": "NOT DONE",
+        "G4": "NOT DONE"
+      },
+      "price": 38,
+      "implemented": [
+        "Immutable full scope/version approval snapshot, stale-approval conflict and safe integer-cent pricing.",
+        "Revision clones/replays safely and expires the old offer; accepted scope transfers through an atomic single job/invoice handoff with rollback/retry."
+      ],
+      "sources": [
+        "packages/quoting/src/service.ts",
+        "packages/quoting/test/integrity.test.ts",
+        "apps/api/src/business-conversion.ts",
+        "apps/api/test/business-conversion.test.ts",
+        "apps/business/test/billing-boundary.test.ts"
+      ],
+      "implementationOwner": "quoting_integrity",
+      "remaining": {
+        "requirement": "Fresh-customer version/acceptance/handoff journey. Historical v1 approvals do not prove notes/files scope retroactively. Installed buyer wrapper rejects the legacy caller-payload from-quote path 409; raw package seam remains outside that protected surface.",
+        "cause": "Scoped implementation and synthetic evidence do not establish the complete advertised standalone job or live provider behavior.",
+        "owner": "root integrates; quoting_integrity owns module fixes; independent checker owns G3",
+        "nextAction": "Close the listed gap, then replay the exact final candidate with synthetic fixtures and the included basics.",
+        "checkpoint": "final unchanged-source check \u2192 isolated one-module/private preview \u2192 independent G3 \u2192 founder G4",
+        "nextCheck": "Original failure, tenant/permission negative cases, restart/recovery, value and included reports on fresh buyer/device.",
+        "founderActionNow": null
+      }
+    },
+    {
+      "key": "CustomerPortal",
+      "job": "customer-work-approval-progress-and-repeat-request",
+      "routes": [
+        "GET /api/portal-customer/ui",
+        "POST /api/portal-customer/me/requests",
+        "GET /api/portal-customer/me/requests",
+        "PATCH /api/portal-customer/requests/:requestId",
+        "POST /api/portal-customer/ui/requests",
+        "GET /api/portal-customer/ui/files/:fileId/content",
+        "POST /api/portal-customer/ui/uploads",
+        "PUT /api/portal-customer/me/invoices/:invoiceId/reminder-preference"
+      ],
+      "includedCore": [
+        "customers",
+        "jobs",
+        "basic quote/invoice",
+        "files",
+        "notifications"
+      ],
+      "evidence": {
+        "kind": "source and scoped synthetic checks; not product acceptance",
+        "tests": [
+          "packages/portal-customer/test/requests.test.ts",
+          "apps/api/test/business-portal-requests.test.ts"
+        ],
+        "sliceOwnerReport": {
+          "owner": "scheduler_resources",
+          "result": "68 Portal/API/business compatibility checks within the same 179-check report; owned receipt/answer and actual 6 MB original upload/download verified. Not an independent browser/device run."
+        }
+      },
+      "status": "NOT DONE",
+      "gates": {
+        "G1": "NOT DONE",
+        "G2": "NOT DONE",
+        "G3": "NOT DONE",
+        "G4": "NOT DONE"
+      },
+      "price": 39,
+      "implemented": [
+        "Customer-owned approvals/progress/invoices, actual shared file upload/download controls and repeat/completed-job or reschedule request receipts.",
+        "Concurrent/open-request replay and changed-input conflicts; owner acknowledgement/answer with version checks is readable by the customer.",
+        "Reminder preference can stop customer invoice reminder drafts."
+      ],
+      "sources": [
+        "packages/portal-customer/src/router.ts",
+        "packages/portal-customer/src/service.ts",
+        "packages/portal-customer/test/requests.test.ts",
+        "apps/api/test/business-portal-requests.test.ts",
+        "apps/business/public/portal-customer.js"
+      ],
+      "implementationOwner": "root",
+      "remaining": {
+        "requirement": "Requests require owner to make the actual booking then answer; they do not silently change capacity. Fresh-customer/device sign-in/file/request/approval journey and live email/TLS delivery unproved.",
+        "cause": "Scoped implementation and synthetic evidence do not establish the complete advertised standalone job or live provider behavior.",
+        "owner": "root integrates; root owns module fixes; independent checker owns G3",
+        "nextAction": "Close the listed gap, then replay the exact final candidate with synthetic fixtures and the included basics.",
+        "checkpoint": "final unchanged-source check \u2192 isolated one-module/private preview \u2192 independent G3 \u2192 founder G4",
+        "nextCheck": "Original failure, tenant/permission negative cases, restart/recovery, value and included reports on fresh buyer/device.",
+        "founderActionNow": null
+      }
+    },
+    {
+      "key": "EmployeePortal",
+      "job": "crew-evidence-and-reviewed-job-closeout",
+      "routes": [
+        "GET /api/portal-employee/assignments/:assignmentId/closeout",
+        "GET /api/portal-employee/time-entries",
+        "POST /api/portal-employee/time-entries/:entryId/review",
+        "POST /api/portal-employee/portal/assignments/:assignmentId/exceptions",
+        "POST /api/portal-employee/portal/assignments/:assignmentId/status",
+        "POST /api/portal-employee/portal/clock-in",
+        "POST /api/business/team/assignments/:assignmentId/photos"
+      ],
+      "includedCore": [
+        "jobs",
+        "employees",
+        "checklists",
+        "vault",
+        "time review",
+        "reports"
+      ],
+      "evidence": {
+        "kind": "source and scoped synthetic checks; not product acceptance",
+        "tests": [
+          "packages/portal-employee/test/closeout.test.ts",
+          "apps/business/test/team.test.ts"
+        ],
+        "sliceOwnerReport": {
+          "owner": "crm_queue",
+          "result": "52/52 Employee focused tests reported during independent review; closeout/checklist/time/exception gates covered."
+        }
+      },
+      "status": "NOT DONE",
+      "gates": {
+        "G1": "NOT DONE",
+        "G2": "NOT DONE",
+        "G3": "NOT DONE",
+        "G4": "NOT DONE"
+      },
+      "price": 28,
+      "implemented": [
+        "Completion is blocked by incomplete checklists, open exceptions, running time or unapproved linked time.",
+        "Reasoned replay-safe exceptions, exact-item manager waivers, explicit approve/reject/re-review, job assignment time and one audited completion event.",
+        "Crew/owner closeout controls and total time review summary; existing historical records retain pending review rather than fabricated approval."
+      ],
+      "sources": [
+        "packages/portal-employee/src/service.ts",
+        "packages/portal-employee/test/closeout.test.ts",
+        "apps/business/public/team.js",
+        "apps/business/public/employee.js",
+        "apps/business/test/team.test.ts"
+      ],
+      "implementationOwner": "root",
+      "remaining": {
+        "requirement": "Independent crew/manager device closeout and approved-hours export/report journey; assignment-to-source job linkage/provisioning evidence remains required.",
+        "cause": "Scoped implementation and synthetic evidence do not establish the complete advertised standalone job or live provider behavior.",
+        "owner": "root integrates; root owns module fixes; independent checker owns G3",
+        "nextAction": "Close the listed gap, then replay the exact final candidate with synthetic fixtures and the included basics.",
+        "checkpoint": "final unchanged-source check \u2192 isolated one-module/private preview \u2192 independent G3 \u2192 founder G4",
+        "nextCheck": "Original failure, tenant/permission negative cases, restart/recovery, value and included reports on fresh buyer/device.",
+        "founderActionNow": null
+      }
+    },
+    {
+      "key": "OwnerDashboard",
+      "job": "source-linked-exception-action-queue",
+      "routes": [
+        "GET /api/dashboard/exceptions",
+        "GET /api/dashboard/export"
+      ],
+      "includedCore": [
+        "source records",
+        "local source freshness",
+        "basic reports remain elsewhere"
+      ],
+      "evidence": {
+        "kind": "source and scoped synthetic checks; not product acceptance",
+        "tests": [
+          "packages/dashboard/test/exceptions.test.ts",
+          "packages/dashboard/test/exceptions-ui.test.ts"
+        ],
+        "sliceOwnerReport": {
+          "owner": "owner_exceptions",
+          "result": "135 tests: Dashboard72 + Industries55 + business composition8; typecheck/JS syntax/whitespace passed"
+        }
+      },
+      "status": "NOT DONE",
+      "gates": {
+        "G1": "NOT DONE",
+        "G2": "NOT DONE",
+        "G3": "NOT DONE",
+        "G4": "NOT DONE"
+      },
+      "price": 57,
+      "implemented": [
+        "Six source-linked exception categories with exact paginated totals, hasMore, capped rows and local sampledAt/staleAt.",
+        "Unavailable source produces null count/partial; externalFreshness stays not_verified. Crew exceptions, time review and waivers link to source inspection and valid workspace."
+      ],
+      "sources": [
+        "packages/dashboard/src/exceptions.ts",
+        "packages/dashboard/test/exceptions.test.ts",
+        "packages/dashboard/test/exceptions-ui.test.ts"
+      ],
+      "implementationOwner": "owner_exceptions",
+      "remaining": {
+        "requirement": "Entity action drilldown beyond existing capped module lists; independent stale/missing-source/mobile/value/scale evidence. Basic reports stay included in source modules.",
+        "cause": "Scoped implementation and synthetic evidence do not establish the complete advertised standalone job or live provider behavior.",
+        "owner": "root integrates; owner_exceptions owns module fixes; independent checker owns G3",
+        "nextAction": "Close the listed gap, then replay the exact final candidate with synthetic fixtures and the included basics.",
+        "checkpoint": "final unchanged-source check \u2192 isolated one-module/private preview \u2192 independent G3 \u2192 founder G4",
+        "nextCheck": "Original failure, tenant/permission negative cases, restart/recovery, value and included reports on fresh buyer/device.",
+        "founderActionNow": null
+      }
+    },
+    {
+      "key": "UnifiedInbox",
+      "job": "owned-conversations-and-supported-delivery-recovery",
+      "routes": [
+        "GET /api/messaging/inbox",
+        "POST /api/messaging/conversations/:id/assign",
+        "POST /api/messaging/inbound",
+        "GET /api/messaging/inbound-receipts",
+        "GET /api/messaging/messages/:id",
+        "POST /api/messaging/messages/:id/reconcile"
+      ],
+      "includedCore": [
+        "customers",
+        "staff",
+        "files",
+        "internal notifications"
+      ],
+      "evidence": {
+        "kind": "source and scoped synthetic checks; not product acceptance",
+        "tests": [
+          "packages/messaging/test/inbound-ownership.test.ts",
+          "packages/messaging/test/durable-delivery.test.ts"
+        ],
+        "sliceOwnerReport": {
+          "owner": "review_recovery",
+          "result": "145 tests / 18 files: Messaging+Reviews+business-reviews; targeted TypeScript, JS syntax and whitespace passed"
+        }
+      },
+      "status": "NOT DONE",
+      "gates": {
+        "G1": "NOT DONE",
+        "G2": "NOT DONE",
+        "G3": "NOT DONE",
+        "G4": "NOT DONE"
+      },
+      "price": 100,
+      "implemented": [
+        "Business composer exposes supported email/internal only; unsupported historical channels remain searchable and missing provider fails before writing outbound messages.",
+        "Tenant/provider/channel/eventID inbound receipts prevent duplicate message/CRM mirror/reopen; changed body conflicts.",
+        "Tenant-owned assignee and revision/CAS outbound ownership, closed/unresolved blocks; exact saved-message/provider-ID readback and reconciliation without resend."
+      ],
+      "sources": [
+        "packages/messaging/src/service.ts",
+        "packages/messaging/test/inbound-ownership.test.ts",
+        "packages/messaging/test/durable-delivery.test.ts",
+        "apps/business/public/messaging.js"
+      ],
+      "implementationOwner": "review_recovery",
+      "remaining": {
+        "requirement": "No authenticated live inbound email/SMS/social connector; owner ingestion API is not provider ingress. External Resend authentication, delivery and clean-user/device ownership/recovery still unproved.",
+        "cause": "Scoped implementation and synthetic evidence do not establish the complete advertised standalone job or live provider behavior.",
+        "owner": "root integrates; review_recovery owns module fixes; independent checker owns G3",
+        "nextAction": "Close the listed gap, then replay the exact final candidate with synthetic fixtures and the included basics.",
+        "checkpoint": "final unchanged-source check \u2192 isolated one-module/private preview \u2192 independent G3 \u2192 founder G4",
+        "nextCheck": "Original failure, tenant/permission negative cases, restart/recovery, value and included reports on fresh buyer/device.",
+        "founderActionNow": null
+      }
+    },
+    {
+      "key": "ReviewEngine",
+      "job": "neutral-completed-job-follow-through-and-optout",
+      "routes": [
+        "GET /api/reviews/eligible-customers",
+        "POST /api/reviews/campaigns/completed-jobs",
+        "GET /api/reviews/public/requests/:token",
+        "POST /api/reviews/requests/:id/delivery"
+      ],
+      "includedCore": [
+        "customers",
+        "completed jobs",
+        "email",
+        "neutral customer screen",
+        "receipts"
+      ],
+      "evidence": {
+        "kind": "source and scoped synthetic checks; not product acceptance",
+        "tests": [
+          "packages/reviews/test/eligibility-recovery.test.ts",
+          "packages/reviews/test/public-ui.test.ts",
+          "apps/api/test/business-reviews.test.ts"
+        ],
+        "sliceOwnerReport": {
+          "owner": "review_recovery",
+          "result": "Same145-test Messaging/Reviews/composition slice; no live send"
+        }
+      },
+      "status": "NOT DONE",
+      "gates": {
+        "G1": "NOT DONE",
+        "G2": "NOT DONE",
+        "G3": "NOT DONE",
+        "G4": "NOT DONE"
+      },
+      "price": 60,
+      "implemented": [
+        "Neutral all-eligible completed CRM job/past-completed-appointment campaign with source/customer dedup receipts and usable-email checks.",
+        "Enabled public destinations visible equally for every rating and opt-out revisits; low rating flags internal follow-up only.",
+        "Tenant-wide persistent opt-out suppresses future requests/reminders; transactional campaign/submit/opt-out and held uncertain delivery with local messaging readback."
+      ],
+      "sources": [
+        "packages/reviews/src/service.ts",
+        "packages/reviews/src/router.ts",
+        "packages/reviews/test/eligibility-recovery.test.ts",
+        "packages/reviews/test/public-ui.test.ts",
+        "apps/api/test/business-reviews.test.ts"
+      ],
+      "implementationOwner": "review_recovery",
+      "remaining": {
+        "requirement": "No external review import; QR remains placeholder. Independent clean-customer neutral/opt-out/recovery journey and real provider delivery evidence unproved.",
+        "cause": "Scoped implementation and synthetic evidence do not establish the complete advertised standalone job or live provider behavior.",
+        "owner": "root integrates; review_recovery owns module fixes; independent checker owns G3",
+        "nextAction": "Close the listed gap, then replay the exact final candidate with synthetic fixtures and the included basics.",
+        "checkpoint": "final unchanged-source check \u2192 isolated one-module/private preview \u2192 independent G3 \u2192 founder G4",
+        "nextCheck": "Original failure, tenant/permission negative cases, restart/recovery, value and included reports on fresh buyer/device.",
+        "founderActionNow": null
+      }
+    },
+    {
+      "key": "WorkflowAutomation",
+      "job": "bounded-business-recipes-and-recovery-receipts",
+      "routes": [
+        "GET /api/workflows/recipes",
+        "POST /api/workflows/recipes/:key/install",
+        "GET /api/workflows/executions/:id",
+        "POST /api/workflows/run-pending"
+      ],
+      "includedCore": [
+        "records required by recipe",
+        "basic tasks/notifications included elsewhere"
+      ],
+      "evidence": {
+        "kind": "source and scoped synthetic checks; not product acceptance",
+        "tests": [
+          "packages/workflows/test/recovery-receipts.test.ts"
+        ],
+        "sliceOwnerReport": {
+          "owner": "source_discovery",
+          "result": "60 tests / 7 Workflow files; narrowed TypeScript, UI syntax and whitespace passed; source hashes in workflows/evidence/RECOVERY-EVIDENCE.json"
+        }
+      },
+      "status": "NOT DONE",
+      "gates": {
+        "G1": "NOT DONE",
+        "G2": "NOT DONE",
+        "G3": "NOT DONE",
+        "G4": "NOT DONE"
+      },
+      "price": 24,
+      "implemented": [
+        "Three bounded local presets: lead-first-touch, approved-quote-handoff, completed-job-closeout; repeat installation preserves owner edits.",
+        "Stable tenant/workflow/event identity, frozen actions/name/retry inputs, expiring claims and attempts counted before effects.",
+        "Atomic local task/tag/notification receipts; stable invoice source and appointment keys recover real contract commit-before-log crashes and reject conflicting payload reuse."
+      ],
+      "sources": [
+        "packages/workflows/src/engine.ts",
+        "packages/workflows/src/recipes.ts",
+        "packages/workflows/test/recovery-receipts.test.ts",
+        "packages/workflows/evidence/RECOVERY-EVIDENCE.json"
+      ],
+      "implementationOwner": "source_discovery",
+      "remaining": {
+        "requirement": "Lost events before engine admission/postcommit notification delivery have no durable outbox; calendar-provider delivery and ambiguous arbitrary webhook retries unproved. Missing destination contracts still skip; preset/device/scale acceptance required.",
+        "cause": "Scoped implementation and synthetic evidence do not establish the complete advertised standalone job or live provider behavior.",
+        "owner": "root integrates; source_discovery owns module fixes; independent checker owns G3",
+        "nextAction": "Close the listed gap, then replay the exact final candidate with synthetic fixtures and the included basics.",
+        "checkpoint": "final unchanged-source check \u2192 isolated one-module/private preview \u2192 independent G3 \u2192 founder G4",
+        "nextCheck": "Original failure, tenant/permission negative cases, restart/recovery, value and included reports on fresh buyer/device.",
+        "founderActionNow": null
+      }
+    },
+    {
+      "key": "Billing",
+      "job": "approved-work-to-deposit-balance-and-reconciliation",
+      "routes": [
+        "GET /api/billing/invoices/:id/collection-plan",
+        "PUT /api/billing/invoices/:id/collection-plan",
+        "POST /api/billing/invoices/:id/payments",
+        "POST /api/billing/invoices/:id/payment-intents",
+        "POST /api/billing/invoices/:id/reminders",
+        "POST /api/billing/invoices/:id/reminders/:reminderId/receipt",
+        "GET /api/billing/invoices/export.csv",
+        "GET /api/billing/payments/export.csv"
+      ],
+      "includedCore": [
+        "customers",
+        "job/approved scope",
+        "customer payment instructions",
+        "export"
+      ],
+      "evidence": {
+        "kind": "source and scoped synthetic checks; not product acceptance",
+        "tests": [
+          "packages/billing/test/collections.test.ts"
+        ],
+        "sliceOwnerReport": {
+          "owner": "quoting_integrity",
+          "result": "Same 163-test Quoting/Billing/portal/conversion/Team slice plus 2/2 installed billing boundary negative/control tests; scopes overlap."
+        }
+      },
+      "status": "NOT DONE",
+      "gates": {
+        "G1": "NOT DONE",
+        "G2": "NOT DONE",
+        "G3": "NOT DONE",
+        "G4": "NOT DONE"
+      },
+      "price": 70,
+      "implemented": [
+        "Tenant/source invoice receipts with legacy adoption/ambiguity checks; manual payment reference replay and one invoice deposit/balance installment plan.",
+        "Actual offline payment instructions, draft collection reminders stopped by opt-out/paid/void/changed balance, manual delivery-reference records.",
+        "Invoice/payment ledger exports, paid-invoice void guard and subscription period receipts."
+      ],
+      "sources": [
+        "packages/billing/src/service.ts",
+        "packages/billing/test/collections.test.ts",
+        "packages/billing/src/providers.ts",
+        "apps/business/public/billing.js"
+      ],
+      "implementationOwner": "quoting_integrity",
+      "remaining": {
+        "requirement": "Runtime collection is offline/manual; reminder rows are drafts, delivery references do not prove provider delivery. No full accounting/bank reconciliation/real card-charge proof. Fresh owner/customer deposit/export/restore journey required.",
+        "cause": "Scoped implementation and synthetic evidence do not establish the complete advertised standalone job or live provider behavior.",
+        "owner": "root integrates; quoting_integrity owns module fixes; independent checker owns G3",
+        "nextAction": "Close the listed gap, then replay the exact final candidate with synthetic fixtures and the included basics.",
+        "checkpoint": "final unchanged-source check \u2192 isolated one-module/private preview \u2192 independent G3 \u2192 founder G4",
+        "nextCheck": "Original failure, tenant/permission negative cases, restart/recovery, value and included reports on fresh buyer/device.",
+        "founderActionNow": null
+      }
+    },
+    {
+      "key": "FileVault",
+      "job": "job-originals-evidence-export-and-access",
+      "routes": [
+        "GET /api/files/evidence?entity_type=crm.job&entity_id=:jobId",
+        "GET /api/files/files/:id/content",
+        "POST /api/files/uploads",
+        "POST /api/files/uploads/:id/complete",
+        "GET /api/files/files/:id/permissions"
+      ],
+      "includedCore": [
+        "customers",
+        "jobs",
+        "capture/upload",
+        "tenant/user permissions",
+        "backup"
+      ],
+      "evidence": {
+        "kind": "source and scoped synthetic checks; not product acceptance",
+        "tests": [
+          "packages/files/test/evidence.test.ts",
+          "packages/files/test/permissions.test.ts"
+        ],
+        "sliceOwnerReport": {
+          "owner": "crm_queue",
+          "result": "Independent15/15 imports/evidence/upload-limit/runtime-access checks plus synthetic event-failure replay and50MiB/EACCES/missing-original probes passed; no fresh package/restore acceptance."
+        }
+      },
+      "status": "NOT DONE",
+      "gates": {
+        "G1": "NOT DONE",
+        "G2": "NOT DONE",
+        "G3": "NOT DONE",
+        "G4": "NOT DONE"
+      },
+      "price": 60,
+      "implemented": [
+        "Original-byte reads verify size and SHA256 and deny corruption; job/record evidence JSON includes accessible originals and manifest data.",
+        "Export is tenant/file-permission scoped, max100 originals/50MB; no installation/storage secrets included. Existing private company backup/restore remains separate."
+      ],
+      "sources": [
+        "packages/files/src/service.ts",
+        "packages/files/test/evidence.test.ts",
+        "packages/files/test/permissions.test.ts",
+        "apps/business/src/recovery.ts"
+      ],
+      "implementationOwner": "crm_queue",
+      "remaining": {
+        "requirement": "Fresh-directory restore/corruption/permissions/device/export evidence; upload resume/version history/retention and large exports beyond bounded packet are not implemented. Private whole-company backup contains installation secrets and is not a portable customer packet.",
+        "cause": "Scoped implementation and synthetic evidence do not establish the complete advertised standalone job or live provider behavior.",
+        "owner": "root integrates; crm_queue owns module fixes; independent checker owns G3",
+        "nextAction": "Close the listed gap, then replay the exact final candidate with synthetic fixtures and the included basics.",
+        "checkpoint": "final unchanged-source check \u2192 isolated one-module/private preview \u2192 independent G3 \u2192 founder G4",
+        "nextCheck": "Original failure, tenant/permission negative cases, restart/recovery, value and included reports on fresh buyer/device.",
+        "founderActionNow": null
+      }
+    },
+    {
+      "key": "IndustryModules",
+      "job": "configurable-complete-service-workflow",
+      "routes": [
+        "POST /api/industries/:key/apply",
+        "GET /api/industries/applied",
+        "GET /api/industries/terminology"
+      ],
+      "includedCore": [
+        "required core records/quote/scheduling/crew/billing workflows"
+      ],
+      "evidence": {
+        "kind": "source and scoped synthetic checks; not product acceptance",
+        "tests": [
+          "apps/api/test/business-industry-wiring.test.ts"
+        ],
+        "sliceOwnerReport": {
+          "owner": "owner_exceptions",
+          "result": "Same 135-test Dashboard/Industry/composition slice; independent edited-recipe repeated-switch reproduction passed"
+        }
+      },
+      "status": "NOT DONE",
+      "gates": {
+        "G1": "NOT DONE",
+        "G2": "NOT DONE",
+        "G3": "NOT DONE",
+        "G4": "NOT DONE"
+      },
+      "price": 159,
+      "implemented": [
+        "Explicit apply in real businessPortals composition installs/readbacks CRM stages, Quoting templates, Scheduling types and supported local create_task recipes.",
+        "Runtime receipts show installed/preserved/needs_configuration/unsupported/missing/failed; owner edits/deletions and repeated switches preserved.",
+        "Neutral service-delivery configuration; zero-price quote template intentionally inactive until owner sets rate/enables; unsupported external defaults disabled."
+      ],
+      "sources": [
+        "apps/api/src/business-industry-wiring.ts",
+        "packages/industries/src/runtime.ts",
+        "packages/industries/src/configs/service-delivery.ts",
+        "apps/api/test/business-industry-wiring.test.ts"
+      ],
+      "implementationOwner": "owner_exceptions",
+      "remaining": {
+        "requirement": "Complete independent company request-to-approved-closeout/collection journey; generic UI labels do not consume all terminology, arbitrary industry widgets remain read model. Auto-paused earlier recipes remain paused on switching back until explicit owner activation. Buyer priority still pending.",
+        "cause": "Scoped implementation and synthetic evidence do not establish the complete advertised standalone job or live provider behavior.",
+        "owner": "root integrates; owner_exceptions owns module fixes; independent checker owns G3",
+        "nextAction": "Close the listed gap, then replay the exact final candidate with synthetic fixtures and the included basics.",
+        "checkpoint": "final unchanged-source check \u2192 isolated one-module/private preview \u2192 independent G3 \u2192 founder G4",
+        "nextCheck": "Original failure, tenant/permission negative cases, restart/recovery, value and included reports on fresh buyer/device.",
+        "founderActionNow": null
+      }
+    }
+  ],
+  "compatibility": [
+    {
+      "adapter": "customer-records-json-v1",
+      "operations": [
+        "read-only preview",
+        "local create/update",
+        "explicit keep-local/use-source conflict resolution",
+        "receipt replay"
+      ],
+      "sourceOfTruth": "Stable source/external ID maps to checked same-company local ID; omitted fields and unchanged source preserve local edits; simultaneous local/source changes require explicit resolution. Import-only; source system untouched.",
+      "access": "owner session, installed tenant only; no provider access",
+      "tested": "Independent15/15 import/evidence/upload-limit/access focused checks plus source-event failure receipt/replay probe; receipt history exposes followUpEvents uncertainty. No SaaS provider access.",
+      "productionVerified": false
+    },
+    {
+      "adapter": "GoogleCalendarProvider",
+      "operations": [
+        "create/readback/update/cancel calendar events"
+      ],
+      "sourceOfTruth": "local appointment stores provider event ID; external calendar conflict/import not established",
+      "access": "tenant-specific existing OAuth calendar connection; scopes not live verified",
+      "tested": "mocked HTTP calendar tests and local scheduling recovery; no live calendar writes/readback proof",
+      "productionVerified": false
+    },
+    {
+      "adapter": "ResendEmailProvider",
+      "operations": [
+        "email submit",
+        "delivery reconciliation"
+      ],
+      "sourceOfTruth": "saved message/provider ID; accepted is not delivered",
+      "access": "existing company-owned API key and verified sender; no values copied",
+      "tested": "durable-delivery.test.ts mock transport; no inbox proof",
+      "productionVerified": false
+    },
+    {
+      "adapter": "manualPaymentProvider",
+      "operations": [
+        "instructions",
+        "explicit manual payment record",
+        "balance calculation"
+      ],
+      "sourceOfTruth": "verified owner-entered payment record; no bank/card processing proof",
+      "access": "owner finance permission",
+      "tested": "collections.test.ts plus provider/payment tests; offline only, no money moved",
+      "productionVerified": false
+    },
+    {
+      "adapter": "LocalDiskStorageProvider",
+      "operations": [
+        "private bytes",
+        "SHA256 verified read",
+        "evidence JSON export"
+      ],
+      "sourceOfTruth": "original bytes plus metadata hash",
+      "access": "tenant/user/file permissions",
+      "tested": "evidence/router/permission focused tests cover exact originals/hash corruption denial; fresh buyer restore not proved",
+      "productionVerified": false
+    },
+    {
+      "adapter": "SMS/social/call/website inbound transports; S3/R2; accounting/CRM SaaS sync",
+      "operations": [],
+      "status": "NOT DONE",
+      "cause": "no configured runtime connector or verified credentials/provider journey",
+      "nextAction": "explicit provider-specific adapter and sandbox consent; never market universal vendor support"
+    }
+  ],
+  "universalMeaning": "Industry-neutral configurable records/terms/workflows with exact tested adapter coverage only. Current external systems remain in place; no universal vendor compatibility or competitor/willingness-to-pay guarantee.",
+  "updatedAt": "2026-10-03T18:36:25.731619+00:00",
+  "evidencePolicy": "Source/code and scoped synthetic checks only. Reported test scopes overlap and must not be added. No fresh package, external delivery, clean-device run, paid entitlement, production rollout or final founder acceptance is proved.",
+  "gateOwners": {
+    "G1_G2": "root platform integrator and named slice owners",
+    "G3": "independent checker of final private candidate",
+    "G4": "founder Michael after complete G1-G3 candidate",
+    "founderActionNow": null,
+    "nextCheckpoint": "Root final commit/artifact identity and focused regression, isolated fixture private preview and independent one-module clean-user/device evidence."
+  },
+  "gateEvidence": {
+    "G1": "One-module purchase/access/preflight and cross-device preview not accepted.",
+    "G2": "Implemented slice has backend and UI/source evidence; integrated polished standalone job remains unaccepted.",
+    "G3": "Focused synthetic slice checks are not an independent fresh-user/device/value/billing/recovery/scale journey.",
+    "G4": "Exact final artifact/campaign founder acceptance, filming/regression and authorized rollout absent."
+  },
+  "consolidatedChecks": {
+    "status": "NOT DONE",
+    "lastIntermediate": "Root 597 checks /66 files passed before final cooldown/UI changes; not final unchanged-source evidence.",
+    "owner": "root",
+    "nextCheck": "Run final affected candidate checks after remaining patches, bind report to exact final commit/artifact.",
+    "freshPackageAcceptance": false
+  },
+  "milestones": [
+    {
+      "key": "M1",
+      "status": "NOT DONE",
+      "owner": "root",
+      "requirement": "Freeze final code and reviewable PR diff after preservation baseline.",
+      "checkpoint": "Final commit/artifact identity and unchanged-source focused regression.",
+      "nextCheck": "Re-run affected cooldown/UI/roles/boundary controls; retain exact failures or unrun scenarios."
+    },
+    {
+      "key": "M2",
+      "status": "NOT DONE",
+      "owner": "root platform integrator",
+      "requirement": "Standalone module purchase/provisioning and included-basics lifecycle.",
+      "checkpoint": "Fresh one-module company matrix using synthetic/sandbox purchase receipts.",
+      "nextCheck": "Each advertised business job finishes without sibling purchases; cancel/refund/access lifecycle; zero production charges or new payment accounts required."
+    },
+    {
+      "key": "M3",
+      "status": "NOT DONE",
+      "owner": "root plus independent checker",
+      "requirement": "Exact packaged private preview and clean-user/device/recovery/value evidence.",
+      "checkpoint": "Package build/isolated preview is underway; complete fresh install, device journeys and restore on the exact artifact.",
+      "nextCheck": "Module actions/permissions/payment instructions/replay/limits/export plus mobile and independent clean-user flows; no real provider sends or charges."
+    },
+    {
+      "key": "M4",
+      "status": "NOT DONE",
+      "owner": "founder Michael after M1\u2013M3",
+      "requirement": "Exact-candidate founder acceptance, filming/final regression and authorized rollout.",
+      "checkpoint": "Present the fully verified candidate for final founder test.",
+      "nextCheck": "Only after acceptance and rollout authorization collect actual production proof; no founder action required now."
+    }
+  ]
+}

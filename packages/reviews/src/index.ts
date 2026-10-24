@@ -32,6 +32,9 @@ export type {
   ReviewProviderSendContext,
   ReviewProviderReminderContext,
   ReviewProviderSyncContext,
+  ReviewCompletedJob,
+  ReviewDeliveryReadback,
+  ReviewDeliveryStatus,
 } from './service';
 
 // Public types
